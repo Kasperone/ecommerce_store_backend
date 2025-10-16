@@ -9,6 +9,7 @@ Backend API for e-commerce store built with FastAPI.
 - **Alembic** - Database migrations
 - **PostgreSQL** - Database
 - **JWT** - Authentication
+- **Argon2id** - Password hashing (OWASP recommended)
 - **Cloudflare R2** - Image storage
 - **Resend** - Email service
 - **PayU + Stripe** - Payments
@@ -70,7 +71,7 @@ backend/
 │   ├── core/                # Core functionality
 │   │   ├── config.py        # Settings
 │   │   ├── database.py      # DB connection
-│   │   └── security.py      # JWT, hashing
+│   │   └── security.py      # JWT, Argon2id hashing
 │   ├── models/              # SQLAlchemy models
 │   │   ├── user.py
 │   │   ├── product.py
