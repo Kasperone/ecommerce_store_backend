@@ -5,8 +5,19 @@ from passlib.context import CryptContext
 
 from app.core.config import settings
 
-# Password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Password hashing context - Argon2id configuration
+# Based on OWASP recommendations for Argon2id:
+# - memory_cost: 19456 KiB (19 MiB)
+# - time_cost: 2 iterations
+# - parallelism: 1 thread
+pwd_context = CryptContext(
+    schemes=["argon2"],
+    deprecated="auto",
+    argon2__memory_cost=19456,
+    argon2__time_cost=2,
+    argon2__parallelism=1,
+    argon2__type="ID"  # Argon2id variant (recommended)
+)
 
 
 def create_access_token(
