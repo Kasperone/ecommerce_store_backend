@@ -32,7 +32,9 @@ async def health():
     return {"status": "ok"}
 
 
-# Import routers (to be added later)
-# from app.api.v1 import products, auth, orders
-# app.include_router(products.router, prefix="/api/v1", tags=["products"])
-# app.include_router(auth.router, prefix="/api/v1", tags=["auth"])
+# Import routers
+from app.api.v1 import products, categories, auth
+
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
+app.include_router(products.router, prefix="/api/v1/products", tags=["Products"])
+app.include_router(categories.router, prefix="/api/v1/categories", tags=["Categories"])
