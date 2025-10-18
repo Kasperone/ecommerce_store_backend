@@ -29,7 +29,7 @@ async def register(
     - **phone**: Optional phone number
     """
     # Check if user already exists
-    existing_user = crud_user.user.get_by_email(db, email=user_in.email)
+    existing_user = crud_user.get_by_email(db, email=user_in.email)
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -37,7 +37,7 @@ async def register(
         )
     
     # Create new user
-    user = crud_user.user.create(db, obj_in=user_in)
+    user = crud_user.create(db, obj_in=user_in)
     
     # TODO: Send verification email
     
@@ -58,7 +58,7 @@ async def login(
     Returns JWT access token
     """
     # Authenticate user
-    user = crud_user.user.authenticate(
+    user = crud_user.authenticate(
         db, 
         email=form_data.username,
         password=form_data.password
@@ -113,7 +113,7 @@ async def update_current_user(
     
     Requires authentication
     """
-    user = crud_user.user.update(db, db_obj=current_user, obj_in=user_in)
+    user = crud_user.update(db, db_obj=current_user, obj_in=user_in)
     return user
 
 

@@ -44,7 +44,7 @@ async def list_products(
     skip = (page - 1) * page_size
     
     # Get products with filters
-    products = crud_product.product.get_multi_with_filters(
+    products = crud_product.get_multi_with_filters(
         db,
         skip=skip,
         limit=page_size,
@@ -58,7 +58,7 @@ async def list_products(
     )
     
     # Get total count
-    total = crud_product.product.count_with_filters(
+    total = crud_product.count_with_filters(
         db,
         category_id=category_id,
         is_active=is_active,
@@ -90,7 +90,7 @@ async def get_featured_products(
     
     - **limit**: Maximum number of products to return (1-50)
     """
-    products = crud_product.product.get_featured(db, limit=limit)
+    products = crud_product.get_featured(db, limit=limit)
     return products
 
 
@@ -102,7 +102,7 @@ async def get_product(
     """
     Get product by ID with category details
     """
-    product = crud_product.product.get(db, id=product_id)
+    product = crud_product.get(db, id=product_id)
     if not product:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -119,7 +119,7 @@ async def get_product_by_slug(
     """
     Get product by slug with category details
     """
-    product = crud_product.product.get_by_slug(db, slug=slug)
+    product = crud_product.get_by_slug(db, slug=slug)
     if not product:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -140,7 +140,7 @@ async def create_product(
     Requires admin authentication
     """
     # Check if slug already exists
-    existing = crud_product.product.get_by_slug(db, slug=product_in.slug)
+    existing = crud_product.get_by_slug(db, slug=product_in.slug)
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -149,14 +149,14 @@ async def create_product(
     
     # Check if SKU already exists (if provided)
     if product_in.sku:
-        existing_sku = crud_product.product.get_by_sku(db, sku=product_in.sku)
+        existing_sku = crud_product.get_by_sku(db, sku=product_in.sku)
         if existing_sku:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Product with this SKU already exists"
             )
     
-    product = crud_product.product.create(db, obj_in=product_in)
+    product = crud_product.create(db, obj_in=product_in)
     return product
 
 
@@ -172,7 +172,7 @@ async def update_product(
     
     Requires admin authentication
     """
-    product = crud_product.product.get(db, id=product_id)
+    product = crud_product.get(db, id=product_id)
     if not product:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -181,7 +181,7 @@ async def update_product(
     
     # Check slug uniqueness if being updated
     if product_in.slug and product_in.slug != product.slug:
-        existing = crud_product.product.get_by_slug(db, slug=product_in.slug)
+        existing = crud_product.get_by_slug(db, slug=product_in.slug)
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -190,14 +190,14 @@ async def update_product(
     
     # Check SKU uniqueness if being updated
     if product_in.sku and product_in.sku != product.sku:
-        existing_sku = crud_product.product.get_by_sku(db, sku=product_in.sku)
+        existing_sku = crud_product.get_by_sku(db, sku=product_in.sku)
         if existing_sku:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Product with this SKU already exists"
             )
     
-    product = crud_product.product.update(db, db_obj=product, obj_in=product_in)
+    product = crud_product.update(db, db_obj=product, obj_in=product_in)
     return product
 
 
@@ -212,12 +212,12 @@ async def delete_product(
     
     Requires admin authentication
     """
-    product = crud_product.product.get(db, id=product_id)
+    product = crud_product.get(db, id=product_id)
     if not product:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Product not found"
         )
     
-    crud_product.product.remove(db, id=product_id)
+    crud_product.remove(db, id=product_id)
     return None

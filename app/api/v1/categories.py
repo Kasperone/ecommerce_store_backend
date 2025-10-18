@@ -31,9 +31,9 @@ async def list_categories(
     - **is_active**: Show only active categories (default: true)
     """
     if is_active:
-        categories = crud_category.category.get_active(db, skip=skip, limit=limit)
+        categories = crud_category.get_active(db, skip=skip, limit=limit)
     else:
-        categories = crud_category.category.get_multi(db, skip=skip, limit=limit)
+        categories = crud_category.get_multi(db, skip=skip, limit=limit)
     
     # Add product counts
     result = []
@@ -58,7 +58,7 @@ async def get_category(
     """
     Get category by ID with product count
     """
-    category = crud_category.category.get(db, id=category_id)
+    category = crud_category.get(db, id=category_id)
     if not category:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -85,7 +85,7 @@ async def get_category_by_slug(
     """
     Get category by slug with product count
     """
-    category = crud_category.category.get_by_slug(db, slug=slug)
+    category = crud_category.get_by_slug(db, slug=slug)
     if not category:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -116,14 +116,14 @@ async def create_category(
     Requires admin authentication
     """
     # Check if slug already exists
-    existing = crud_category.category.get_by_slug(db, slug=category_in.slug)
+    existing = crud_category.get_by_slug(db, slug=category_in.slug)
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Category with this slug already exists"
         )
     
-    category = crud_category.category.create(db, obj_in=category_in)
+    category = crud_category.create(db, obj_in=category_in)
     return category
 
 
@@ -139,7 +139,7 @@ async def update_category(
     
     Requires admin authentication
     """
-    category = crud_category.category.get(db, id=category_id)
+    category = crud_category.get(db, id=category_id)
     if not category:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -148,14 +148,14 @@ async def update_category(
     
     # Check slug uniqueness if being updated
     if category_in.slug and category_in.slug != category.slug:
-        existing = crud_category.category.get_by_slug(db, slug=category_in.slug)
+        existing = crud_category.get_by_slug(db, slug=category_in.slug)
         if existing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Category with this slug already exists"
             )
     
-    category = crud_category.category.update(db, db_obj=category, obj_in=category_in)
+    category = crud_category.update(db, db_obj=category, obj_in=category_in)
     return category
 
 
@@ -170,7 +170,7 @@ async def delete_category(
     
     Requires admin authentication
     """
-    category = crud_category.category.get(db, id=category_id)
+    category = crud_category.get(db, id=category_id)
     if not category:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -188,5 +188,5 @@ async def delete_category(
             detail=f"Cannot delete category with {product_count} products. Remove products first."
         )
     
-    crud_category.category.remove(db, id=category_id)
+    crud_category.remove(db, id=category_id)
     return None
