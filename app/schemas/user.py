@@ -8,15 +8,31 @@ class UserBase(BaseSchema):
     """Base user schema with common fields"""
     
     email: EmailStr
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    phone: Optional[str] = None
+    first_name: str
+    last_name: str
+    phone: str
 
 
 class UserCreate(UserBase):
     """Schema for user registration"""
     
     password: str = Field(..., min_length=8, max_length=100)
+    
+    # Optional shipping address
+    shipping_street: Optional[str] = None
+    shipping_city: Optional[str] = None
+    shipping_postal_code: Optional[str] = None
+    shipping_country: Optional[str] = None
+    shipping_state: Optional[str] = None
+    
+    # Optional company/invoice data
+    company_name: Optional[str] = None
+    company_tax_id: Optional[str] = None
+    company_address_street: Optional[str] = None
+    company_address_city: Optional[str] = None
+    company_address_postal_code: Optional[str] = None
+    company_address_country: Optional[str] = None
+    company_address_state: Optional[str] = None
     
     @field_validator("password")
     @classmethod
@@ -35,6 +51,22 @@ class UserUpdate(BaseSchema):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     phone: Optional[str] = None
+    
+    # Optional shipping address
+    shipping_street: Optional[str] = None
+    shipping_city: Optional[str] = None
+    shipping_postal_code: Optional[str] = None
+    shipping_country: Optional[str] = None
+    shipping_state: Optional[str] = None
+    
+    # Optional company/invoice data
+    company_name: Optional[str] = None
+    company_tax_id: Optional[str] = None
+    company_address_street: Optional[str] = None
+    company_address_city: Optional[str] = None
+    company_address_postal_code: Optional[str] = None
+    company_address_country: Optional[str] = None
+    company_address_state: Optional[str] = None
 
 
 class UserResponse(UserBase, TimestampSchema):
@@ -43,6 +75,22 @@ class UserResponse(UserBase, TimestampSchema):
     is_active: bool
     is_verified: bool
     role: UserRole
+    
+    # Optional shipping address
+    shipping_street: Optional[str] = None
+    shipping_city: Optional[str] = None
+    shipping_postal_code: Optional[str] = None
+    shipping_country: Optional[str] = None
+    shipping_state: Optional[str] = None
+    
+    # Optional company/invoice data
+    company_name: Optional[str] = None
+    company_tax_id: Optional[str] = None
+    company_address_street: Optional[str] = None
+    company_address_city: Optional[str] = None
+    company_address_postal_code: Optional[str] = None
+    company_address_country: Optional[str] = None
+    company_address_state: Optional[str] = None
 
 
 class UserInDB(UserResponse):
