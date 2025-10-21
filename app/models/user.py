@@ -6,8 +6,8 @@ from app.models.base import BaseModel
 
 class UserRole(str, enum.Enum):
     """User roles"""
-    CUSTOMER = "customer"
-    ADMIN = "admin"
+    CUSTOMER = "CUSTOMER"
+    ADMIN = "ADMIN"
 
 
 class User(BaseModel):
@@ -22,9 +22,25 @@ class User(BaseModel):
     is_verified = Column(Boolean, default=False, nullable=False)
     
     # Profile
-    first_name = Column(String(100), nullable=True)
-    last_name = Column(String(100), nullable=True)
-    phone = Column(String(20), nullable=True)
+    first_name = Column(String(100), nullable=False)
+    last_name = Column(String(100), nullable=False)
+    phone = Column(String(20), nullable=False)
+    
+    # Shipping Address (optional)
+    shipping_street = Column(String(255), nullable=True)
+    shipping_city = Column(String(100), nullable=True)
+    shipping_postal_code = Column(String(20), nullable=True)
+    shipping_country = Column(String(100), nullable=True)
+    shipping_state = Column(String(100), nullable=True)
+    
+    # Company/Invoice Data (optional)
+    company_name = Column(String(255), nullable=True)
+    company_tax_id = Column(String(50), nullable=True)
+    company_address_street = Column(String(255), nullable=True)
+    company_address_city = Column(String(100), nullable=True)
+    company_address_postal_code = Column(String(20), nullable=True)
+    company_address_country = Column(String(100), nullable=True)
+    company_address_state = Column(String(100), nullable=True)
     
     # Role
     role = Column(SQLEnum(UserRole), default=UserRole.CUSTOMER, nullable=False)
