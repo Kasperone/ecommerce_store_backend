@@ -41,19 +41,24 @@ async def register(
     # Create new user
     user = crud_user.create(db, obj_in=user_in)
     
-    # Generate verification token
-    token = verification_token.create_for_user(db, user_id=user.id)
-    
-    # Send verification email
-    try:
-        send_verification_email(
-            email_to=user.email,
-            username=user.first_name or user.email,
-            token=token.token
-        )
-    except Exception as e:
-        # Log error but don't fail registration
-        print(f"Failed to send verification email: {str(e)}")
+    # Generate verification token and send email (if RESEND_API_KEY is configured)
+    if settings.RESEND_API_KEY and settings.RESEND_API_KEY != "re_your_api_key_here":
+        try:
+            token = verification_token.create_for_user(db, user_id=user.id)
+            send_verification_email(
+                email_to=user.email,
+                username=user.first_name or user.email,
+                token=token.token
+            )
+        except Exception as e:
+            # Log error but don't fail registration
+            print(f"Failed to send verification email: {str(e)}")
+    else:
+        # Auto-verify user if email is not configured (development only)
+        print("⚠️  RESEND_API_KEY not configured - auto-verifying user for development")
+        user.is_verified = True
+        db.commit()
+        db.refresh(user)
     
     return user
 
