@@ -29,8 +29,11 @@ class Settings(BaseSettings):
     R2_BUCKET_NAME: str = ""
     R2_PUBLIC_URL: str = ""
     
-    # Resend
+    # Email / Resend
     RESEND_API_KEY: str = ""
+    EMAIL_FROM: str = "noreply@ecommerce.com"
+    EMAIL_FROM_NAME: str = "E-commerce Store"
+    FRONTEND_URL: str = "http://localhost:3000"
     
     # PayU
     PAYU_POS_ID: str = ""
