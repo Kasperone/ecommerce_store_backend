@@ -39,7 +39,7 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
             hashed_password=get_password_hash(obj_in.password),
             first_name=obj_in.first_name,
             last_name=obj_in.last_name,
-            phone=obj_in.phone,
+            phone=obj_in.phone or None,
         )
         db.add(db_obj)
         db.commit()

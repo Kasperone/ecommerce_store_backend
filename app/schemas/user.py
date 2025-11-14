@@ -10,7 +10,7 @@ class UserBase(BaseSchema):
     email: EmailStr
     first_name: str
     last_name: str
-    phone: str
+    phone: Optional[str] = None
 
 
 class UserCreate(UserBase):

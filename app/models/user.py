@@ -24,7 +24,7 @@ class User(BaseModel):
     # Profile
     first_name = Column(String(100), nullable=False)
     last_name = Column(String(100), nullable=False)
-    phone = Column(String(20), nullable=False)
+    phone = Column(String(20), nullable=True)
     
     # Shipping Address (optional)
     shipping_street = Column(String(255), nullable=True)
