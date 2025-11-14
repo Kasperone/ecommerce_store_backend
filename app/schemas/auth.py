@@ -42,3 +42,9 @@ class EmailVerification(BaseSchema):
     """Schema for email verification"""
     
     token: str
+
+
+class EmailResend(BaseSchema):
+    """Schema for resending verification email"""
+    
+    email: str
