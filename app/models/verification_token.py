@@ -17,7 +17,7 @@ class VerificationToken(BaseModel):
     expires_at = Column(DateTime, nullable=False)
     
     # Relationships
-    user = relationship("User", back_populates="verification_tokens")
+    user = relationship("User", back_populates="verification_tokens", passive_deletes=True)
     
     def __repr__(self):
         return f"<VerificationToken {self.token[:8]}... for user_id={self.user_id}>"
