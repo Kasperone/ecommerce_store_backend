@@ -50,3 +50,8 @@ htmlcov/
 
 # Alembic
 alembic/versions/*.pyc
+
+# Claude Code
+CLAUDE.md
+CLAUDE.local.md
+.claude/
