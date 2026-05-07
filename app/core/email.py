@@ -265,3 +265,98 @@ def send_welcome_email(
         subject=subject,
         html_content=html_content,
     )
+
+
+def send_already_registered_email(
+    *,
+    email_to: str,
+    username: str,
+) -> dict:
+    """
+    Notify a user that someone (possibly themselves) attempted to register an
+    account with their email. Sent in place of a verification email so that
+    /register can return a generic response without leaking account existence.
+    """
+    subject = f"{settings.EMAIL_FROM_NAME} - Account already exists"
+
+    login_link = f"{settings.FRONTEND_URL}/login"
+    reset_link = f"{settings.FRONTEND_URL}/password-recovery"
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>Account already exists</title>
+        <style>
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                line-height: 1.6;
+                color: #333;
+                max-width: 600px;
+                margin: 0 auto;
+                padding: 20px;
+            }}
+            .container {{
+                background-color: #ffffff;
+                border-radius: 8px;
+                padding: 40px;
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            }}
+            h1 {{ color: #2563eb; }}
+            .button {{
+                display: inline-block;
+                padding: 12px 28px;
+                background-color: #2563eb;
+                color: #ffffff !important;
+                text-decoration: none;
+                border-radius: 6px;
+                margin: 8px 8px 8px 0;
+            }}
+            .footer {{
+                margin-top: 32px;
+                padding-top: 16px;
+                border-top: 1px solid #e5e7eb;
+                font-size: 13px;
+                color: #6b7280;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Account already exists</h1>
+            <p>Hi {username},</p>
+            <p>
+                We received a registration request using this email address, but
+                an account already exists for it.
+            </p>
+            <p>
+                If this was you, you can sign in or reset your password:
+            </p>
+            <p>
+                <a href="{login_link}" class="button">Sign in</a>
+                <a href="{reset_link}" class="button" style="background-color:#6b7280;">Reset password</a>
+            </p>
+            <p>If you didn't try to register, you can safely ignore this email.</p>
+            <div class="footer">
+                © {settings.EMAIL_FROM_NAME}
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+    text_content = (
+        f"Hi {username},\n\n"
+        f"We received a registration request for this email, but an account "
+        f"already exists. If this was you, sign in at {login_link} or reset "
+        f"your password at {reset_link}.\n\n"
+        f"If you didn't try to register, you can ignore this email.\n"
+    )
+
+    return send_email(
+        email_to=email_to,
+        subject=subject,
+        html_content=html_content,
+        text_content=text_content,
+    )

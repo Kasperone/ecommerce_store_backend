@@ -46,5 +46,11 @@ class EmailVerification(BaseSchema):
 
 class EmailResend(BaseSchema):
     """Schema for resending verification email"""
-    
+
     email: str
+
+
+class GenericMessage(BaseSchema):
+    """Generic single-message response (used where revealing detail would leak info)."""
+
+    message: str
