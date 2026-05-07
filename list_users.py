@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 # Add the app directory to the path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'app'))
 
-from app.models.user import User
+from app.models import User
 
 # Load environment variables
 load_dotenv()
