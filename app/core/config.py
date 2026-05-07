@@ -1,14 +1,15 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List
+from typing import List, Literal
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
-    
+
     # Application
     APP_NAME: str = "E-commerce API"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = True
+    ENVIRONMENT: Literal["development", "staging", "production"] = "development"
     SECRET_KEY: str
     
     # Database

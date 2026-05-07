@@ -1,6 +1,6 @@
 from sqlalchemy import Column, String, Integer, ForeignKey, DateTime
 from sqlalchemy.orm import relationship
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uuid
 
 from app.models.base import BaseModel
@@ -25,14 +25,19 @@ class VerificationToken(BaseModel):
     @property
     def is_expired(self) -> bool:
         """Check if token has expired"""
-        return datetime.utcnow() > self.expires_at
-    
+        now = datetime.now(timezone.utc)
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            # Existing rows were stored as naive UTC; compare like-for-like.
+            now = now.replace(tzinfo=None)
+        return now > expires_at
+
     @staticmethod
     def generate_token() -> str:
         """Generate a unique verification token"""
         return str(uuid.uuid4())
-    
+
     @staticmethod
     def get_expiration_time(hours: int = 24) -> datetime:
         """Get expiration datetime (default 24 hours from now)"""
-        return datetime.utcnow() + timedelta(hours=hours)
+        return datetime.now(timezone.utc) + timedelta(hours=hours)

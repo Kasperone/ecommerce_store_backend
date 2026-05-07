@@ -6,61 +6,87 @@ from sqlalchemy.orm import Session
 from app.core.dependencies import get_db, get_current_user, get_current_active_user
 from app.core.security import create_access_token
 from app.core.config import settings
-from app.core.email import send_verification_email, send_welcome_email
+from app.core.email import (
+    send_verification_email,
+    send_welcome_email,
+    send_already_registered_email,
+)
 from app.crud import user as crud_user
 from app.crud.verification_token import verification_token
-from app.schemas.auth import Token, EmailVerification, EmailResend
+from app.schemas.auth import Token, EmailVerification, EmailResend, GenericMessage
 from app.schemas.user import UserCreate, UserResponse, UserUpdate
 from app.models.user import User
+
+
+# Generic message returned by /register and /resend-verification regardless of
+# whether the email exists, to prevent account enumeration via response shape.
+GENERIC_REGISTRATION_MESSAGE = (
+    "If the email is available, a verification link has been sent."
+)
 
 router = APIRouter()
 
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    response_model=GenericMessage,
+    status_code=status.HTTP_200_OK,
+)
 async def register(
     user_in: UserCreate,
     db: Session = Depends(get_db),
 ):
     """
-    Register a new user
-    
-    - **email**: Valid email address (unique)
+    Register a new user.
+
+    Always returns a generic 200 response regardless of whether the email is
+    already registered. This prevents account enumeration. If the email is
+    already in use, an "account already exists" notice is sent out of band
+    instead of a verification link.
+
+    - **email**: Valid email address
     - **password**: Strong password (min 8 chars, 1 digit, 1 uppercase)
     - **first_name**: Optional first name
     - **last_name**: Optional last name
     - **phone**: Optional phone number
     """
-    # Check if user already exists
     existing_user = crud_user.get_by_email(db, email=user_in.email)
+
     if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User with this email already exists"
-        )
-    
-    # Create new user
+        # Email already in use: notify the existing account holder out of band
+        # and return the same generic body as a successful registration.
+        try:
+            send_already_registered_email(
+                email_to=existing_user.email,
+                username=existing_user.first_name or existing_user.email,
+            )
+        except Exception as e:
+            print(f"Failed to send already-registered email: {str(e)}")
+        return {"message": GENERIC_REGISTRATION_MESSAGE}
+
     user = crud_user.create(db, obj_in=user_in)
-    
-    # Generate verification token and send email (if RESEND_API_KEY is configured)
-    if settings.RESEND_API_KEY and settings.RESEND_API_KEY != "re_your_api_key_here":
+
+    if settings.ENVIRONMENT == "development":
+        # Dev convenience: skip email entirely so registration works without
+        # a configured Resend API key.
+        print("⚠️  ENVIRONMENT=development - auto-verifying user")
+        user.is_verified = True
+        db.commit()
+        db.refresh(user)
+    else:
         try:
             token = verification_token.create_for_user(db, user_id=user.id)
             send_verification_email(
                 email_to=user.email,
                 username=user.first_name or user.email,
-                token=token.token
+                token=token.token,
             )
         except Exception as e:
-            # Log error but don't fail registration
+            # Don't fail the registration on email send failure; the user can
+            # request a new verification email via /auth/resend-verification.
             print(f"Failed to send verification email: {str(e)}")
-    else:
-        # Auto-verify user if email is not configured (development only)
-        print("⚠️  RESEND_API_KEY not configured - auto-verifying user for development")
-        user.is_verified = True
-        db.commit()
-        db.refresh(user)
-    
-    return user
+
+    return {"message": GENERIC_REGISTRATION_MESSAGE}
 
 
 @router.post("/login", response_model=Token)
@@ -222,50 +248,36 @@ async def verify_email(
     return {"message": "Email verified successfully"}
 
 
-@router.post("/resend-verification", status_code=status.HTTP_200_OK)
+@router.post(
+    "/resend-verification",
+    response_model=GenericMessage,
+    status_code=status.HTTP_200_OK,
+)
 async def resend_verification_email(
     resend: EmailResend,
     db: Session = Depends(get_db),
 ):
     """
-    Resend verification email
-    
+    Resend verification email.
+
+    Always returns a generic 200 response regardless of whether the email is
+    registered or already verified. Mirrors the response shape of /register
+    so the two endpoints cannot be used to enumerate accounts.
+
     - **email**: User email address
-    
-    Returns success message
     """
-    # Get user by email
     user = crud_user.get_by_email(db, email=resend.email)
-    
-    if not user:
-        # Don't reveal if user exists or not (security)
-        return {"message": "If the email exists, a verification link has been sent"}
-    
-    # Check if already verified
-    if user.is_verified:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already verified"
-        )
-    
-    # Delete old tokens for this user
-    verification_token.delete_by_user_id(db, user_id=user.id)
-    
-    # Create new verification token
-    token = verification_token.create_for_user(db, user_id=user.id)
-    
-    # Send verification email
-    try:
-        send_verification_email(
-            email_to=user.email,
-            username=user.first_name or user.email,
-            token=token.token
-        )
-    except Exception as e:
-        print(f"Failed to send verification email: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to send verification email"
-        )
-    
-    return {"message": "Verification email sent"}
+
+    if user and not user.is_verified:
+        verification_token.delete_by_user_id(db, user_id=user.id)
+        token = verification_token.create_for_user(db, user_id=user.id)
+        try:
+            send_verification_email(
+                email_to=user.email,
+                username=user.first_name or user.email,
+                token=token.token,
+            )
+        except Exception as e:
+            print(f"Failed to send verification email: {str(e)}")
+
+    return {"message": GENERIC_REGISTRATION_MESSAGE}
