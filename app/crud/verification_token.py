@@ -1,5 +1,5 @@
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app.crud.base import CRUDBase
@@ -136,7 +136,7 @@ class CRUDVerificationToken(CRUDBase[VerificationToken, None, None]):
             Number of tokens deleted
         """
         count = db.query(VerificationToken).filter(
-            VerificationToken.expires_at < datetime.utcnow()
+            VerificationToken.expires_at < datetime.now(timezone.utc)
         ).delete()
         db.commit()
         return count
