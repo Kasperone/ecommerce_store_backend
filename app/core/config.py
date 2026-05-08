@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:3000"]
+
+    # Rate limiting (slowapi). Use ``memory://`` for single-instance dev,
+    # ``redis://host:port/db`` for multi-worker / production deployments.
+    RATE_LIMIT_STORAGE_URL: str = "memory://"
     
     # Cloudflare R2
     R2_ACCOUNT_ID: str = ""
