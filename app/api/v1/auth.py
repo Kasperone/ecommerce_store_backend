@@ -1,5 +1,5 @@
 from datetime import timedelta
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
@@ -10,6 +10,12 @@ from app.core.email import (
     send_verification_email,
     send_welcome_email,
     send_already_registered_email,
+)
+from app.core.rate_limit import (
+    get_email_or_ip_key,
+    limiter,
+    stash_json_email_for_rate_limit,
+    stash_login_email_for_rate_limit,
 )
 from app.crud import user as crud_user
 from app.crud.verification_token import verification_token
@@ -32,7 +38,9 @@ router = APIRouter()
     response_model=GenericMessage,
     status_code=status.HTTP_200_OK,
 )
+@limiter.limit("5/hour")
 async def register(
+    request: Request,
     user_in: UserCreate,
     db: Session = Depends(get_db),
 ):
@@ -90,9 +98,13 @@ async def register(
 
 
 @router.post("/login", response_model=Token)
+@limiter.limit("5/15minutes")
+@limiter.limit("5/15minutes", key_func=get_email_or_ip_key)
 async def login(
+    request: Request,
     db: Session = Depends(get_db),
     form_data: OAuth2PasswordRequestForm = Depends(),
+    _stash: None = Depends(stash_login_email_for_rate_limit),
 ):
     """
     OAuth2 compatible token login
@@ -253,9 +265,12 @@ async def verify_email(
     response_model=GenericMessage,
     status_code=status.HTTP_200_OK,
 )
+@limiter.limit("3/hour", key_func=get_email_or_ip_key)
 async def resend_verification_email(
+    request: Request,
     resend: EmailResend,
     db: Session = Depends(get_db),
+    _stash: None = Depends(stash_json_email_for_rate_limit),
 ):
     """
     Resend verification email.
