@@ -63,6 +63,7 @@ class User(BaseModel):
     # Relationships
     orders = relationship("Order", back_populates="user", cascade="all, delete-orphan")
     verification_tokens = relationship("VerificationToken", back_populates="user", cascade="all, delete-orphan")
+    refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<User {self.email}>"

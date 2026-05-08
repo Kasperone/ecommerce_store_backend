@@ -4,5 +4,15 @@ from app.models.category import Category
 from app.models.product import Product
 from app.models.order import Order, OrderItem
 from app.models.verification_token import VerificationToken
+from app.models.refresh_token import RefreshToken
 
-__all__ = ["Base", "User", "Category", "Product", "Order", "OrderItem", "VerificationToken"]
+__all__ = [
+    "Base",
+    "User",
+    "Category",
+    "Product",
+    "Order",
+    "OrderItem",
+    "VerificationToken",
+    "RefreshToken",
+]

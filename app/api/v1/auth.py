@@ -1,10 +1,19 @@
-from datetime import timedelta
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+import logging
+from datetime import datetime, timezone
+from typing import Optional
+
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
+from jose import JWTError
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_db, get_current_user, get_current_active_user
-from app.core.security import create_access_token, verify_password
+from app.core.dependencies import get_db, get_current_active_user
+from app.core.security import (
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    verify_password,
+)
 from app.core.config import settings
 from app.core.email import (
     send_verification_email,
@@ -19,13 +28,8 @@ from app.core.rate_limit import (
     stash_json_email_for_rate_limit,
     stash_login_email_for_rate_limit,
 )
-from app.core.rate_limit import (
-    get_email_or_ip_key,
-    limiter,
-    stash_json_email_for_rate_limit,
-    stash_login_email_for_rate_limit,
-)
 from app.crud import user as crud_user
+from app.crud import refresh_token as crud_refresh_token
 from app.crud.verification_token import verification_token
 from app.schemas.auth import (
     Token,
@@ -38,6 +42,55 @@ from app.schemas.auth import (
 )
 from app.schemas.user import UserCreate, UserResponse, UserUpdate
 from app.models.user import User
+
+
+logger = logging.getLogger(__name__)
+
+
+REFRESH_COOKIE_NAME = "refresh_token"
+REFRESH_COOKIE_PATH = "/api/v1/auth"
+
+
+def _set_refresh_cookie(response: Response, token: str, expires_at: datetime) -> None:
+    """Attach the rotating refresh token as an HttpOnly cookie.
+
+    Path-scoped to ``/api/v1/auth`` so it never rides on regular API calls
+    (limits exposure if a single endpoint somehow leaks ``Set-Cookie``-bound
+    state) and ``SameSite=Strict`` to keep CSRF risk on /refresh negligible.
+    ``Secure`` is dropped only in development so localhost http works.
+    """
+    max_age = int((expires_at - datetime.now(timezone.utc)).total_seconds())
+    if max_age < 0:
+        max_age = 0
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value=token,
+        max_age=max_age,
+        httponly=True,
+        secure=(settings.ENVIRONMENT != "development"),
+        samesite="strict",
+        path=REFRESH_COOKIE_PATH,
+    )
+
+
+def _clear_refresh_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=REFRESH_COOKIE_NAME,
+        path=REFRESH_COOKIE_PATH,
+    )
+
+
+def _client_ip(request: Request) -> Optional[str]:
+    if request.client is None:
+        return None
+    return request.client.host
+
+
+def _user_agent(request: Request) -> Optional[str]:
+    ua = request.headers.get("user-agent")
+    if not ua:
+        return None
+    return ua[:512]
 
 
 # Generic message returned by /register and /resend-verification regardless of
@@ -116,17 +169,15 @@ async def register(
 @limiter.limit("5/15minutes", key_func=get_email_or_ip_key)
 async def login(
     request: Request,
+    response: Response,
     db: Session = Depends(get_db),
     form_data: OAuth2PasswordRequestForm = Depends(),
     _stash: None = Depends(stash_login_email_for_rate_limit),
 ):
-    """
-    OAuth2 compatible token login
-    
-    - **username**: User email
-    - **password**: User password
-    
-    Returns JWT access token
+    """OAuth2 compatible token login.
+
+    Returns the access JWT in the response body and sets a rotating refresh
+    token as an HttpOnly cookie scoped to ``/api/v1/auth``.
     """
     # Look up user separately from password verification so we can attribute
     # failed attempts to the right account for lockout tracking.
@@ -148,10 +199,6 @@ async def login(
         if user:
             just_locked = crud_user.register_failed_login(db, user=user)
             if just_locked:
-                # Out-of-band notification: HTTP response stays generic
-                # (so attackers can't probe lockout state), but the real
-                # owner gets the explanation by email and a one-click
-                # path to reset their password (which clears the lock).
                 try:
                     send_account_locked_email(
                         email_to=user.email,
@@ -178,17 +225,20 @@ async def login(
 
     crud_user.register_successful_login(db, user=user)
 
-    # Create access token
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        subject=user.id,
-        expires_delta=access_token_expires
+    access_token, _, _ = create_access_token(subject=user.id)
+    refresh, refresh_jti, refresh_exp = create_refresh_token(subject=user.id)
+    crud_refresh_token.create(
+        db,
+        user_id=user.id,
+        jti=refresh_jti,
+        token=refresh,
+        expires_at=refresh_exp,
+        ip=_client_ip(request),
+        user_agent=_user_agent(request),
     )
-    
-    return {
-        "access_token": access_token,
-        "token_type": "bearer"
-    }
+    _set_refresh_cookie(response, refresh, refresh_exp)
+
+    return {"access_token": access_token, "token_type": "bearer"}
 
 
 @router.get("/me", response_model=UserResponse)
@@ -219,24 +269,130 @@ async def update_current_user(
 
 
 @router.post("/refresh", response_model=Token)
+@limiter.limit("30/hour")
 async def refresh_token(
-    current_user: User = Depends(get_current_user),
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    refresh_cookie: Optional[str] = Cookie(default=None, alias=REFRESH_COOKIE_NAME),
 ):
+    """Rotate the refresh cookie and mint a new access token.
+
+    Validates: signature/issuer/audience/expiry/type ⇒ DB row exists ⇒ token
+    matches the stored hash ⇒ row not expired ⇒ row not already revoked.
+    A revoked-but-validating token triggers reuse-detection: the entire
+    refresh family for that user is revoked and a 401 is returned.
     """
-    Refresh access token
-    
-    Requires valid token
-    """
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        subject=current_user.id,
-        expires_delta=access_token_expires
+    invalid = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate refresh token",
     )
-    
-    return {
-        "access_token": access_token,
-        "token_type": "bearer"
-    }
+
+    if not refresh_cookie:
+        _clear_refresh_cookie(response)
+        raise invalid
+
+    try:
+        decoded = decode_token(refresh_cookie, expected_type="refresh")
+    except JWTError:
+        _clear_refresh_cookie(response)
+        raise invalid
+
+    row = crud_refresh_token.get_by_jti(db, jti=decoded.jti)
+    if row is None or not crud_refresh_token.matches(row, token=refresh_cookie):
+        _clear_refresh_cookie(response)
+        raise invalid
+
+    if crud_refresh_token.is_revoked(row):
+        # Reuse detection: the JWT validates and matches a row, but the row
+        # was already rotated past. The legitimate client would be holding
+        # the replacement; presenting an old token is a strong theft signal.
+        crud_refresh_token.revoke_all_for_user(db, user_id=row.user_id)
+        logger.warning(
+            "refresh-token reuse detected; revoked family for user_id=%s jti=%s ip=%s",
+            row.user_id,
+            decoded.jti,
+            _client_ip(request),
+        )
+        _clear_refresh_cookie(response)
+        raise invalid
+
+    if crud_refresh_token.is_expired(row):
+        crud_refresh_token.revoke(db, row=row)
+        _clear_refresh_cookie(response)
+        raise invalid
+
+    user = crud_user.get(db, id=row.user_id)
+    if user is None or not user.is_active:
+        crud_refresh_token.revoke(db, row=row)
+        _clear_refresh_cookie(response)
+        raise invalid
+
+    new_refresh, new_jti, new_exp = create_refresh_token(subject=user.id)
+    crud_refresh_token.rotate(
+        db,
+        old=row,
+        new_jti=new_jti,
+        new_token=new_refresh,
+        new_expires_at=new_exp,
+        ip=_client_ip(request),
+        user_agent=_user_agent(request),
+    )
+    _set_refresh_cookie(response, new_refresh, new_exp)
+
+    access_token, _, _ = create_access_token(subject=user.id)
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.post(
+    "/logout",
+    response_model=GenericMessage,
+    status_code=status.HTTP_200_OK,
+)
+async def logout(
+    response: Response,
+    db: Session = Depends(get_db),
+    refresh_cookie: Optional[str] = Cookie(default=None, alias=REFRESH_COOKIE_NAME),
+):
+    """Revoke the current refresh row (if any) and clear the cookie.
+
+    Idempotent: invalid or missing cookies still return 200, so a stale
+    client UI can call /logout without a special-case error path.
+    """
+    if refresh_cookie:
+        try:
+            decoded = decode_token(refresh_cookie, expected_type="refresh")
+        except JWTError:
+            decoded = None
+        if decoded is not None:
+            row = crud_refresh_token.get_by_jti(db, jti=decoded.jti)
+            if row is not None and not crud_refresh_token.is_revoked(row):
+                crud_refresh_token.revoke(db, row=row)
+    _clear_refresh_cookie(response)
+    return {"message": "Logged out."}
+
+
+@router.post(
+    "/logout-all",
+    response_model=GenericMessage,
+    status_code=status.HTTP_200_OK,
+)
+async def logout_all(
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Revoke every refresh token for the current user and bump
+    ``password_changed_at`` so existing access tokens stop validating.
+    Useful for "sign out everywhere" after a credential scare."""
+    crud_refresh_token.revoke_all_for_user(db, user_id=current_user.id)
+    # Push iat-floor forward so any access token issued before now is
+    # rejected by get_current_user. We don't change the password itself.
+    current_user.password_changed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.add(current_user)
+    db.commit()
+    _clear_refresh_cookie(response)
+    return {"message": "Signed out of all sessions."}
 
 
 @router.post("/verify-email", status_code=status.HTTP_200_OK)
