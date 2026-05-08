@@ -18,7 +18,10 @@ class Settings(BaseSettings):
     # JWT
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 14
+    JWT_ISSUER: str = "ecommerce-store"
+    JWT_AUDIENCE: str = "ecommerce-store-clients"
     
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:3000"]

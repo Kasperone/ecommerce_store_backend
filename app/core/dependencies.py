@@ -1,25 +1,20 @@
-from typing import Generator, Optional
+from datetime import timezone
+from typing import Generator
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import jwt, JWTError
+from jose import JWTError
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.core.database import SessionLocal
-from app.models.user import User, UserRole
+from app.core.security import decode_token
 from app.crud import user as crud_user
+from app.models.user import User, UserRole
 
-# OAuth2 scheme for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 
 def get_db() -> Generator:
-    """
-    Database session dependency
-    
-    Yields:
-        Database session
-    """
     db = SessionLocal()
     try:
         yield db
@@ -29,65 +24,53 @@ def get_db() -> Generator:
 
 async def get_current_user(
     db: Session = Depends(get_db),
-    token: str = Depends(oauth2_scheme)
+    token: str = Depends(oauth2_scheme),
 ) -> User:
-    """
-    Get current authenticated user from JWT token
-    
-    Args:
-        db: Database session
-        token: JWT access token
-    
-    Returns:
-        Current user object
-    
-    Raises:
-        HTTPException: If token is invalid or user not found
+    """Resolve the bearer access token to a user.
+
+    Rejects tokens whose ``iat`` predates ``user.password_changed_at`` —
+    that's how /logout-all and password rotations invalidate access tokens
+    without a denylist.
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
+
     try:
-        payload = jwt.decode(
-            token, 
-            settings.JWT_SECRET_KEY, 
-            algorithms=[settings.JWT_ALGORITHM]
-        )
-        user_id: str = payload.get("sub")
-        if user_id is None:
-            raise credentials_exception
+        decoded = decode_token(token, expected_type="access")
     except JWTError:
         raise credentials_exception
-    
-    user = crud_user.get(db, id=int(user_id))
+
+    try:
+        user_id = int(decoded.subject)
+    except ValueError:
+        raise credentials_exception
+
+    user = crud_user.get(db, id=user_id)
     if user is None:
         raise credentials_exception
-    
+
+    # password_changed_at is stored naive UTC; align the comparison.
+    pwd_changed = user.password_changed_at
+    if pwd_changed is not None:
+        iat = decoded.issued_at
+        if iat.tzinfo is not None:
+            iat = iat.astimezone(timezone.utc).replace(tzinfo=None)
+        if iat < pwd_changed:
+            raise credentials_exception
+
     return user
 
 
 async def get_current_active_user(
     current_user: User = Depends(get_current_user),
 ) -> User:
-    """
-    Get current active user
-    
-    Args:
-        current_user: User from get_current_user dependency
-    
-    Returns:
-        Current user if active
-    
-    Raises:
-        HTTPException: If user is inactive
-    """
     if not current_user.is_active:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Inactive user"
+            detail="Inactive user",
         )
     return current_user
 
@@ -95,21 +78,9 @@ async def get_current_active_user(
 async def get_current_admin(
     current_user: User = Depends(get_current_active_user),
 ) -> User:
-    """
-    Get current user if they are an admin
-    
-    Args:
-        current_user: User from get_current_active_user dependency
-    
-    Returns:
-        Current user if admin
-    
-    Raises:
-        HTTPException: If user is not an admin
-    """
     if current_user.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not enough permissions"
+            detail="Not enough permissions",
         )
     return current_user

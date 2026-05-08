@@ -1,9 +1,26 @@
+"""Password hashing and JWT helpers.
+
+Tokens carry a ``type`` claim (``"access"`` or ``"refresh"``) so the same
+signing key cannot be used to swap one shape for the other. ``decode_token``
+verifies signature, expiry, issuer, audience, and the expected type in a
+single call. Each token also carries a unique ``jti`` (UUID4) which is used
+by the refresh flow to look up the persisted DB row and detect reuse.
+"""
+
+import hashlib
+import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Union, Optional
-from jose import jwt
+from typing import Any, Literal, Optional, Union
+
+from jose import jwt, JWTError
 from passlib.context import CryptContext
 
 from app.core.config import settings
+
+
+TokenType = Literal["access", "refresh"]
+
 
 # Password hashing context - Argon2id configuration
 # Based on OWASP recommendations for Argon2id:
@@ -16,61 +33,113 @@ pwd_context = CryptContext(
     argon2__memory_cost=19456,
     argon2__time_cost=2,
     argon2__parallelism=1,
-    argon2__type="ID"  # Argon2id variant (recommended)
+    argon2__type="ID",
 )
+
+
+@dataclass(frozen=True)
+class DecodedToken:
+    """Validated JWT payload, narrowed to the fields callers actually need."""
+
+    subject: str
+    jti: str
+    type: TokenType
+    issued_at: datetime
+    expires_at: datetime
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _build_token(
+    *,
+    subject: Union[str, Any],
+    token_type: TokenType,
+    expires_delta: timedelta,
+    extra: Optional[dict] = None,
+) -> tuple[str, str, datetime]:
+    """Build a signed JWT and return ``(token, jti, expires_at)``."""
+    now = _utcnow()
+    expires_at = now + expires_delta
+    jti = uuid.uuid4().hex
+    payload = {
+        "sub": str(subject),
+        "iat": int(now.timestamp()),
+        "exp": int(expires_at.timestamp()),
+        "iss": settings.JWT_ISSUER,
+        "aud": settings.JWT_AUDIENCE,
+        "jti": jti,
+        "type": token_type,
+    }
+    if extra:
+        payload.update(extra)
+    encoded = jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    return encoded, jti, expires_at
 
 
 def create_access_token(
     subject: Union[str, Any], expires_delta: Optional[timedelta] = None
-) -> str:
+) -> tuple[str, str, datetime]:
+    """Issue a short-lived access token. Returns ``(token, jti, expires_at)``."""
+    delta = expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    return _build_token(subject=subject, token_type="access", expires_delta=delta)
+
+
+def create_refresh_token(
+    subject: Union[str, Any], expires_delta: Optional[timedelta] = None
+) -> tuple[str, str, datetime]:
+    """Issue a refresh token. Returns ``(token, jti, expires_at)``.
+
+    The caller is expected to persist the corresponding row in ``refresh_tokens``
+    (storing the SHA-256 of ``token``) before returning anything to the client.
     """
-    Create JWT access token
-    
-    Args:
-        subject: Usually user ID or email
-        expires_delta: Token expiration time
-    
-    Returns:
-        Encoded JWT token
+    delta = expires_delta or timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    return _build_token(subject=subject, token_type="refresh", expires_delta=delta)
+
+
+def decode_token(token: str, *, expected_type: TokenType) -> DecodedToken:
+    """Validate a JWT and require it to be of ``expected_type``.
+
+    Raises :class:`jose.JWTError` on any failure (bad signature, wrong
+    issuer/audience, expiry, missing claims, type mismatch). Callers in the
+    auth layer translate this into a 401.
     """
-    if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
-    else:
-        expire = datetime.now(timezone.utc) + timedelta(
-            minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
-        )
-    
-    to_encode = {"exp": expire, "sub": str(subject)}
-    encoded_jwt = jwt.encode(
-        to_encode, 
-        settings.JWT_SECRET_KEY, 
-        algorithm=settings.JWT_ALGORITHM
+    payload = jwt.decode(
+        token,
+        settings.JWT_SECRET_KEY,
+        algorithms=[settings.JWT_ALGORITHM],
+        issuer=settings.JWT_ISSUER,
+        audience=settings.JWT_AUDIENCE,
     )
-    return encoded_jwt
+    token_type = payload.get("type")
+    if token_type != expected_type:
+        raise JWTError(f"expected token type {expected_type!r}, got {token_type!r}")
+    sub = payload.get("sub")
+    jti = payload.get("jti")
+    iat = payload.get("iat")
+    exp = payload.get("exp")
+    if not sub or not jti or iat is None or exp is None:
+        raise JWTError("token is missing required claims")
+    return DecodedToken(
+        subject=str(sub),
+        jti=str(jti),
+        type=token_type,
+        issued_at=datetime.fromtimestamp(int(iat), tz=timezone.utc),
+        expires_at=datetime.fromtimestamp(int(exp), tz=timezone.utc),
+    )
+
+
+def hash_refresh_token(token: str) -> str:
+    """SHA-256 hex digest used to store refresh tokens at rest. Lookup is by
+    ``jti`` (cheap, indexed); the hash is then compared in constant time so a
+    DB read alone cannot mint a valid token."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """
-    Verify a password against a hash
-    
-    Args:
-        plain_password: Plain text password
-        hashed_password: Hashed password from database
-    
-    Returns:
-        True if password matches, False otherwise
-    """
     return pwd_context.verify(plain_password, hashed_password)
 
 
 def get_password_hash(password: str) -> str:
-    """
-    Hash a password
-    
-    Args:
-        password: Plain text password
-    
-    Returns:
-        Hashed password
-    """
     return pwd_context.hash(password)
