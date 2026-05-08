@@ -267,6 +267,96 @@ def send_welcome_email(
     )
 
 
+def send_password_reset_email(
+    *,
+    email_to: str,
+    username: str,
+    token: str,
+) -> dict:
+    """Send a password reset email with a one-time link valid for 1 hour."""
+    subject = f"{settings.EMAIL_FROM_NAME} - Reset your password"
+
+    reset_link = f"{settings.FRONTEND_URL}/password-reset/{token}"
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Reset your password</title>
+        <style>
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                line-height: 1.6;
+                color: #333;
+                max-width: 600px;
+                margin: 0 auto;
+                padding: 20px;
+            }}
+            .container {{
+                background-color: #ffffff;
+                border-radius: 8px;
+                padding: 40px;
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            }}
+            h1 {{ color: #2563eb; }}
+            .button {{
+                display: inline-block;
+                padding: 14px 32px;
+                background-color: #2563eb;
+                color: #ffffff !important;
+                text-decoration: none;
+                border-radius: 6px;
+                font-weight: 600;
+                margin: 20px 0;
+            }}
+            .link {{ color: #2563eb; word-break: break-all; }}
+            .footer {{
+                margin-top: 40px;
+                padding-top: 20px;
+                border-top: 1px solid #e5e7eb;
+                font-size: 13px;
+                color: #6b7280;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Reset your password</h1>
+            <p>Hi {username},</p>
+            <p>We received a request to reset your password. Click the button below to choose a new one:</p>
+            <p style="text-align:center;">
+                <a href="{reset_link}" class="button">Reset password</a>
+            </p>
+            <p>Or copy and paste this link into your browser:</p>
+            <p class="link">{reset_link}</p>
+            <p><strong>This link expires in 1 hour</strong> and can only be used once.</p>
+            <p>If you didn't request a password reset, you can safely ignore this email — your password won't change.</p>
+            <div class="footer">
+                © {settings.EMAIL_FROM_NAME}
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+    text_content = (
+        f"Hi {username},\n\n"
+        f"We received a request to reset your password. Use this link to set a new one:\n\n"
+        f"{reset_link}\n\n"
+        f"This link expires in 1 hour and can only be used once.\n\n"
+        f"If you didn't request a password reset, ignore this email — your password won't change.\n"
+    )
+
+    return send_email(
+        email_to=email_to,
+        subject=subject,
+        html_content=html_content,
+        text_content=text_content,
+    )
+
+
 def send_already_registered_email(
     *,
     email_to: str,

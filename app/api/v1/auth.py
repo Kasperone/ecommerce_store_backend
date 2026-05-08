@@ -10,6 +10,7 @@ from app.core.email import (
     send_verification_email,
     send_welcome_email,
     send_already_registered_email,
+    send_password_reset_email,
 )
 from app.core.rate_limit import (
     get_email_or_ip_key,
@@ -19,7 +20,15 @@ from app.core.rate_limit import (
 )
 from app.crud import user as crud_user
 from app.crud.verification_token import verification_token
-from app.schemas.auth import Token, EmailVerification, EmailResend, GenericMessage
+from app.schemas.auth import (
+    Token,
+    EmailVerification,
+    EmailResend,
+    GenericMessage,
+    PasswordChange,
+    PasswordReset,
+    PasswordResetConfirm,
+)
 from app.schemas.user import UserCreate, UserResponse, UserUpdate
 from app.models.user import User
 
@@ -28,6 +37,12 @@ from app.models.user import User
 # whether the email exists, to prevent account enumeration via response shape.
 GENERIC_REGISTRATION_MESSAGE = (
     "If the email is available, a verification link has been sent."
+)
+
+# Generic message returned by /password-reset/request regardless of whether the
+# email maps to an account.
+GENERIC_PASSWORD_RESET_MESSAGE = (
+    "If an account exists for this email, a password reset link has been sent."
 )
 
 router = APIRouter()
@@ -258,6 +273,95 @@ async def verify_email(
         print(f"Failed to send welcome email: {str(e)}")
     
     return {"message": "Email verified successfully"}
+
+
+@router.post(
+    "/password-reset/request",
+    response_model=GenericMessage,
+    status_code=status.HTTP_200_OK,
+)
+@limiter.limit("3/hour", key_func=get_email_or_ip_key)
+async def request_password_reset(
+    request: Request,
+    payload: PasswordReset,
+    db: Session = Depends(get_db),
+    _stash: None = Depends(stash_json_email_for_rate_limit),
+):
+    """Begin a password reset.
+
+    Always returns a generic 200 response so the endpoint cannot be used to
+    enumerate accounts. If the email matches an active user, a one-time
+    reset link (valid for 1 hour) is emailed out of band.
+    """
+    generic = GENERIC_PASSWORD_RESET_MESSAGE
+    user = crud_user.get_by_email(db, email=payload.email)
+
+    if user and user.is_active:
+        token = crud_user.issue_password_reset_token(db, user=user)
+        try:
+            send_password_reset_email(
+                email_to=user.email,
+                username=user.first_name or user.email,
+                token=token,
+            )
+        except Exception as e:
+            print(f"Failed to send password reset email: {str(e)}")
+
+    return {"message": generic}
+
+
+@router.post(
+    "/password-reset/confirm",
+    response_model=GenericMessage,
+    status_code=status.HTTP_200_OK,
+)
+async def confirm_password_reset(
+    payload: PasswordResetConfirm,
+    db: Session = Depends(get_db),
+):
+    """Complete a password reset by submitting the emailed token plus a new
+    password. Generic 400 on any token/expiry failure to avoid token
+    enumeration."""
+    ok, _ = crud_user.consume_password_reset_token(
+        db, token=payload.token, new_password=payload.new_password
+    )
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired password reset token.",
+        )
+    return {"message": "Password has been reset. You can now sign in."}
+
+
+@router.post(
+    "/change-password",
+    response_model=GenericMessage,
+    status_code=status.HTTP_200_OK,
+)
+async def change_password(
+    payload: PasswordChange,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Change the password of the authenticated user. Verifies the current
+    password before applying the change."""
+    if payload.current_password == payload.new_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must differ from the current password.",
+        )
+    ok = crud_user.change_password(
+        db,
+        user=current_user,
+        current_password=payload.current_password,
+        new_password=payload.new_password,
+    )
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect.",
+        )
+    return {"message": "Password updated."}
 
 
 @router.post(

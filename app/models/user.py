@@ -1,7 +1,7 @@
-from sqlalchemy import Column, String, Boolean, Enum as SQLEnum
+from sqlalchemy import Column, String, Boolean, DateTime, Enum as SQLEnum
 from sqlalchemy.orm import relationship
 import enum
-from app.models.base import BaseModel
+from app.models.base import BaseModel, _utcnow
 
 
 class UserRole(str, enum.Enum):
@@ -42,6 +42,15 @@ class User(BaseModel):
     company_address_country = Column(String(100), nullable=True)
     company_address_state = Column(String(100), nullable=True)
     
+    # Password reset / lifecycle
+    # SHA-256 hash of an opaque reset token; the plain token only lives in the
+    # email link. Cleared on confirm or expiry.
+    password_reset_token_hash = Column(String(64), nullable=True, index=True)
+    password_reset_expires_at = Column(DateTime, nullable=True)
+    # Bumped on every successful password change/reset. Used (post Phase 5) to
+    # invalidate access tokens issued before the change.
+    password_changed_at = Column(DateTime, default=_utcnow, nullable=True)
+
     # Role
     role = Column(SQLEnum(UserRole), default=UserRole.CUSTOMER, nullable=False)
     
