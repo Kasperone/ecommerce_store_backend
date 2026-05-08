@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, DateTime, Enum as SQLEnum
+from sqlalchemy import Column, String, Boolean, DateTime, Integer, Enum as SQLEnum
 from sqlalchemy.orm import relationship
 import enum
 from app.models.base import BaseModel, _utcnow
@@ -50,6 +50,12 @@ class User(BaseModel):
     # Bumped on every successful password change/reset. Used (post Phase 5) to
     # invalidate access tokens issued before the change.
     password_changed_at = Column(DateTime, default=_utcnow, nullable=True)
+
+    # Brute-force lockout. Counter increments on every wrong password; once it
+    # crosses the threshold, ``locked_until`` is set and login is rejected with
+    # the same generic 401 as a bad password (don't reveal lockout state).
+    failed_login_attempts = Column(Integer, default=0, nullable=False)
+    locked_until = Column(DateTime, nullable=True)
 
     # Role
     role = Column(SQLEnum(UserRole), default=UserRole.CUSTOMER, nullable=False)

@@ -357,6 +357,112 @@ def send_password_reset_email(
     )
 
 
+def send_account_locked_email(
+    *,
+    email_to: str,
+    username: str,
+    lockout_minutes: int,
+) -> dict:
+    """Notify the account owner that their account was just locked due to
+    repeated failed sign-in attempts.
+
+    The lockout state is intentionally **not** revealed in the HTTP response
+    (would let attackers confirm the email is valid and probe the lockout
+    window). This out-of-band email is the legitimate channel — only the
+    real owner sees it, and it points them at the password reset flow which
+    also clears the lockout.
+    """
+    subject = f"{settings.EMAIL_FROM_NAME} - Account temporarily locked"
+
+    reset_link = f"{settings.FRONTEND_URL}/password-recovery"
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Account temporarily locked</title>
+        <style>
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                line-height: 1.6;
+                color: #333;
+                max-width: 600px;
+                margin: 0 auto;
+                padding: 20px;
+            }}
+            .container {{
+                background-color: #ffffff;
+                border-radius: 8px;
+                padding: 40px;
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            }}
+            h1 {{ color: #b91c1c; }}
+            .button {{
+                display: inline-block;
+                padding: 14px 32px;
+                background-color: #2563eb;
+                color: #ffffff !important;
+                text-decoration: none;
+                border-radius: 6px;
+                font-weight: 600;
+                margin: 20px 0;
+            }}
+            .link {{ color: #2563eb; word-break: break-all; }}
+            .footer {{
+                margin-top: 40px;
+                padding-top: 20px;
+                border-top: 1px solid #e5e7eb;
+                font-size: 13px;
+                color: #6b7280;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Account temporarily locked</h1>
+            <p>Hi {username},</p>
+            <p>
+                We locked your account for <strong>{lockout_minutes} minutes</strong>
+                after several failed sign-in attempts. This is an automatic safeguard.
+            </p>
+            <p><strong>If this was you</strong> — you can wait it out and try again,
+            or reset your password to unlock the account immediately:</p>
+            <p style="text-align:center;">
+                <a href="{reset_link}" class="button">Reset password</a>
+            </p>
+            <p class="link">{reset_link}</p>
+            <p><strong>If this wasn't you</strong> — someone is trying to guess your
+            password. Please reset your password using the link above as soon as
+            possible.</p>
+            <div class="footer">
+                © {settings.EMAIL_FROM_NAME} — automated security notification.
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+    text_content = (
+        f"Hi {username},\n\n"
+        f"We locked your account for {lockout_minutes} minutes after several "
+        f"failed sign-in attempts.\n\n"
+        f"If this was you, you can wait it out and try again, or reset your "
+        f"password to unlock the account immediately:\n\n"
+        f"{reset_link}\n\n"
+        f"If this wasn't you, someone is trying to guess your password — please "
+        f"reset it using the link above as soon as possible.\n"
+    )
+
+    return send_email(
+        email_to=email_to,
+        subject=subject,
+        html_content=html_content,
+        text_content=text_content,
+    )
+
+
 def send_already_registered_email(
     *,
     email_to: str,
