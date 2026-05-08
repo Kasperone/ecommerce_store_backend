@@ -4,13 +4,14 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_db, get_current_user, get_current_active_user
-from app.core.security import create_access_token
+from app.core.security import create_access_token, verify_password
 from app.core.config import settings
 from app.core.email import (
     send_verification_email,
     send_welcome_email,
     send_already_registered_email,
     send_password_reset_email,
+    send_account_locked_email,
 )
 from app.core.rate_limit import (
     get_email_or_ip_key,
@@ -95,25 +96,17 @@ async def register(
 
     user = crud_user.create(db, obj_in=user_in)
 
-    if settings.ENVIRONMENT == "development":
-        # Dev convenience: skip email entirely so registration works without
-        # a configured Resend API key.
-        print("⚠️  ENVIRONMENT=development - auto-verifying user")
-        user.is_verified = True
-        db.commit()
-        db.refresh(user)
-    else:
-        try:
-            token = verification_token.create_for_user(db, user_id=user.id)
-            send_verification_email(
-                email_to=user.email,
-                username=user.first_name or user.email,
-                token=token.token,
-            )
-        except Exception as e:
-            # Don't fail the registration on email send failure; the user can
-            # request a new verification email via /auth/resend-verification.
-            print(f"Failed to send verification email: {str(e)}")
+    try:
+        token = verification_token.create_for_user(db, user_id=user.id)
+        send_verification_email(
+            email_to=user.email,
+            username=user.first_name or user.email,
+            token=token.token,
+        )
+    except Exception as e:
+        # Don't fail the registration on email send failure; the user can
+        # request a new verification email via /auth/resend-verification.
+        print(f"Failed to send verification email: {str(e)}")
 
     return {"message": GENERIC_REGISTRATION_MESSAGE}
 
@@ -135,32 +128,56 @@ async def login(
     
     Returns JWT access token
     """
-    # Authenticate user
-    user = crud_user.authenticate(
-        db, 
-        email=form_data.username,
-        password=form_data.password
+    # Look up user separately from password verification so we can attribute
+    # failed attempts to the right account for lockout tracking.
+    user = crud_user.get_by_email(db, email=form_data.username)
+
+    invalid_credentials = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Incorrect email or password",
+        headers={"WWW-Authenticate": "Bearer"},
     )
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
+
+    # Locked accounts get the same generic 401 as a bad password — never
+    # reveal the lockout state, that would let an attacker confirm the email
+    # is valid and probe the lockout window.
+    if user and crud_user.is_locked(user):
+        raise invalid_credentials
+
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        if user:
+            just_locked = crud_user.register_failed_login(db, user=user)
+            if just_locked:
+                # Out-of-band notification: HTTP response stays generic
+                # (so attackers can't probe lockout state), but the real
+                # owner gets the explanation by email and a one-click
+                # path to reset their password (which clears the lock).
+                try:
+                    send_account_locked_email(
+                        email_to=user.email,
+                        username=user.first_name or user.email,
+                        lockout_minutes=int(
+                            crud_user.LOGIN_LOCKOUT_DURATION.total_seconds() // 60
+                        ),
+                    )
+                except Exception as e:
+                    print(f"Failed to send account-locked email: {str(e)}")
+        raise invalid_credentials
+
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Inactive user"
         )
-    
+
     if not user.is_verified:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Email not verified. Please check your email for verification link."
         )
-    
+
+    crud_user.register_successful_login(db, user=user)
+
     # Create access token
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
