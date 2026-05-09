@@ -5,6 +5,11 @@ in a migration whose file is no longer present. The columns and indexes
 remained in the database but no code references them. Dropping to align
 schema with code.
 
+Idempotent: on databases that already had public_id (production), this drops
+the orphan objects. On databases stamped from the regenerated initial
+migration (CI/test), public_id never existed and IF EXISTS makes both DDLs
+no-ops.
+
 Revision ID: b2c3d4e5f6a7
 Revises: 841166999346
 Create Date: 2026-05-07
@@ -26,8 +31,8 @@ TABLES = ['users', 'products', 'categories', 'orders', 'order_items', 'verificat
 
 def upgrade() -> None:
     for table in TABLES:
-        op.drop_index(f'ix_{table}_public_id', table_name=table)
-        op.drop_column(table, 'public_id')
+        op.execute(f'DROP INDEX IF EXISTS ix_{table}_public_id')
+        op.execute(f'ALTER TABLE {table} DROP COLUMN IF EXISTS public_id')
 
 
 def downgrade() -> None:
