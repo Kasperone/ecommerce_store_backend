@@ -6,6 +6,7 @@ from typing import Optional, Tuple
 from sqlalchemy.orm import Session
 
 from app.crud.base import CRUDBase
+from app.crud.refresh_token import refresh_token as crud_refresh_token
 from app.models.user import User
 from app.schemas.user import UserCreate, UserUpdate
 from app.core.security import get_password_hash, verify_password
@@ -30,6 +31,13 @@ def _hash_reset_token(token: str) -> str:
 def _utcnow_naive() -> datetime:
     """UTC now as naive datetime, matching the model's column type."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _password_changed_bump() -> datetime:
+    """Stamp ``password_changed_at`` strictly past any in-flight access
+    token's ``iat`` (whole seconds). Adding one second ensures tokens
+    issued in the same whole second as the bump are still invalidated."""
+    return _utcnow_naive() + timedelta(seconds=1)
 
 
 class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
@@ -180,12 +188,15 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         candidate.hashed_password = get_password_hash(new_password)
         candidate.password_reset_token_hash = None
         candidate.password_reset_expires_at = None
-        candidate.password_changed_at = _utcnow_naive()
+        candidate.password_changed_at = _password_changed_bump()
         # Successful reset is a strong signal of legitimate ownership; clear
         # any active lockout so the user can sign in immediately.
         self._clear_lockout_in_place(candidate)
         db.add(candidate)
-        db.commit()
+        # revoke_all_for_user commits internally; the password rotation on
+        # `candidate` flushes in the same transaction so revocation lands
+        # atomically with the rotation.
+        crud_refresh_token.revoke_all_for_user(db, user_id=candidate.id)
         db.refresh(candidate)
         return True, candidate
 
@@ -202,14 +213,16 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         if not verify_password(current_password, user.hashed_password):
             return False
         user.hashed_password = get_password_hash(new_password)
-        user.password_changed_at = _utcnow_naive()
+        user.password_changed_at = _password_changed_bump()
         # Belt-and-braces: invalidate any pending reset link.
         user.password_reset_token_hash = None
         user.password_reset_expires_at = None
         # Authenticated rotation also clears any stale lockout state.
         self._clear_lockout_in_place(user)
         db.add(user)
-        db.commit()
+        # revoke_all_for_user commits internally; pending rotation state
+        # flushes atomically with the refresh-row revocation.
+        crud_refresh_token.revoke_all_for_user(db, user_id=user.id)
         db.refresh(user)
         return True
 
