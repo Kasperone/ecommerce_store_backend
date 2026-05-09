@@ -6,6 +6,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from app.core.config import settings
 from app.core.rate_limit import limiter
+from app.core.security_headers import SecurityHeadersMiddleware
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -25,6 +26,12 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+# Security headers (HSTS only outside dev so localhost http isn't pinned)
+app.add_middleware(
+    SecurityHeadersMiddleware,
+    hsts=settings.ENVIRONMENT == "production",
 )
 
 @app.get("/")
