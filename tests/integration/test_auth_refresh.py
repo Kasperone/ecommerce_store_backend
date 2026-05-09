@@ -1,9 +1,9 @@
-"""Integration tests for ``POST /api/v1/auth/refresh`` (rotation).
+"""Integration tests for ``POST /api/v1/auth/refresh`` (rotation +
+reuse detection).
 
 Each test logs in to obtain a real refresh cookie, then exercises the
-rotation behaviour. Reuse-detection (replay of a revoked token) is left
-for 1.4.a; this file covers the happy path and the three rejection
-shapes called out in the plan.
+rotation behaviour. The reuse-detection test replays an already-rotated
+cookie and asserts the entire family for that user is revoked.
 """
 
 import pytest
@@ -87,6 +87,49 @@ async def test_refresh_with_tampered_cookie_returns_401(
 
     response = await client.post(REFRESH_PATH)
     assert response.status_code == 401
+
+
+async def test_refresh_reuse_detection_revokes_family(
+    client, db_session, reset_limiter, user_factory
+):
+    """Replaying an already-rotated refresh cookie must:
+    - return 401
+    - revoke EVERY active refresh row for that user (token theft signal —
+      the legitimate client would be holding the rotation replacement).
+
+    Setup: log in twice from the same client to mint two live families;
+    capture the first cookie, rotate it once (so it's now revoked),
+    then replay it.
+    """
+    user = user_factory(email="reuse@example.com")
+
+    # Family A — login → rotate once so the first cookie is now revoked.
+    family_a_first = await _login(client, "reuse@example.com")
+    family_a_first_jti = decode_token(family_a_first, expected_type="refresh").jti
+    rotate = await client.post(REFRESH_PATH)
+    assert rotate.status_code == 200
+    family_a_second = client.cookies.get("refresh_token")
+    family_a_second_jti = decode_token(family_a_second, expected_type="refresh").jti
+
+    # Family B — second login mints an independent live row that should
+    # also be wiped by reuse-detection.
+    client.cookies.delete("refresh_token", path="/api/v1/auth")
+    family_b = await _login(client, "reuse@example.com")
+    family_b_jti = decode_token(family_b, expected_type="refresh").jti
+
+    # Replay the revoked cookie.
+    client.cookies.set("refresh_token", family_a_first, path="/api/v1/auth")
+    response = await client.post(REFRESH_PATH)
+    assert response.status_code == 401
+
+    # Every refresh row for this user must now be revoked.
+    db_session.expire_all()
+    for jti in (family_a_first_jti, family_a_second_jti, family_b_jti):
+        row = crud_refresh_token.get_by_jti(db_session, jti=jti)
+        assert row is not None, f"row for jti={jti} should still exist"
+        assert row.revoked_at is not None, (
+            f"reuse-detection must revoke jti={jti} (user_id={user.id})"
+        )
 
 
 async def test_refresh_with_expired_db_row_returns_401(
