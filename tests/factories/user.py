@@ -6,6 +6,8 @@ The session is bound dynamically by the ``user_factory`` fixture in
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import factory
 from factory.alchemy import SQLAlchemyModelFactory
 
@@ -16,6 +18,20 @@ from app.models.user import User, UserRole
 # Default password used by the factory when no override is given. Tests can
 # read this constant to authenticate as the created user.
 DEFAULT_PASSWORD = "TestPass123!"
+
+
+def _password_changed_default() -> datetime:
+    """Backdate by a minute so JWTs minted right after creation pass the
+    ``iat < password_changed_at`` access-token guard.
+
+    The model default is ``_utcnow`` (microsecond precision) but JWT ``iat``
+    is truncated to whole seconds — a token issued in the same second as
+    user creation can have an ``iat`` strictly less than ``password_changed_at``,
+    which makes the dependency reject it. In production this is impossible
+    (verification → login takes seconds at minimum); in tests we need to
+    sidestep the precision mismatch.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
 
 
 class UserFactory(SQLAlchemyModelFactory):
@@ -31,6 +47,7 @@ class UserFactory(SQLAlchemyModelFactory):
     is_active = True
     is_verified = True
     role = UserRole.CUSTOMER
+    password_changed_at = factory.LazyFunction(_password_changed_default)
 
 
 class UnverifiedUserFactory(UserFactory):
