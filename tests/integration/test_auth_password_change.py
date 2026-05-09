@@ -120,28 +120,13 @@ async def test_change_password_rotates_and_invalidates_existing_access_token(
     )
 
 
-# ---------------------------------------------------------------------------
-# Recheck Phase 1.2 contract — failing-first via xfail(strict=True).
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Recheck Phase 1.2 not yet shipped — change-password should revoke "
-        "every active refresh row for the user (open High finding from the "
-        "2026-05-09 audit). When the fix lands, this test will XPASS and "
-        "strict=True will flag it for the marker to be removed."
-    ),
-)
 async def test_change_password_revokes_refresh_family(
     client, db_session, reset_limiter, user_factory
 ):
-    """Contract under construction: after /change-password, every refresh
-    row for that user must be revoked. Today the route bumps
-    ``password_changed_at`` (so existing access tokens stop validating)
-    but leaves refresh rows live — meaning a stolen refresh token can
-    still mint new access tokens after the password is changed.
+    """After /change-password, every refresh row for that user must be
+    revoked. The route bumps ``password_changed_at`` (so existing access
+    tokens stop validating) AND revokes refresh rows so a stolen refresh
+    token cannot mint new access tokens after the change.
     """
     user_factory(email="cp-revoke@example.com")
     access = await _login(client, "cp-revoke@example.com")

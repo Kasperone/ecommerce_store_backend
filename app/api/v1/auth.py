@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
@@ -387,8 +387,11 @@ async def logout_all(
     Useful for "sign out everywhere" after a credential scare."""
     crud_refresh_token.revoke_all_for_user(db, user_id=current_user.id)
     # Push iat-floor forward so any access token issued before now is
-    # rejected by get_current_user. We don't change the password itself.
-    current_user.password_changed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    # rejected by get_current_user. JWT iat is whole seconds, so add one
+    # second to also invalidate tokens minted in this same whole second.
+    current_user.password_changed_at = (
+        datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=1)
+    )
     db.add(current_user)
     db.commit()
     _clear_refresh_cookie(response)

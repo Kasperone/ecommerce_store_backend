@@ -144,28 +144,13 @@ async def test_confirm_token_is_one_shot(
     assert second.status_code == 400
 
 
-# ---------------------------------------------------------------------------
-# Recheck Phase 1.1 contract — failing-first via xfail(strict=True).
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Recheck Phase 1.1 not yet shipped — password-reset confirm should "
-        "revoke every active refresh row for the user (open High finding from "
-        "2026-05-09 audit). When the fix lands, this test will XPASS and "
-        "strict=True will flag it for the marker to be removed."
-    ),
-)
 async def test_confirm_revokes_refresh_family(
     client, db_session, captured_emails, reset_limiter, user_factory
 ):
-    """Contract under construction: after a password reset confirms, every
-    refresh row for that user must be revoked. Today the route bumps
-    ``password_changed_at`` (which kills existing access tokens) but leaves
-    refresh rows live — so a stolen refresh token still mints new access
-    tokens after a reset.
+    """After a password reset confirms, every refresh row for that user must
+    be revoked. The route bumps ``password_changed_at`` (which kills
+    existing access tokens) AND revokes refresh rows so a stolen refresh
+    token cannot mint new access tokens after a reset.
     """
     user_factory(email="reset-revoke@example.com")
 

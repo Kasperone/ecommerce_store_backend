@@ -58,7 +58,8 @@ async def get_current_user(
         iat = decoded.issued_at
         if iat.tzinfo is not None:
             iat = iat.astimezone(timezone.utc).replace(tzinfo=None)
-        if iat < pwd_changed:
+        # JWT iat is int seconds; floor pwd_changed (microseconds) to match.
+        if iat < pwd_changed.replace(microsecond=0):
             raise credentials_exception
 
     return user
