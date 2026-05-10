@@ -143,8 +143,13 @@ async def register(
                 email_to=existing_user.email,
                 username=existing_user.first_name or existing_user.email,
             )
-        except Exception as e:
-            print(f"Failed to send already-registered email: {str(e)}")
+        except Exception:
+            logger.warning(
+                "Email send failed: kind=%s user_id=%s",
+                "already_registered",
+                existing_user.id,
+                exc_info=True,
+            )
         return {"message": GENERIC_REGISTRATION_MESSAGE}
 
     user = crud_user.create(db, obj_in=user_in)
@@ -156,10 +161,15 @@ async def register(
             username=user.first_name or user.email,
             token=token.token,
         )
-    except Exception as e:
+    except Exception:
         # Don't fail the registration on email send failure; the user can
         # request a new verification email via /auth/resend-verification.
-        print(f"Failed to send verification email: {str(e)}")
+        logger.warning(
+            "Email send failed: kind=%s user_id=%s",
+            "verification",
+            user.id,
+            exc_info=True,
+        )
 
     return {"message": GENERIC_REGISTRATION_MESSAGE}
 
@@ -207,8 +217,13 @@ async def login(
                             crud_user.LOGIN_LOCKOUT_DURATION.total_seconds() // 60
                         ),
                     )
-                except Exception as e:
-                    print(f"Failed to send account-locked email: {str(e)}")
+                except Exception:
+                    logger.warning(
+                        "Email send failed: kind=%s user_id=%s",
+                        "account_locked",
+                        user.id,
+                        exc_info=True,
+                    )
         raise invalid_credentials
 
     if not user.is_active:
@@ -451,8 +466,13 @@ async def verify_email(
             email_to=user.email,
             username=user.first_name or user.email
         )
-    except Exception as e:
-        print(f"Failed to send welcome email: {str(e)}")
+    except Exception:
+        logger.warning(
+            "Email send failed: kind=%s user_id=%s",
+            "welcome",
+            user.id,
+            exc_info=True,
+        )
     
     return {"message": "Email verified successfully"}
 
@@ -486,8 +506,13 @@ async def request_password_reset(
                 username=user.first_name or user.email,
                 token=token,
             )
-        except Exception as e:
-            print(f"Failed to send password reset email: {str(e)}")
+        except Exception:
+            logger.warning(
+                "Email send failed: kind=%s user_id=%s",
+                "password_reset",
+                user.id,
+                exc_info=True,
+            )
 
     return {"message": generic}
 
@@ -499,11 +524,19 @@ async def request_password_reset(
 )
 async def confirm_password_reset(
     payload: PasswordResetConfirm,
+    response: Response,
     db: Session = Depends(get_db),
 ):
     """Complete a password reset by submitting the emailed token plus a new
     password. Generic 400 on any token/expiry failure to avoid token
-    enumeration."""
+    enumeration.
+
+    Successful reset revokes the user's entire refresh-token family in
+    ``consume_password_reset_token``. The refresh cookie on *this* device
+    points at one of those now-revoked rows, so clear it here too — the
+    next /refresh would 401 either way, but a clean cookie avoids a
+    confusing one-shot 401 on the calling browser.
+    """
     ok, _ = crud_user.consume_password_reset_token(
         db, token=payload.token, new_password=payload.new_password
     )
@@ -512,6 +545,7 @@ async def confirm_password_reset(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired password reset token.",
         )
+    _clear_refresh_cookie(response)
     return {"message": "Password has been reset. You can now sign in."}
 
 
@@ -522,11 +556,17 @@ async def confirm_password_reset(
 )
 async def change_password(
     payload: PasswordChange,
+    response: Response,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
     """Change the password of the authenticated user. Verifies the current
-    password before applying the change."""
+    password before applying the change.
+
+    The change revokes every refresh-token row for the user. The frontend's
+    next /refresh proactively scheduled by ``useApi`` would 401 anyway —
+    clearing the cookie here makes the post-change UX a clean re-login.
+    """
     if payload.current_password == payload.new_password:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -543,6 +583,7 @@ async def change_password(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Current password is incorrect.",
         )
+    _clear_refresh_cookie(response)
     return {"message": "Password updated."}
 
 
@@ -570,15 +611,19 @@ async def resend_verification_email(
     user = crud_user.get_by_email(db, email=resend.email)
 
     if user and not user.is_verified:
-        verification_token.delete_by_user_id(db, user_id=user.id)
-        token = verification_token.create_for_user(db, user_id=user.id)
+        token = verification_token.replace_for_user(db, user_id=user.id)
         try:
             send_verification_email(
                 email_to=user.email,
                 username=user.first_name or user.email,
                 token=token.token,
             )
-        except Exception as e:
-            print(f"Failed to send verification email: {str(e)}")
+        except Exception:
+            logger.warning(
+                "Email send failed: kind=%s user_id=%s",
+                "verification_resend",
+                user.id,
+                exc_info=True,
+            )
 
     return {"message": GENERIC_REGISTRATION_MESSAGE}

@@ -1,5 +1,12 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Literal
+
+
+# Both `SECRET_KEY` and `JWT_SECRET_KEY` are HMAC keys; OWASP guidance is
+# >= 256 bits (32 bytes) of entropy. Enforced at startup so a misconfigured
+# env never silently weakens token signing.
+_MIN_SECRET_BYTES = 32
 
 
 class Settings(BaseSettings):
@@ -59,6 +66,17 @@ class Settings(BaseSettings):
         case_sensitive=True,
         extra="allow"
     )
+
+    @field_validator("SECRET_KEY", "JWT_SECRET_KEY")
+    @classmethod
+    def _enforce_secret_length(cls, value: str, info) -> str:
+        if len(value.encode("utf-8")) < _MIN_SECRET_BYTES:
+            raise ValueError(
+                f"{info.field_name} must be at least {_MIN_SECRET_BYTES} bytes "
+                f"(got {len(value.encode('utf-8'))}). Generate with "
+                f"`python -c 'import secrets; print(secrets.token_urlsafe(48))'`."
+            )
+        return value
 
 
 settings = Settings()

@@ -104,3 +104,74 @@ async def test_verify_email_rejects_expired_token_with_400(
 async def test_verify_email_rejects_unknown_token_with_400(client, reset_limiter):
     response = await client.post(VERIFY_PATH, json={"token": "totally-bogus-token"})
     assert response.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# /resend-verification — Phase 5.3 transactional contract
+# ---------------------------------------------------------------------------
+
+
+RESEND_PATH = "/api/v1/auth/resend-verification"
+
+
+async def test_resend_verification_replaces_token_atomically(
+    client, db_session, captured_emails, reset_limiter, user_factory
+):
+    """Each /resend-verification call must leave at most one verification
+    row for the user. The previous transactional gap (separate delete →
+    create) could let two concurrent requests both insert, leaving an old
+    token live after the user clicked the new one.
+    """
+    user = user_factory(email="resend@example.com", is_verified=False)
+    # Plant a token to simulate a prior /register or earlier resend.
+    initial = verification_token.create_for_user(db_session, user_id=user.id)
+    initial_token = initial.token
+
+    response = await client.post(RESEND_PATH, json={"email": "resend@example.com"})
+    assert response.status_code == 200
+
+    db_session.expire_all()
+    rows = (
+        db_session.query(verification_token.model)
+        .filter(verification_token.model.user_id == user.id)
+        .all()
+    )
+    assert len(rows) == 1, "exactly one verification row should remain after resend"
+    assert rows[0].token != initial_token, "old token must be replaced, not retained"
+
+    # The replacement token is the one the email link points at. The
+    # send_verification_email helper is the same function used by
+    # /register, so the captured kind is "verification" — assert on the
+    # token value to confirm it's the replacement.
+    sent = [
+        e for e in captured_emails
+        if e["email_to"] == "resend@example.com" and e["kind"] == "verification"
+    ]
+    assert len(sent) == 1
+    assert sent[0]["token"] == rows[0].token
+
+
+async def test_resend_verification_silent_for_already_verified_user(
+    client, db_session, captured_emails, reset_limiter, user_factory
+):
+    """Anti-enumeration: already-verified emails get the same generic 200
+    but no resend goes out."""
+    user = user_factory(email="verified-resend@example.com", is_verified=True)
+
+    response = await client.post(
+        RESEND_PATH, json={"email": "verified-resend@example.com"}
+    )
+    assert response.status_code == 200
+    assert not any(
+        e["email_to"] == "verified-resend@example.com"
+        and e["kind"] == "verification"
+        for e in captured_emails
+    )
+
+
+async def test_resend_verification_silent_for_unknown_email(
+    client, captured_emails, reset_limiter
+):
+    response = await client.post(RESEND_PATH, json={"email": "ghost@example.com"})
+    assert response.status_code == 200
+    assert not any(e["email_to"] == "ghost@example.com" for e in captured_emails)

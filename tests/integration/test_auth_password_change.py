@@ -147,3 +147,24 @@ async def test_change_password_revokes_refresh_family(
     assert row.revoked_at is not None, (
         "refresh row must be revoked on /change-password"
     )
+
+
+async def test_change_password_clears_refresh_cookie(
+    client, db_session, reset_limiter, user_factory
+):
+    """The DB row was revoked; clearing the calling browser's refresh cookie
+    too keeps the next ``/refresh`` from firing against a dead row."""
+    user_factory(email="cp-cookie@example.com")
+    access = await _login(client, "cp-cookie@example.com")
+    assert client.cookies.get("refresh_token") is not None
+
+    response = await client.post(
+        CHANGE_PATH,
+        headers={"Authorization": f"Bearer {access}"},
+        json={"current_password": DEFAULT_PASSWORD, "new_password": "Brand-NewPwd1"},
+    )
+    assert response.status_code == 200
+
+    set_cookie = response.headers.get("set-cookie", "")
+    assert "refresh_token=" in set_cookie
+    assert "Max-Age=0" in set_cookie or "expires=" in set_cookie.lower()
