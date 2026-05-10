@@ -1,0 +1,52 @@
+# Python (patterns use **/ to match at any depth)
+**/__pycache__
+**/*.py[cod]
+**/*$py.class
+.Python
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Tests (run in CI against source, not shipped in image)
+tests/
+
+# Local env (never bake into image)
+.env
+.env.*
+!.env.test.example
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI / docs / repo metadata
+.github/
+.claude/
+*.md
+!README.md
+
+# Docker self
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Build artefacts
+build/
+dist/
+*.egg-info/
