@@ -9,6 +9,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Opt JavaScript actions into Node 24 ahead of GitHub's June 2026 default
+  # switch. Silences the Node-20-deprecation warnings; harmless to remove
+  # once every action we use ships a Node-24-native major release.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   test:
     name: Test (pytest + Postgres 16)
