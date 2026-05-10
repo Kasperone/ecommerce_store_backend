@@ -15,7 +15,7 @@ import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
-from app.core.security_headers import SecurityHeadersMiddleware
+from app.core.security_headers import SecurityHeadersMiddleware, build_csp
 from app.main import app as live_app
 
 
@@ -23,9 +23,19 @@ from app.main import app as live_app
 # integration mark.
 
 
-def _build_app(*, hsts: bool) -> FastAPI:
+def _build_app(
+    *,
+    hsts: bool,
+    csp: str | None = None,
+    csp_enforce: bool = False,
+) -> FastAPI:
     isolated = FastAPI()
-    isolated.add_middleware(SecurityHeadersMiddleware, hsts=hsts)
+    isolated.add_middleware(
+        SecurityHeadersMiddleware,
+        hsts=hsts,
+        csp=csp,
+        csp_enforce=csp_enforce,
+    )
 
     @isolated.get("/probe")
     def _probe():
@@ -82,3 +92,63 @@ def test_always_on_headers_present_on_live_app_health():
     assert "strict-transport-security" not in {
         k.lower() for k in response.headers.keys()
     }
+
+
+def test_csp_absent_when_not_configured():
+    """Backwards-compatibility: middleware without a CSP arg emits no
+    Content-Security-Policy* header at all."""
+    with TestClient(_build_app(hsts=False)) as tc:
+        response = tc.get("/probe")
+    lower_keys = {k.lower() for k in response.headers.keys()}
+    assert "content-security-policy" not in lower_keys
+    assert "content-security-policy-report-only" not in lower_keys
+
+
+def test_csp_emitted_as_report_only_by_default():
+    """Default CSP rollout uses Report-Only so any breakage shows up in
+    browser consoles without breaking the live UI."""
+    csp = build_csp()
+    with TestClient(_build_app(hsts=False, csp=csp)) as tc:
+        response = tc.get("/probe")
+    assert response.headers.get("content-security-policy-report-only") == csp
+    assert response.headers.get("content-security-policy") is None
+
+
+def test_csp_enforced_when_csp_enforce_true():
+    csp = build_csp()
+    with TestClient(_build_app(hsts=False, csp=csp, csp_enforce=True)) as tc:
+        response = tc.get("/probe")
+    assert response.headers.get("content-security-policy") == csp
+    assert response.headers.get("content-security-policy-report-only") is None
+
+
+def test_build_csp_locks_down_default_directives():
+    csp = build_csp()
+    # Sanity: the policy locks frame-ancestors and base-uri, and limits
+    # script/style sources to self (with the documented Tailwind escape).
+    for directive in (
+        "default-src 'self'",
+        "frame-ancestors 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: https://*.r2.cloudflarestorage.com",
+    ):
+        assert directive in csp
+
+
+def test_build_csp_extends_connect_src_with_extra_origins():
+    csp = build_csp(extra_connect_origins=["http://localhost:3000"])
+    assert "connect-src 'self' http://localhost:3000" in csp
+
+
+@pytest.mark.integration
+def test_csp_report_only_present_on_live_app_health():
+    """Live app wires CSP in Report-Only mode."""
+    with TestClient(live_app) as tc:
+        response = tc.get("/health")
+    csp_ro = response.headers.get("content-security-policy-report-only")
+    assert csp_ro is not None
+    assert "default-src 'self'" in csp_ro
+    assert response.headers.get("content-security-policy") is None

@@ -10,30 +10,59 @@ class CRUDVerificationToken(CRUDBase[VerificationToken, None, None]):
     """CRUD operations for VerificationToken model"""
     
     def create_for_user(
-        self, 
-        db: Session, 
-        *, 
-        user_id: int, 
+        self,
+        db: Session,
+        *,
+        user_id: int,
         hours: int = 24
     ) -> VerificationToken:
         """
         Create a new verification token for a user
-        
+
         Args:
             db: Database session
             user_id: User ID
             hours: Token validity in hours (default 24)
-        
+
         Returns:
             Created VerificationToken object
         """
         token_str = VerificationToken.generate_token()
         expires_at = VerificationToken.get_expiration_time(hours=hours)
-        
+
         db_obj = VerificationToken(
             token=token_str,
             user_id=user_id,
             expires_at=expires_at
+        )
+        db.add(db_obj)
+        db.commit()
+        db.refresh(db_obj)
+        return db_obj
+
+    def replace_for_user(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        hours: int = 24,
+    ) -> VerificationToken:
+        """Atomically replace any existing verification tokens for ``user_id``
+        with a brand-new one. Single transaction so concurrent
+        ``/auth/resend-verification`` calls cannot leave two valid tokens for
+        the same account (which would let the older one keep working after
+        the user clicked the newer link).
+        """
+        token_str = VerificationToken.generate_token()
+        expires_at = VerificationToken.get_expiration_time(hours=hours)
+
+        db.query(VerificationToken).filter(
+            VerificationToken.user_id == user_id
+        ).delete()
+        db_obj = VerificationToken(
+            token=token_str,
+            user_id=user_id,
+            expires_at=expires_at,
         )
         db.add(db_obj)
         db.commit()

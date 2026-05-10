@@ -180,3 +180,35 @@ async def test_confirm_revokes_refresh_family(
     assert row.revoked_at is not None, (
         "refresh row must be revoked on password-reset confirm"
     )
+
+
+async def test_confirm_clears_refresh_cookie_on_calling_device(
+    client, db_session, captured_emails, reset_limiter, user_factory
+):
+    """The calling browser's refresh cookie points at a now-revoked row;
+    the response must clear it so the next /refresh on this device doesn't
+    fire pointlessly.
+    """
+    user_factory(email="reset-cookie@example.com")
+    login = await client.post(
+        LOGIN_PATH,
+        data={"username": "reset-cookie@example.com", "password": DEFAULT_PASSWORD},
+    )
+    assert login.status_code == 200
+    assert client.cookies.get("refresh_token") is not None
+
+    await client.post(REQUEST_PATH, json={"email": "reset-cookie@example.com"})
+    token = next(
+        e for e in captured_emails if e["email_to"] == "reset-cookie@example.com"
+    )["token"]
+
+    confirm = await client.post(
+        CONFIRM_PATH, json={"token": token, "new_password": "Brand-NewPwd1"}
+    )
+    assert confirm.status_code == 200
+
+    set_cookie = confirm.headers.get("set-cookie", "")
+    assert "refresh_token=" in set_cookie
+    # delete_cookie emits Max-Age=0 (or an expired Expires=); either form is
+    # the wire signal for "drop this cookie."
+    assert "Max-Age=0" in set_cookie or "expires=" in set_cookie.lower()
