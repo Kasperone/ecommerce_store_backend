@@ -1,8 +1,11 @@
+import logging
 import resend
 from typing import Optional
 from pathlib import Path
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 # Configure Resend with API key
 resend.api_key = settings.RESEND_API_KEY
@@ -17,16 +20,16 @@ def send_email(
 ) -> dict:
     """
     Send email using Resend API
-    
+
     Args:
         email_to: Recipient email address
         subject: Email subject
         html_content: HTML email content
         text_content: Plain text fallback (optional)
-    
+
     Returns:
         Response from Resend API
-    
+
     Raises:
         Exception: If email sending fails
     """
@@ -37,15 +40,19 @@ def send_email(
             "subject": subject,
             "html": html_content,
         }
-        
+
         if text_content:
             params["text"] = text_content
-        
+
         response = resend.Emails.send(params)
         return response
-    
-    except Exception as e:
-        print(f"Error sending email to {email_to}: {str(e)}")
+
+    except Exception:
+        # Caller-side wrappers in app.api.v1.auth log with user_id context;
+        # this layer just records the recipient for triage. exc_info=True
+        # carries the traceback through structured logging without
+        # interpolating it into the message.
+        logger.warning("Email send failed: recipient=%s", email_to, exc_info=True)
         raise
 
 

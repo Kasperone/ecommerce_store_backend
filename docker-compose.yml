@@ -1,3 +1,8 @@
+# DEV ONLY. Production uses managed Postgres + Redis with rotated
+# credentials per `backend-rules/security.md` rotation runbook.
+# Ports bind to all interfaces because the dev workstation reaches this
+# stack at the hive-server IP (192.168.1.14:5433); switch to 127.0.0.1
+# bindings on a single-machine setup if you want to keep them off the LAN.
 version: '3.8'
 
 services:
@@ -19,16 +24,18 @@ services:
       timeout: 5s
       retries: 5
 
-  # Redis (for cache, sessions, queues)
+  # Redis (for cache, sessions, queues). Password required even in dev so
+  # local containers cannot accidentally be reachable without credentials.
   redis:
     image: redis:7-alpine
     container_name: ecommerce_redis
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}"]
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5

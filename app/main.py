@@ -6,7 +6,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from app.core.config import settings
 from app.core.rate_limit import limiter
-from app.core.security_headers import SecurityHeadersMiddleware
+from app.core.security_headers import SecurityHeadersMiddleware, build_csp
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -19,19 +19,32 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
-# CORS Configuration
+# CORS Configuration. Explicit method/header allow-lists instead of "*" so
+# the preflight surface is exactly what the frontend actually uses — keeps
+# unusual verbs (TRACE, CONNECT) and arbitrary client headers off the
+# allow list.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "Accept-Language",
+        "X-Requested-With",
+    ],
 )
 
-# Security headers (HSTS only outside dev so localhost http isn't pinned)
+# Security headers (HSTS only outside dev so localhost http isn't pinned).
+# CSP ships as Report-Only first; flip to enforce after a watch period in
+# production.
 app.add_middleware(
     SecurityHeadersMiddleware,
     hsts=settings.ENVIRONMENT == "production",
+    csp=build_csp(extra_connect_origins=settings.CORS_ORIGINS),
+    csp_enforce=False,
 )
 
 @app.get("/")
