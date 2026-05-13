@@ -64,7 +64,7 @@ async def test_logout_without_cookie_is_idempotent_200(client, reset_limiter):
 async def test_logout_with_invalid_cookie_is_idempotent_200(client, reset_limiter):
     """Stale or malformed cookies must not error — clients should be able
     to call /logout blindly during sign-out UX."""
-    client.cookies.set("refresh_token", "not-a-jwt", path="/api/v1/auth")
+    client.cookies.set("refresh_token", "not-a-jwt", path="/")
     response = await client.post(LOGOUT_PATH)
     assert response.status_code == 200
 
@@ -103,7 +103,7 @@ async def test_logout_all_revokes_every_refresh_row_for_user(
     first_jti = decode_token(first_cookie, expected_type="refresh").jti
 
     # Drop the cookie so the second /login mints a fresh independent family.
-    client.cookies.delete("refresh_token", path="/api/v1/auth")
+    client.cookies.delete("refresh_token", path="/")
     second_access, second_cookie = await _login(client, "logout-all@example.com")
     second_jti = decode_token(second_cookie, expected_type="refresh").jti
 

@@ -48,16 +48,18 @@ logger = logging.getLogger(__name__)
 
 
 REFRESH_COOKIE_NAME = "refresh_token"
-REFRESH_COOKIE_PATH = "/api/v1/auth"
+REFRESH_COOKIE_PATH = "/"
 
 
 def _set_refresh_cookie(response: Response, token: str, expires_at: datetime) -> None:
     """Attach the rotating refresh token as an HttpOnly cookie.
 
-    Path-scoped to ``/api/v1/auth`` so it never rides on regular API calls
-    (limits exposure if a single endpoint somehow leaks ``Set-Cookie``-bound
-    state) and ``SameSite=Strict`` to keep CSRF risk on /refresh negligible.
-    ``Secure`` is dropped only in development so localhost http works.
+    ``SameSite=Strict`` + ``HttpOnly`` are the real CSRF/XSS controls; path
+    scoping was defense-in-depth. We use ``Path=/`` so the cookie rides on
+    every same-origin request, which is what the Nuxt frontend's SSR plugin
+    needs to validate the session before rendering protected routes (kills
+    the flash-of-forbidden-content problem). ``Secure`` is dropped only in
+    development so localhost http works.
     """
     max_age = int((expires_at - datetime.now(timezone.utc)).total_seconds())
     if max_age < 0:
