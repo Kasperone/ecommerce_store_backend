@@ -37,11 +37,12 @@ async def test_verified_login_returns_access_token_and_sets_refresh_cookie(
     assert body["token_type"] == "bearer"
     assert body["access_token"]
 
-    # Refresh cookie set as HttpOnly + path-scoped to /api/v1/auth.
+    # Refresh cookie set as HttpOnly + Path=/ so it rides on every same-origin
+    # request (required for SSR auth on the frontend).
     set_cookie = response.headers.get("set-cookie", "")
     assert "refresh_token=" in set_cookie
     assert "HttpOnly" in set_cookie
-    assert "Path=/api/v1/auth" in set_cookie
+    assert "Path=/" in set_cookie
 
 
 async def test_unverified_user_gets_403(client, reset_limiter, user_factory):

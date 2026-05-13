@@ -83,7 +83,7 @@ async def test_refresh_with_tampered_cookie_returns_401(
     head, _, sig = cookie.rpartition(".")
     bad_char = "A" if sig[-1] != "A" else "B"
     tampered = f"{head}.{sig[:-1]}{bad_char}"
-    client.cookies.set("refresh_token", tampered, path="/api/v1/auth")
+    client.cookies.set("refresh_token", tampered, path="/")
 
     response = await client.post(REFRESH_PATH)
     assert response.status_code == 401
@@ -113,12 +113,12 @@ async def test_refresh_reuse_detection_revokes_family(
 
     # Family B — second login mints an independent live row that should
     # also be wiped by reuse-detection.
-    client.cookies.delete("refresh_token", path="/api/v1/auth")
+    client.cookies.delete("refresh_token", path="/")
     family_b = await _login(client, "reuse@example.com")
     family_b_jti = decode_token(family_b, expected_type="refresh").jti
 
     # Replay the revoked cookie.
-    client.cookies.set("refresh_token", family_a_first, path="/api/v1/auth")
+    client.cookies.set("refresh_token", family_a_first, path="/")
     response = await client.post(REFRESH_PATH)
     assert response.status_code == 401
 
