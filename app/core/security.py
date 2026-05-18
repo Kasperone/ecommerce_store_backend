@@ -123,7 +123,7 @@ def decode_token(token: str, *, expected_type: TokenType) -> DecodedToken:
     return DecodedToken(
         subject=str(sub),
         jti=str(jti),
-        type=token_type,
+        type=expected_type,
         issued_at=datetime.fromtimestamp(int(iat), tz=UTC),
         expires_at=datetime.fromtimestamp(int(exp), tz=UTC),
     )

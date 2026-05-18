@@ -1,7 +1,13 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String
-from sqlalchemy.orm import relationship
+from datetime import datetime
+from typing import TYPE_CHECKING
+
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import BaseModel
+
+if TYPE_CHECKING:
+    from app.models.user import User
 
 
 class RefreshToken(BaseModel):
@@ -15,19 +21,21 @@ class RefreshToken(BaseModel):
 
     __tablename__ = "refresh_tokens"
 
-    user_id = Column(
-        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    jti = Column(String(64), unique=True, nullable=False, index=True)
-    token_hash = Column(String(64), nullable=False)
-    expires_at = Column(DateTime, nullable=False)
-    revoked_at = Column(DateTime, nullable=True)
-    replaced_by_jti = Column(String(64), nullable=True)
+    jti: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    replaced_by_jti: Mapped[str | None] = mapped_column(String(64))
 
-    created_ip = Column(String(64), nullable=True)
-    user_agent = Column(String(512), nullable=True)
+    created_ip: Mapped[str | None] = mapped_column(String(64))
+    user_agent: Mapped[str | None] = mapped_column(String(512))
 
-    user = relationship("User", back_populates="refresh_tokens", passive_deletes=True)
+    user: Mapped["User"] = relationship(
+        "User", back_populates="refresh_tokens", passive_deletes=True
+    )
 
     __table_args__ = (Index("ix_refresh_tokens_user_active", "user_id", "revoked_at"),)
 

@@ -4,9 +4,9 @@ from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.models.base import Base
+from app.models.base import BaseModel as DBBaseModel
 
-ModelType = TypeVar("ModelType", bound=Base)  # pyright: ignore[reportInvalidTypeForm] -- declarative_base() returns a runtime-built class; resolved by Phase 3 DeclarativeBase migration
+ModelType = TypeVar("ModelType", bound=DBBaseModel)
 CreateSchemaType = TypeVar("CreateSchemaType", bound=BaseModel)
 UpdateSchemaType = TypeVar("UpdateSchemaType", bound=BaseModel)
 
@@ -57,9 +57,11 @@ class CRUDBase(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
         db.refresh(db_obj)
         return db_obj
 
-    def delete(self, db: Session, *, id: int) -> ModelType:
+    def delete(self, db: Session, *, id: int) -> ModelType | None:
         """Delete a record"""
         obj = db.query(self.model).get(id)
+        if obj is None:
+            return None
         db.delete(obj)
         db.commit()
         return obj

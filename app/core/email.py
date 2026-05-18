@@ -43,8 +43,8 @@ def send_email(
         if text_content:
             params["text"] = text_content
 
-        response = resend.Emails.send(params)
-        return response
+        response = resend.Emails.send(params)  # pyright: ignore[reportArgumentType] -- resend SDK's SendParams TypedDict is stricter than our plain-dict construction
+        return response  # pyright: ignore[reportReturnType] -- resend's SendResponse is dict-shaped; legacy annotation is dict, not the SDK type
 
     except Exception:
         # Caller-side wrappers in app.api.v1.auth log with user_id context;
