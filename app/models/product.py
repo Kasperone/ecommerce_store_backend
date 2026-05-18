@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import BaseModel
@@ -8,6 +8,7 @@ from app.models.base import BaseModel
 if TYPE_CHECKING:
     from app.models.category import Category
     from app.models.order import OrderItem
+    from app.models.product_image import ProductImage
 
 
 class Product(BaseModel):
@@ -31,15 +32,18 @@ class Product(BaseModel):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_featured: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    # Images (JSON array of image URLs)
-    images: Mapped[list] = mapped_column(JSON, default=list)
-
     # Category
     category_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("categories.id"))
 
     # Relationships
     category: Mapped["Category | None"] = relationship("Category", back_populates="products")
     order_items: Mapped[list["OrderItem"]] = relationship("OrderItem", back_populates="product")
+    images: Mapped[list["ProductImage"]] = relationship(
+        "ProductImage",
+        back_populates="product",
+        cascade="all, delete-orphan",
+        order_by="ProductImage.sort_order",
+    )
 
     def __repr__(self):
         return f"<Product {self.name}>"
