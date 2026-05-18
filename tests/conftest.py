@@ -204,8 +204,8 @@ def user_factory(db_session):
     """
     from tests.factories.user import UserFactory
 
-    UserFactory._meta.sqlalchemy_session = db_session
-    UserFactory._meta.sqlalchemy_session_persistence = "commit"
+    UserFactory._meta.sqlalchemy_session = db_session  # pyright: ignore[reportAttributeAccessIssue] -- factory-boy SQLAlchemyOptions attributes aren't surfaced on the FactoryOptions stub
+    UserFactory._meta.sqlalchemy_session_persistence = "commit"  # pyright: ignore[reportAttributeAccessIssue] -- factory-boy SQLAlchemyOptions attributes aren't surfaced on the FactoryOptions stub
 
     def _make(**kwargs):
         return UserFactory(**kwargs)

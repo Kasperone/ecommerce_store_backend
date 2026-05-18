@@ -1,7 +1,13 @@
-from sqlalchemy import JSON, Boolean, Column, Float, ForeignKey, Integer, String, Text
-from sqlalchemy.orm import relationship
+from typing import TYPE_CHECKING
+
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import BaseModel
+
+if TYPE_CHECKING:
+    from app.models.category import Category
+    from app.models.order import OrderItem
 
 
 class Product(BaseModel):
@@ -10,30 +16,30 @@ class Product(BaseModel):
     __tablename__ = "products"
 
     # Basic info
-    name = Column(String(200), nullable=False, index=True)
-    slug = Column(String(200), unique=True, index=True, nullable=False)
-    description = Column(Text, nullable=True)
-    sku = Column(String(100), unique=True, index=True, nullable=True)
+    name: Mapped[str] = mapped_column(String(200), index=True)
+    slug: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    sku: Mapped[str | None] = mapped_column(String(100), unique=True, index=True)
 
     # Pricing (multi-currency)
-    price_usd = Column(Float, nullable=False)
-    price_pln = Column(Float, nullable=False)
-    price_eur = Column(Float, nullable=False)
+    price_usd: Mapped[float] = mapped_column(Float)
+    price_pln: Mapped[float] = mapped_column(Float)
+    price_eur: Mapped[float] = mapped_column(Float)
 
     # Inventory
-    stock = Column(Integer, default=0, nullable=False)
-    is_active = Column(Boolean, default=True, nullable=False)
-    is_featured = Column(Boolean, default=False, nullable=False)
+    stock: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_featured: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Images (JSON array of image URLs)
-    images = Column(JSON, default=list, nullable=False)
+    images: Mapped[list] = mapped_column(JSON, default=list)
 
     # Category
-    category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
+    category_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("categories.id"))
 
     # Relationships
-    category = relationship("Category", back_populates="products")
-    order_items = relationship("OrderItem", back_populates="product")
+    category: Mapped["Category | None"] = relationship("Category", back_populates="products")
+    order_items: Mapped[list["OrderItem"]] = relationship("OrderItem", back_populates="product")
 
     def __repr__(self):
         return f"<Product {self.name}>"

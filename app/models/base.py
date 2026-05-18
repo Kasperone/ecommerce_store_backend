@@ -1,9 +1,11 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import Column, DateTime, Integer
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import DateTime, Integer
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-Base = declarative_base()
+
+class Base(DeclarativeBase):
+    pass
 
 
 def _utcnow() -> datetime:
@@ -13,8 +15,8 @@ def _utcnow() -> datetime:
 class TimestampMixin:
     """Mixin that adds timestamp fields to models"""
 
-    created_at = Column(DateTime, default=_utcnow, nullable=False)
-    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 
 
 class BaseModel(Base, TimestampMixin):
@@ -22,4 +24,4 @@ class BaseModel(Base, TimestampMixin):
 
     __abstract__ = True
 
-    id = Column(Integer, primary_key=True, index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)

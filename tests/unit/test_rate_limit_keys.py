@@ -7,6 +7,9 @@ keep these tests pure.
 """
 
 from types import SimpleNamespace
+from typing import cast
+
+from starlette.requests import Request
 
 from app.core.rate_limit import get_email_or_ip_key, get_ip_key
 
@@ -16,7 +19,7 @@ class _FakeClient:
         self.host = host
 
 
-def _make_request(*, email: str | None = None, ip: str = "203.0.113.5"):
+def _make_request(*, email: str | None = None, ip: str = "203.0.113.5") -> Request:
     """Minimal stand-in for starlette.Request that ``get_remote_address``
     accepts. ``get_remote_address`` reads ``request.client.host`` (and
     falls back to headers, but those default to "" here).
@@ -24,11 +27,14 @@ def _make_request(*, email: str | None = None, ip: str = "203.0.113.5"):
     state = SimpleNamespace()
     if email is not None:
         state.rate_limit_email = email
-    return SimpleNamespace(
-        client=_FakeClient(ip),
-        headers={},
-        state=state,
-        scope={"client": (ip, 0)},
+    return cast(
+        Request,
+        SimpleNamespace(
+            client=_FakeClient(ip),
+            headers={},
+            state=state,
+            scope={"client": (ip, 0)},
+        ),
     )
 
 

@@ -180,5 +180,5 @@ async def delete_category(
             detail=f"Cannot delete category with {product_count} products. Remove products first.",
         )
 
-    crud_category.remove(db, id=category_id)
+    crud_category.delete(db, id=category_id)
     return None

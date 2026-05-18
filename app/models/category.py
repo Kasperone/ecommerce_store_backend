@@ -1,7 +1,12 @@
-from sqlalchemy import Boolean, Column, String, Text
-from sqlalchemy.orm import relationship
+from typing import TYPE_CHECKING
+
+from sqlalchemy import Boolean, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import BaseModel
+
+if TYPE_CHECKING:
+    from app.models.product import Product
 
 
 class Category(BaseModel):
@@ -9,16 +14,16 @@ class Category(BaseModel):
 
     __tablename__ = "categories"
 
-    name = Column(String(100), nullable=False)
-    slug = Column(String(100), unique=True, index=True, nullable=False)
-    description = Column(Text, nullable=True)
-    is_active = Column(Boolean, default=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(100))
+    slug: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # Parent category for nested categories (optional)
     # parent_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
 
     # Relationships
-    products = relationship("Product", back_populates="category")
+    products: Mapped[list["Product"]] = relationship("Product", back_populates="category")
 
     def __repr__(self):
         return f"<Category {self.name}>"
