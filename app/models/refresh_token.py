@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, ForeignKey, DateTime, Index
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import relationship
 
 from app.models.base import BaseModel
@@ -29,9 +29,7 @@ class RefreshToken(BaseModel):
 
     user = relationship("User", back_populates="refresh_tokens", passive_deletes=True)
 
-    __table_args__ = (
-        Index("ix_refresh_tokens_user_active", "user_id", "revoked_at"),
-    )
+    __table_args__ = (Index("ix_refresh_tokens_user_active", "user_id", "revoked_at"),)
 
     def __repr__(self) -> str:
         return f"<RefreshToken jti={self.jti[:8]}... user_id={self.user_id}>"

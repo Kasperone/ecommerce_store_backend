@@ -47,14 +47,16 @@ app.add_middleware(
     csp_enforce=False,
 )
 
+
 @app.get("/")
 async def root():
     """Health check endpoint"""
     return {
         "message": "E-commerce API is running",
         "version": settings.APP_VERSION,
-        "status": "healthy"
+        "status": "healthy",
     }
+
 
 @app.get("/health")
 async def health():
@@ -62,8 +64,8 @@ async def health():
     return {"status": "ok"}
 
 
-# Import routers
-from app.api.v1 import products, categories, auth
+# Import routers after middleware/limiter/CORS setup so they pick up the configured state.
+from app.api.v1 import auth, categories, products  # noqa: E402
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(products.router, prefix="/api/v1/products", tags=["Products"])

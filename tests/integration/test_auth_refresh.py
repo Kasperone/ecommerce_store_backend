@@ -12,7 +12,6 @@ from app.core.security import decode_token
 from app.crud import refresh_token as crud_refresh_token
 from tests.factories.user import DEFAULT_PASSWORD
 
-
 pytestmark = pytest.mark.integration
 
 
@@ -22,9 +21,7 @@ REFRESH_PATH = "/api/v1/auth/refresh"
 
 async def _login(client, email: str) -> str:
     """Log in and return the resulting refresh cookie value."""
-    response = await client.post(
-        LOGIN_PATH, data={"username": email, "password": DEFAULT_PASSWORD}
-    )
+    response = await client.post(LOGIN_PATH, data={"username": email, "password": DEFAULT_PASSWORD})
     assert response.status_code == 200, response.text
     cookie = client.cookies.get("refresh_token")
     assert cookie, "login must set refresh_token cookie"
@@ -72,9 +69,7 @@ async def test_refresh_without_cookie_returns_401(client, reset_limiter):
     assert response.status_code == 401
 
 
-async def test_refresh_with_tampered_cookie_returns_401(
-    client, reset_limiter, user_factory
-):
+async def test_refresh_with_tampered_cookie_returns_401(client, reset_limiter, user_factory):
     user_factory(email="tamper@example.com")
     cookie = await _login(client, "tamper@example.com")
 
@@ -127,9 +122,9 @@ async def test_refresh_reuse_detection_revokes_family(
     for jti in (family_a_first_jti, family_a_second_jti, family_b_jti):
         row = crud_refresh_token.get_by_jti(db_session, jti=jti)
         assert row is not None, f"row for jti={jti} should still exist"
-        assert row.revoked_at is not None, (
-            f"reuse-detection must revoke jti={jti} (user_id={user.id})"
-        )
+        assert (
+            row.revoked_at is not None
+        ), f"reuse-detection must revoke jti={jti} (user_id={user.id})"
 
 
 async def test_refresh_with_expired_db_row_returns_401(

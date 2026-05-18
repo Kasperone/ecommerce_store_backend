@@ -1,15 +1,19 @@
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
+from sqlalchemy import engine_from_config, pool
 
 from alembic import context
 
 # Import settings and models
 from app.core.config import settings
+from app.models import (  # noqa: F401 -- side-effect imports register tables with Base.metadata for autogenerate
+    Category,
+    Order,
+    OrderItem,
+    Product,
+    User,
+)
 from app.models.base import Base
-# Import all models to ensure they're registered with Base
-from app.models import User, Category, Product, Order, OrderItem
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -71,9 +75,7 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata
-        )
+        context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
             context.run_migrations()

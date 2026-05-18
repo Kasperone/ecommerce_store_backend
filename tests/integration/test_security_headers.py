@@ -18,7 +18,6 @@ from starlette.testclient import TestClient
 from app.core.security_headers import SecurityHeadersMiddleware, build_csp
 from app.main import app as live_app
 
-
 # These tests are pure middleware checks — no DB, no rate limiting, no
 # integration mark.
 
@@ -61,9 +60,7 @@ def test_hsts_absent_when_hsts_false():
     plain-HTTP localhost for a year."""
     with TestClient(_build_app(hsts=False)) as tc:
         response = tc.get("/probe")
-    assert "strict-transport-security" not in {
-        k.lower() for k in response.headers.keys()
-    }
+    assert "strict-transport-security" not in {k.lower() for k in response.headers}
 
 
 def test_hsts_set_when_hsts_true():
@@ -89,9 +86,7 @@ def test_always_on_headers_present_on_live_app_health():
     assert response.headers.get("x-content-type-options") == "nosniff"
     assert response.headers.get("x-frame-options") == "DENY"
     assert response.headers.get("referrer-policy") == "strict-origin-when-cross-origin"
-    assert "strict-transport-security" not in {
-        k.lower() for k in response.headers.keys()
-    }
+    assert "strict-transport-security" not in {k.lower() for k in response.headers}
 
 
 def test_csp_absent_when_not_configured():
@@ -99,7 +94,7 @@ def test_csp_absent_when_not_configured():
     Content-Security-Policy* header at all."""
     with TestClient(_build_app(hsts=False)) as tc:
         response = tc.get("/probe")
-    lower_keys = {k.lower() for k in response.headers.keys()}
+    lower_keys = {k.lower() for k in response.headers}
     assert "content-security-policy" not in lower_keys
     assert "content-security-policy-report-only" not in lower_keys
 

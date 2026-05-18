@@ -19,7 +19,6 @@ import pytest
 
 from tests.factories.user import DEFAULT_PASSWORD
 
-
 pytestmark = [pytest.mark.integration, pytest.mark.rate_limit]
 
 
@@ -33,9 +32,7 @@ RESET_REQUEST_PATH = "/api/v1/auth/password-reset/request"
 # ---------------------------------------------------------------------------
 
 
-async def test_login_per_ip_limit_exhausts_at_sixth_attempt(
-    client, reset_limiter, user_factory
-):
+async def test_login_per_ip_limit_exhausts_at_sixth_attempt(client, reset_limiter, user_factory):
     """Five wrong-password attempts share the IP budget; the 6th call —
     even with a fresh email — must hit the per-IP limit and return 429."""
     for i in range(5):
@@ -54,9 +51,7 @@ async def test_login_per_ip_limit_exhausts_at_sixth_attempt(
     assert sixth.status_code == 429
 
 
-async def test_login_per_email_limit_exhausts_at_sixth_attempt(
-    client, reset_limiter, user_factory
-):
+async def test_login_per_email_limit_exhausts_at_sixth_attempt(client, reset_limiter, user_factory):
     """Five wrong-password attempts against the SAME email exhaust the
     per-email budget. The 6th call returns 429 rather than 401."""
     user_factory(email="rl-email@example.com")
@@ -71,9 +66,9 @@ async def test_login_per_email_limit_exhausts_at_sixth_attempt(
         LOGIN_PATH,
         data={"username": "rl-email@example.com", "password": DEFAULT_PASSWORD},
     )
-    assert sixth.status_code == 429, (
-        "per-email limit must fire even when the 6th attempt has the correct password"
-    )
+    assert (
+        sixth.status_code == 429
+    ), "per-email limit must fire even when the 6th attempt has the correct password"
 
 
 # ---------------------------------------------------------------------------
@@ -103,14 +98,10 @@ async def test_password_reset_request_per_email_limit_blocks_fourth_request(
 ):
     user_factory(email="rl-reset@example.com")
     for i in range(3):
-        r = await client.post(
-            RESET_REQUEST_PATH, json={"email": "rl-reset@example.com"}
-        )
+        r = await client.post(RESET_REQUEST_PATH, json={"email": "rl-reset@example.com"})
         assert r.status_code == 200, f"call {i} should pass the limiter"
 
-    fourth = await client.post(
-        RESET_REQUEST_PATH, json={"email": "rl-reset@example.com"}
-    )
+    fourth = await client.post(RESET_REQUEST_PATH, json={"email": "rl-reset@example.com"})
     assert fourth.status_code == 429
 
 
@@ -122,17 +113,11 @@ async def test_password_reset_request_per_email_limit_isolates_buckets_by_email(
     user_factory(email="rl-bucket-b@example.com")
 
     for _ in range(3):
-        r = await client.post(
-            RESET_REQUEST_PATH, json={"email": "rl-bucket-a@example.com"}
-        )
+        r = await client.post(RESET_REQUEST_PATH, json={"email": "rl-bucket-a@example.com"})
         assert r.status_code == 200
 
-    blocked = await client.post(
-        RESET_REQUEST_PATH, json={"email": "rl-bucket-a@example.com"}
-    )
+    blocked = await client.post(RESET_REQUEST_PATH, json={"email": "rl-bucket-a@example.com"})
     assert blocked.status_code == 429
 
-    other = await client.post(
-        RESET_REQUEST_PATH, json={"email": "rl-bucket-b@example.com"}
-    )
+    other = await client.post(RESET_REQUEST_PATH, json={"email": "rl-bucket-b@example.com"})
     assert other.status_code == 200, "different email must have its own budget"

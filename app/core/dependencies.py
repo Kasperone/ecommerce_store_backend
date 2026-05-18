@@ -1,5 +1,5 @@
-from datetime import timezone
-from typing import Generator
+from collections.abc import Generator
+from datetime import UTC
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -41,12 +41,12 @@ async def get_current_user(
     try:
         decoded = decode_token(token, expected_type="access")
     except JWTError:
-        raise credentials_exception
+        raise credentials_exception from None
 
     try:
         user_id = int(decoded.subject)
     except ValueError:
-        raise credentials_exception
+        raise credentials_exception from None
 
     user = crud_user.get(db, id=user_id)
     if user is None:
@@ -57,7 +57,7 @@ async def get_current_user(
     if pwd_changed is not None:
         iat = decoded.issued_at
         if iat.tzinfo is not None:
-            iat = iat.astimezone(timezone.utc).replace(tzinfo=None)
+            iat = iat.astimezone(UTC).replace(tzinfo=None)
         # JWT iat is int seconds; floor pwd_changed (microseconds) to match.
         if iat < pwd_changed.replace(microsecond=0):
             raise credentials_exception

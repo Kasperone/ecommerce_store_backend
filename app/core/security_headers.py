@@ -1,4 +1,4 @@
-from typing import Iterable, Optional
+from collections.abc import Iterable
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -45,7 +45,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         app,
         *,
         hsts: bool,
-        csp: Optional[str] = None,
+        csp: str | None = None,
         csp_enforce: bool = False,
     ) -> None:
         super().__init__(app)

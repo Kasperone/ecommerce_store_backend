@@ -10,7 +10,6 @@ from pydantic import ValidationError
 
 from app.core.config import Settings
 
-
 # Both secrets must be >= 32 bytes; pad with a clearly non-secret tail so
 # the assertions are easy to scan.
 _OK_SECRET = "test-secret-padding-padding-padding"
@@ -26,7 +25,7 @@ def _build(**overrides) -> Settings:
         DATABASE_URL="postgresql://x/y",
     )
     base.update(overrides)
-    return Settings(_env_file=None, **base)
+    return Settings(_env_file=None, **base)  # pyright: ignore[reportCallIssue] -- pydantic-settings dunder kwarg
 
 
 def test_settings_accepts_secrets_at_least_32_bytes():
@@ -61,4 +60,4 @@ def test_settings_rejects_secret_at_31_bytes_boundary():
 def test_settings_accepts_secret_at_32_bytes_boundary():
     thirty_two = "x" * 32
     settings = _build(SECRET_KEY=thirty_two)
-    assert settings.SECRET_KEY == thirty_two
+    assert thirty_two == settings.SECRET_KEY

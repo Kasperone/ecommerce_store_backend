@@ -10,9 +10,8 @@ client has already rotated past it). The whole family for that user is
 revoked and the incident is logged for the operator.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from hmac import compare_digest
-from typing import Optional, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -22,7 +21,7 @@ from app.models.refresh_token import RefreshToken
 
 def _utcnow_naive() -> datetime:
     """Match the column type (naive UTC) used elsewhere in the project."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class CRUDRefreshToken:
@@ -36,12 +35,12 @@ class CRUDRefreshToken:
         jti: str,
         token: str,
         expires_at: datetime,
-        ip: Optional[str] = None,
-        user_agent: Optional[str] = None,
+        ip: str | None = None,
+        user_agent: str | None = None,
     ) -> RefreshToken:
         # Strip tz to match the naive-UTC convention used by the rest of the app.
         if expires_at.tzinfo is not None:
-            expires_at = expires_at.astimezone(timezone.utc).replace(tzinfo=None)
+            expires_at = expires_at.astimezone(UTC).replace(tzinfo=None)
         obj = RefreshToken(
             user_id=user_id,
             jti=jti,
@@ -55,7 +54,7 @@ class CRUDRefreshToken:
         db.refresh(obj)
         return obj
 
-    def get_by_jti(self, db: Session, *, jti: str) -> Optional[RefreshToken]:
+    def get_by_jti(self, db: Session, *, jti: str) -> RefreshToken | None:
         return db.query(RefreshToken).filter(RefreshToken.jti == jti).first()
 
     def is_revoked(self, row: RefreshToken) -> bool:
@@ -66,14 +65,14 @@ class CRUDRefreshToken:
 
     def matches(self, row: RefreshToken, *, token: str) -> bool:
         """Constant-time compare against the stored hash."""
-        return compare_digest(row.token_hash, hash_refresh_token(token))
+        return compare_digest(row.token_hash, hash_refresh_token(token))  # pyright: ignore[reportCallIssue] -- row.token_hash typed as Column[str] until Phase 3 Mapped[str] migration
 
     def revoke(
         self,
         db: Session,
         *,
         row: RefreshToken,
-        replaced_by_jti: Optional[str] = None,
+        replaced_by_jti: str | None = None,
     ) -> RefreshToken:
         if row.revoked_at is None:
             row.revoked_at = _utcnow_naive()
@@ -109,9 +108,9 @@ class CRUDRefreshToken:
         new_jti: str,
         new_token: str,
         new_expires_at: datetime,
-        ip: Optional[str] = None,
-        user_agent: Optional[str] = None,
-    ) -> Tuple[RefreshToken, RefreshToken]:
+        ip: str | None = None,
+        user_agent: str | None = None,
+    ) -> tuple[RefreshToken, RefreshToken]:
         """Atomically revoke ``old`` and insert the replacement row.
 
         Returns ``(old_revoked, new_row)``. Both writes happen in a single
@@ -119,7 +118,7 @@ class CRUDRefreshToken:
         where reuse-detection would mistake a partial rotation for theft.
         """
         if new_expires_at.tzinfo is not None:
-            new_expires_at = new_expires_at.astimezone(timezone.utc).replace(tzinfo=None)
+            new_expires_at = new_expires_at.astimezone(UTC).replace(tzinfo=None)
         new_row = RefreshToken(
             user_id=old.user_id,
             jti=new_jti,
