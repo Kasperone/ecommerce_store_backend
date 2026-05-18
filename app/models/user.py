@@ -1,10 +1,17 @@
 import enum
+from datetime import datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, String
+from sqlalchemy import Boolean, DateTime, Integer, String
 from sqlalchemy import Enum as SQLEnum
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import BaseModel, _utcnow
+
+if TYPE_CHECKING:
+    from app.models.order import Order
+    from app.models.refresh_token import RefreshToken
+    from app.models.verification_token import VerificationToken
 
 
 class UserRole(str, enum.Enum):
@@ -20,56 +27,58 @@ class User(BaseModel):
     __tablename__ = "users"
 
     # Authentication
-    email = Column(String(255), unique=True, index=True, nullable=False)
-    hashed_password = Column(String(255), nullable=False)  # Argon2id hashed
-    is_active = Column(Boolean, default=True, nullable=False)
-    is_verified = Column(Boolean, default=False, nullable=False)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    hashed_password: Mapped[str] = mapped_column(String(255))  # Argon2id hashed
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Profile
-    first_name = Column(String(100), nullable=False)
-    last_name = Column(String(100), nullable=False)
-    phone = Column(String(20), nullable=True)
+    first_name: Mapped[str] = mapped_column(String(100))
+    last_name: Mapped[str] = mapped_column(String(100))
+    phone: Mapped[str | None] = mapped_column(String(20))
 
     # Shipping Address (optional)
-    shipping_street = Column(String(255), nullable=True)
-    shipping_city = Column(String(100), nullable=True)
-    shipping_postal_code = Column(String(20), nullable=True)
-    shipping_country = Column(String(100), nullable=True)
-    shipping_state = Column(String(100), nullable=True)
+    shipping_street: Mapped[str | None] = mapped_column(String(255))
+    shipping_city: Mapped[str | None] = mapped_column(String(100))
+    shipping_postal_code: Mapped[str | None] = mapped_column(String(20))
+    shipping_country: Mapped[str | None] = mapped_column(String(100))
+    shipping_state: Mapped[str | None] = mapped_column(String(100))
 
     # Company/Invoice Data (optional)
-    company_name = Column(String(255), nullable=True)
-    company_tax_id = Column(String(50), nullable=True)
-    company_address_street = Column(String(255), nullable=True)
-    company_address_city = Column(String(100), nullable=True)
-    company_address_postal_code = Column(String(20), nullable=True)
-    company_address_country = Column(String(100), nullable=True)
-    company_address_state = Column(String(100), nullable=True)
+    company_name: Mapped[str | None] = mapped_column(String(255))
+    company_tax_id: Mapped[str | None] = mapped_column(String(50))
+    company_address_street: Mapped[str | None] = mapped_column(String(255))
+    company_address_city: Mapped[str | None] = mapped_column(String(100))
+    company_address_postal_code: Mapped[str | None] = mapped_column(String(20))
+    company_address_country: Mapped[str | None] = mapped_column(String(100))
+    company_address_state: Mapped[str | None] = mapped_column(String(100))
 
     # Password reset / lifecycle
     # SHA-256 hash of an opaque reset token; the plain token only lives in the
     # email link. Cleared on confirm or expiry.
-    password_reset_token_hash = Column(String(64), nullable=True, index=True)
-    password_reset_expires_at = Column(DateTime, nullable=True)
+    password_reset_token_hash: Mapped[str | None] = mapped_column(String(64), index=True)
+    password_reset_expires_at: Mapped[datetime | None] = mapped_column(DateTime)
     # Bumped on every successful password change/reset. Used (post Phase 5) to
     # invalidate access tokens issued before the change.
-    password_changed_at = Column(DateTime, default=_utcnow, nullable=True)
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime, default=_utcnow)
 
     # Brute-force lockout. Counter increments on every wrong password; once it
     # crosses the threshold, ``locked_until`` is set and login is rejected with
     # the same generic 401 as a bad password (don't reveal lockout state).
-    failed_login_attempts = Column(Integer, default=0, nullable=False)
-    locked_until = Column(DateTime, nullable=True)
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime)
 
     # Role
-    role = Column(SQLEnum(UserRole), default=UserRole.CUSTOMER, nullable=False)
+    role: Mapped[UserRole] = mapped_column(SQLEnum(UserRole), default=UserRole.CUSTOMER)
 
     # Relationships
-    orders = relationship("Order", back_populates="user", cascade="all, delete-orphan")
-    verification_tokens = relationship(
+    orders: Mapped[list["Order"]] = relationship(
+        "Order", back_populates="user", cascade="all, delete-orphan"
+    )
+    verification_tokens: Mapped[list["VerificationToken"]] = relationship(
         "VerificationToken", back_populates="user", cascade="all, delete-orphan"
     )
-    refresh_tokens = relationship(
+    refresh_tokens: Mapped[list["RefreshToken"]] = relationship(
         "RefreshToken", back_populates="user", cascade="all, delete-orphan"
     )
 

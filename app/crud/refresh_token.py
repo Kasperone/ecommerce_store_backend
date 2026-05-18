@@ -65,7 +65,7 @@ class CRUDRefreshToken:
 
     def matches(self, row: RefreshToken, *, token: str) -> bool:
         """Constant-time compare against the stored hash."""
-        return compare_digest(row.token_hash, hash_refresh_token(token))  # pyright: ignore[reportCallIssue] -- row.token_hash typed as Column[str] until Phase 3 Mapped[str] migration
+        return compare_digest(row.token_hash, hash_refresh_token(token))
 
     def revoke(
         self,

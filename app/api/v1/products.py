@@ -206,5 +206,5 @@ async def delete_product(
     if not product:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
 
-    crud_product.remove(db, id=product_id)
+    crud_product.delete(db, id=product_id)
     return None

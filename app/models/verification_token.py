@@ -1,10 +1,14 @@
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
-from sqlalchemy.orm import relationship
+from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import BaseModel
+
+if TYPE_CHECKING:
+    from app.models.user import User
 
 
 class VerificationToken(BaseModel):
@@ -13,12 +17,14 @@ class VerificationToken(BaseModel):
     __tablename__ = "verification_tokens"
 
     # Token fields
-    token = Column(String(255), unique=True, index=True, nullable=False)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    expires_at = Column(DateTime, nullable=False)
+    token: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
 
     # Relationships
-    user = relationship("User", back_populates="verification_tokens", passive_deletes=True)
+    user: Mapped["User"] = relationship(
+        "User", back_populates="verification_tokens", passive_deletes=True
+    )
 
     def __repr__(self):
         return f"<VerificationToken {self.token[:8]}... for user_id={self.user_id}>"

@@ -16,7 +16,7 @@ app = FastAPI(
 
 # Rate limiting (slowapi)
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # pyright: ignore[reportArgumentType] -- slowapi handler signature is narrower than Starlette's ExceptionHandler protocol
 app.add_middleware(SlowAPIMiddleware)
 
 # CORS Configuration. Explicit method/header allow-lists instead of "*" so

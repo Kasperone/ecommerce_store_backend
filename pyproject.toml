@@ -141,15 +141,6 @@ reportMissingImports = "error"
 # isn't enforced in this codebase — silence the rule globally so legitimate
 # cross-module usage doesn't generate noise.
 reportPrivateUsage = "none"
-# Legacy `Column(...)` model attributes are typed as `Column[T]`, not `T`, so
-# Pyright floods callers with cascading Column-vs-T diagnostics. The four
-# rules below are silenced until Phase 3 (refactor/sqlalchemy-2-mapped)
-# migrates the 7 model files to `Mapped[T] = mapped_column(...)`, at which
-# point these lines should be removed so Pyright re-checks the cascade.
-reportArgumentType = "none"
-reportAttributeAccessIssue = "none"
-reportGeneralTypeIssues = "none"
-reportReturnType = "none"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
