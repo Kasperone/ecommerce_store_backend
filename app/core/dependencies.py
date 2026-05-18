@@ -1,7 +1,7 @@
 from collections.abc import Generator
 from datetime import UTC
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
 from sqlalchemy.orm import Session
@@ -13,6 +13,9 @@ from app.models.user import User, UserRole
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
+# Width of the user_agent column on refresh_tokens and admin_audit_events.
+USER_AGENT_MAX_LEN = 500
+
 
 def get_db() -> Generator:
     db = SessionLocal()
@@ -20,6 +23,21 @@ def get_db() -> Generator:
         yield db
     finally:
         db.close()
+
+
+def client_ip(request: Request) -> str | None:
+    """Return the request's client IP, or None when the transport doesn't expose one."""
+    if request.client is None:
+        return None
+    return request.client.host
+
+
+def user_agent(request: Request) -> str | None:
+    """Return the User-Agent header, truncated to the storage column width."""
+    ua = request.headers.get("user-agent")
+    if not ua:
+        return None
+    return ua[:USER_AGENT_MAX_LEN]
 
 
 async def get_current_user(
