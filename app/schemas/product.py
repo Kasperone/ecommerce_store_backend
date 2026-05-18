@@ -1,7 +1,26 @@
-from pydantic import Field, computed_field, field_validator
+from pydantic import Field, computed_field
 
 from app.schemas.base import BaseSchema, TimestampSchema
 from app.schemas.category import CategoryResponse
+
+
+class ProductImageResponse(TimestampSchema):
+    """One image attached to a product.
+
+    Read-only on this endpoint set — image creation, mutation, and deletion
+    happen via the dedicated admin upload endpoints (PR1). ``id``,
+    ``created_at``, ``updated_at`` come from ``TimestampSchema``.
+    """
+
+    product_id: int
+    url: str
+    alt_text: str | None = None
+    sort_order: int = 0
+    is_primary: bool = False
+    width: int
+    height: int
+    bytes: int
+    mime: str
 
 
 class ProductBase(BaseSchema):
@@ -21,16 +40,7 @@ class ProductBase(BaseSchema):
     is_active: bool = True
     is_featured: bool = False
 
-    images: list[str] = Field(default_factory=list)
     category_id: int | None = None
-
-    @field_validator("images")
-    @classmethod
-    def validate_images(cls, v: list[str]) -> list[str]:
-        """Validate image URLs"""
-        if len(v) > 10:
-            raise ValueError("Maximum 10 images allowed")
-        return v
 
 
 class ProductCreate(ProductBase):
@@ -55,12 +65,13 @@ class ProductUpdate(BaseSchema):
     is_active: bool | None = None
     is_featured: bool | None = None
 
-    images: list[str] | None = None
     category_id: int | None = None
 
 
 class ProductResponse(ProductBase, TimestampSchema):
     """Schema for product response"""
+
+    images: list[ProductImageResponse] = Field(default_factory=list)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
