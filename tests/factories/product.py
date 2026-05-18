@@ -29,5 +29,4 @@ class ProductFactory(SQLAlchemyModelFactory):
     stock = 10
     is_active = True
     is_featured = False
-    images = factory.LazyFunction(list)
     category = factory.SubFactory(CategoryFactory)
