@@ -1,4 +1,4 @@
-from pydantic import Field, field_validator
+from pydantic import Field, computed_field, field_validator
 
 from app.schemas.base import BaseSchema, TimestampSchema
 from app.schemas.category import CategoryResponse
@@ -62,11 +62,10 @@ class ProductUpdate(BaseSchema):
 class ProductResponse(ProductBase, TimestampSchema):
     """Schema for product response"""
 
-    in_stock: bool  # pyright: ignore[reportRedeclaration] -- shadowed by @property below; behaviour-preserving suppression, real fix tracked in notes/plans/test/to-fix/
-
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def in_stock(self) -> bool:
-        """Check if product is in stock"""
+        """True when stock > 0."""
         return self.stock > 0
 
 
