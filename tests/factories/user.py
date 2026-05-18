@@ -12,14 +12,13 @@ from factory.alchemy import SQLAlchemyModelFactory
 from app.core.security import get_password_hash
 from app.models.user import User, UserRole
 
-
 # Default password used by the factory when no override is given. Tests can
 # read this constant to authenticate as the created user.
 DEFAULT_PASSWORD = "TestPass123!"
 
 
 class UserFactory(SQLAlchemyModelFactory):
-    class Meta:
+    class Meta:  # pyright: ignore[reportIncompatibleVariableOverride] -- factory-boy idiom; Meta is the documented config hook
         model = User
         sqlalchemy_session = None  # populated by the user_factory fixture
         sqlalchemy_session_persistence = "commit"

@@ -15,7 +15,6 @@ import pytest
 from app.crud.user import LOGIN_LOCKOUT_DURATION, LOGIN_LOCKOUT_THRESHOLD, _utcnow_naive
 from tests.factories.user import DEFAULT_PASSWORD
 
-
 pytestmark = pytest.mark.integration
 
 
@@ -65,9 +64,7 @@ async def test_wrong_password_returns_401_and_increments_counter(
     assert user.locked_until is None
 
 
-async def test_unknown_email_returns_401_without_creating_state(
-    client, reset_limiter
-):
+async def test_unknown_email_returns_401_without_creating_state(client, reset_limiter):
     """A nonexistent email gets the same generic 401 as a wrong password —
     nothing is persisted, no email is sent."""
     response = await client.post(
@@ -102,7 +99,8 @@ async def test_threshold_crossing_attempt_locks_and_emails_user(
     assert timedelta(seconds=0) < delta <= LOGIN_LOCKOUT_DURATION + timedelta(seconds=5)
 
     locked_emails = [
-        e for e in captured_emails
+        e
+        for e in captured_emails
         if e["email_to"] == "lock-me@example.com" and e["kind"] == "account_locked"
     ]
     assert len(locked_emails) == 1
@@ -130,7 +128,8 @@ async def test_locked_account_returns_401_even_with_correct_password(
 
     # No second account-locked email should fire.
     locked_emails = [
-        e for e in captured_emails
+        e
+        for e in captured_emails
         if e["email_to"] == "locked@example.com" and e["kind"] == "account_locked"
     ]
     assert locked_emails == []

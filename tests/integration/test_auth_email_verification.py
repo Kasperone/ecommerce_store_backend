@@ -9,12 +9,11 @@ Contract:
 - Expired token → 400.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from app.crud.verification_token import verification_token
-
 
 pytestmark = pytest.mark.integration
 
@@ -41,7 +40,8 @@ async def test_verify_email_flips_is_verified_and_deletes_token(
     assert verification_token.get_by_token(db_session, token=token_str) is None
 
     welcomes = [
-        e for e in captured_emails
+        e
+        for e in captured_emails
         if e["email_to"] == "verify@example.com" and e["kind"] == "welcome"
     ]
     assert len(welcomes) == 1
@@ -60,15 +60,14 @@ async def test_verify_email_short_circuits_when_already_verified(
     assert response.json() == {"message": "Email already verified"}
 
     welcomes = [
-        e for e in captured_emails
+        e
+        for e in captured_emails
         if e["email_to"] == "already@example.com" and e["kind"] == "welcome"
     ]
     assert welcomes == []
 
 
-async def test_verify_email_replay_returns_400(
-    client, db_session, reset_limiter, user_factory
-):
+async def test_verify_email_replay_returns_400(client, db_session, reset_limiter, user_factory):
     """A consumed token cannot be replayed — the row is deleted on first use
     so the second call must hit the generic 'invalid token' branch."""
     user = user_factory(email="replay@example.com", is_verified=False)
@@ -90,7 +89,7 @@ async def test_verify_email_rejects_expired_token_with_400(
 
     # Force expiry into the past. ``expires_at`` is stored as tz-aware UTC
     # for verification tokens, so use the same shape.
-    token_row.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    token_row.expires_at = datetime.now(UTC) - timedelta(seconds=1)
     db_session.add(token_row)
     db_session.commit()
 
@@ -144,7 +143,8 @@ async def test_resend_verification_replaces_token_atomically(
     # /register, so the captured kind is "verification" — assert on the
     # token value to confirm it's the replacement.
     sent = [
-        e for e in captured_emails
+        e
+        for e in captured_emails
         if e["email_to"] == "resend@example.com" and e["kind"] == "verification"
     ]
     assert len(sent) == 1
@@ -156,22 +156,17 @@ async def test_resend_verification_silent_for_already_verified_user(
 ):
     """Anti-enumeration: already-verified emails get the same generic 200
     but no resend goes out."""
-    user = user_factory(email="verified-resend@example.com", is_verified=True)
+    user_factory(email="verified-resend@example.com", is_verified=True)
 
-    response = await client.post(
-        RESEND_PATH, json={"email": "verified-resend@example.com"}
-    )
+    response = await client.post(RESEND_PATH, json={"email": "verified-resend@example.com"})
     assert response.status_code == 200
     assert not any(
-        e["email_to"] == "verified-resend@example.com"
-        and e["kind"] == "verification"
+        e["email_to"] == "verified-resend@example.com" and e["kind"] == "verification"
         for e in captured_emails
     )
 
 
-async def test_resend_verification_silent_for_unknown_email(
-    client, captured_emails, reset_limiter
-):
+async def test_resend_verification_silent_for_unknown_email(client, captured_emails, reset_limiter):
     response = await client.post(RESEND_PATH, json={"email": "ghost@example.com"})
     assert response.status_code == 200
     assert not any(e["email_to"] == "ghost@example.com" for e in captured_emails)

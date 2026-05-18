@@ -1,26 +1,19 @@
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from jose import JWTError
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_db, get_current_active_user
-from app.core.security import (
-    create_access_token,
-    create_refresh_token,
-    decode_token,
-    verify_password,
-)
 from app.core.config import settings
+from app.core.dependencies import get_current_active_user, get_db
 from app.core.email import (
-    send_verification_email,
-    send_welcome_email,
+    send_account_locked_email,
     send_already_registered_email,
     send_password_reset_email,
-    send_account_locked_email,
+    send_verification_email,
+    send_welcome_email,
 )
 from app.core.rate_limit import (
     get_email_or_ip_key,
@@ -28,21 +21,26 @@ from app.core.rate_limit import (
     stash_json_email_for_rate_limit,
     stash_login_email_for_rate_limit,
 )
-from app.crud import user as crud_user
+from app.core.security import (
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    verify_password,
+)
 from app.crud import refresh_token as crud_refresh_token
+from app.crud import user as crud_user
 from app.crud.verification_token import verification_token
+from app.models.user import User
 from app.schemas.auth import (
-    Token,
-    EmailVerification,
     EmailResend,
+    EmailVerification,
     GenericMessage,
     PasswordChange,
     PasswordReset,
     PasswordResetConfirm,
+    Token,
 )
 from app.schemas.user import UserCreate, UserResponse, UserUpdate
-from app.models.user import User
-
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +59,7 @@ def _set_refresh_cookie(response: Response, token: str, expires_at: datetime) ->
     the flash-of-forbidden-content problem). ``Secure`` is dropped only in
     development so localhost http works.
     """
-    max_age = int((expires_at - datetime.now(timezone.utc)).total_seconds())
+    max_age = int((expires_at - datetime.now(UTC)).total_seconds())
     if max_age < 0:
         max_age = 0
     response.set_cookie(
@@ -82,13 +80,13 @@ def _clear_refresh_cookie(response: Response) -> None:
     )
 
 
-def _client_ip(request: Request) -> Optional[str]:
+def _client_ip(request: Request) -> str | None:
     if request.client is None:
         return None
     return request.client.host
 
 
-def _user_agent(request: Request) -> Optional[str]:
+def _user_agent(request: Request) -> str | None:
     ua = request.headers.get("user-agent")
     if not ua:
         return None
@@ -97,14 +95,12 @@ def _user_agent(request: Request) -> Optional[str]:
 
 # Generic message returned by /register and /resend-verification regardless of
 # whether the email exists, to prevent account enumeration via response shape.
-GENERIC_REGISTRATION_MESSAGE = (
-    "If the email is available, a verification link has been sent."
-)
+GENERIC_REGISTRATION_MESSAGE = "If the email is available, a verification link has been sent."
 
 # Generic message returned by /password-reset/request regardless of whether the
 # email maps to an account.
 GENERIC_PASSWORD_RESET_MESSAGE = (
-    "If an account exists for this email, a password reset link has been sent."
+    "If an account exists for this email, a password reset link has been sent."  # noqa: S105 -- user-facing message, not a credential
 )
 
 router = APIRouter()
@@ -215,9 +211,7 @@ async def login(
                     send_account_locked_email(
                         email_to=user.email,
                         username=user.first_name or user.email,
-                        lockout_minutes=int(
-                            crud_user.LOGIN_LOCKOUT_DURATION.total_seconds() // 60
-                        ),
+                        lockout_minutes=int(crud_user.LOGIN_LOCKOUT_DURATION.total_seconds() // 60),
                     )
                 except Exception:
                     logger.warning(
@@ -229,15 +223,12 @@ async def login(
         raise invalid_credentials
 
     if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Inactive user"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user")
 
     if not user.is_verified:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Email not verified. Please check your email for verification link."
+            detail="Email not verified. Please check your email for verification link.",
         )
 
     crud_user.register_successful_login(db, user=user)
@@ -264,7 +255,7 @@ async def get_current_user_info(
 ):
     """
     Get current user information
-    
+
     Requires authentication
     """
     return current_user
@@ -278,7 +269,7 @@ async def update_current_user(
 ):
     """
     Update current user profile
-    
+
     Requires authentication
     """
     user = crud_user.update(db, db_obj=current_user, obj_in=user_in)
@@ -291,7 +282,7 @@ async def refresh_token(
     request: Request,
     response: Response,
     db: Session = Depends(get_db),
-    refresh_cookie: Optional[str] = Cookie(default=None, alias=REFRESH_COOKIE_NAME),
+    refresh_cookie: str | None = Cookie(default=None, alias=REFRESH_COOKIE_NAME),
 ):
     """Rotate the refresh cookie and mint a new access token.
 
@@ -313,7 +304,7 @@ async def refresh_token(
         decoded = decode_token(refresh_cookie, expected_type="refresh")
     except JWTError:
         _clear_refresh_cookie(response)
-        raise invalid
+        raise invalid from None
 
     row = crud_refresh_token.get_by_jti(db, jti=decoded.jti)
     if row is None or not crud_refresh_token.matches(row, token=refresh_cookie):
@@ -369,7 +360,7 @@ async def refresh_token(
 async def logout(
     response: Response,
     db: Session = Depends(get_db),
-    refresh_cookie: Optional[str] = Cookie(default=None, alias=REFRESH_COOKIE_NAME),
+    refresh_cookie: str | None = Cookie(default=None, alias=REFRESH_COOKIE_NAME),
 ):
     """Revoke the current refresh row (if any) and clear the cookie.
 
@@ -406,9 +397,7 @@ async def logout_all(
     # Push iat-floor forward so any access token issued before now is
     # rejected by get_current_user. JWT iat is whole seconds, so add one
     # second to also invalidate tokens minted in this same whole second.
-    current_user.password_changed_at = (
-        datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=1)
-    )
+    current_user.password_changed_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(seconds=1)
     db.add(current_user)
     db.commit()
     _clear_refresh_cookie(response)
@@ -422,52 +411,42 @@ async def verify_email(
 ):
     """
     Verify user email with token
-    
+
     - **token**: Verification token from email
-    
+
     Returns success message
     """
     # Validate token
     is_valid, error_msg = verification_token.is_valid(db, token=verification.token)
-    
+
     if not is_valid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=error_msg
-        )
-    
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
+
     # Get token and user
     token_obj = verification_token.get_by_token(db, token=verification.token)
     if not token_obj:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid verification token"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification token"
         )
-    
+
     user = crud_user.get(db, id=token_obj.user_id)
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
     # Check if already verified
     if user.is_verified:
         return {"message": "Email already verified"}
-    
+
     # Mark user as verified
     user.is_verified = True
     db.commit()
-    
+
     # Delete verification token
     verification_token.delete_by_token(db, token=verification.token)
-    
+
     # Send welcome email
     try:
-        send_welcome_email(
-            email_to=user.email,
-            username=user.first_name or user.email
-        )
+        send_welcome_email(email_to=user.email, username=user.first_name or user.email)
     except Exception:
         logger.warning(
             "Email send failed: kind=%s user_id=%s",
@@ -475,7 +454,7 @@ async def verify_email(
             user.id,
             exc_info=True,
         )
-    
+
     return {"message": "Email verified successfully"}
 
 

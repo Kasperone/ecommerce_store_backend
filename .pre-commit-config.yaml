@@ -1,0 +1,42 @@
+# Local install: `pip install -e ".[dev]" && pre-commit install`
+# Ruff and Pyright run from the project venv (`language: system`) so they
+# share the pinned versions in pyproject.toml [project.optional-dependencies.dev]
+# and so Pyright can resolve project imports without re-installing deps in
+# pre-commit's isolated env.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff (lint)
+        entry: ruff check --fix
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+        # Auto-generated migrations stay as-emitted by Alembic.
+        exclude: ^alembic/versions/
+
+      - id: ruff-format
+        name: ruff (format)
+        entry: ruff format
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+        exclude: ^alembic/versions/
+
+      - id: pyright
+        name: pyright
+        entry: pyright
+        language: system
+        types: [python]
+        pass_filenames: false
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^alembic/(versions/|README$)
+      - id: end-of-file-fixer
+        exclude: ^alembic/(versions/|README$)
+      - id: check-yaml
+      - id: check-added-large-files
+        args: [--maxkb=1000]

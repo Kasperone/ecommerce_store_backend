@@ -10,7 +10,6 @@ import pytest
 
 from app.api.v1.auth import GENERIC_REGISTRATION_MESSAGE
 
-
 pytestmark = pytest.mark.integration
 
 
@@ -72,18 +71,14 @@ async def test_register_response_is_indistinguishable_for_new_vs_duplicate(
         ("Sh0rt!", "below min length"),
     ],
 )
-async def test_weak_password_rejected_with_422(
-    client, reset_limiter, weak_password, reason
-):
+async def test_weak_password_rejected_with_422(client, reset_limiter, weak_password, reason):
     response = await client.post(
         REGISTER_PATH, json=_payload(email="weak@example.com", password=weak_password)
     )
     assert response.status_code == 422, reason
 
 
-async def test_register_rate_limit_blocks_sixth_request(
-    client, captured_emails, reset_limiter
-):
+async def test_register_rate_limit_blocks_sixth_request(client, captured_emails, reset_limiter):
     """Limit is 5/hour per IP; the 6th call is 429.
 
     Each call uses a distinct email so we are not also bumping the per-email

@@ -1,31 +1,32 @@
-from sqlalchemy import Column, String, Integer, ForeignKey, DateTime
-from sqlalchemy.orm import relationship
-from datetime import datetime, timedelta, timezone
 import uuid
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy.orm import relationship
 
 from app.models.base import BaseModel
 
 
 class VerificationToken(BaseModel):
     """Email verification token model"""
-    
+
     __tablename__ = "verification_tokens"
-    
+
     # Token fields
     token = Column(String(255), unique=True, index=True, nullable=False)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     expires_at = Column(DateTime, nullable=False)
-    
+
     # Relationships
     user = relationship("User", back_populates="verification_tokens", passive_deletes=True)
-    
+
     def __repr__(self):
         return f"<VerificationToken {self.token[:8]}... for user_id={self.user_id}>"
-    
+
     @property
     def is_expired(self) -> bool:
         """Check if token has expired"""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         expires_at = self.expires_at
         if expires_at.tzinfo is None:
             # Existing rows were stored as naive UTC; compare like-for-like.
@@ -40,4 +41,4 @@ class VerificationToken(BaseModel):
     @staticmethod
     def get_expiration_time(hours: int = 24) -> datetime:
         """Get expiration datetime (default 24 hours from now)"""
-        return datetime.now(timezone.utc) + timedelta(hours=hours)
+        return datetime.now(UTC) + timedelta(hours=hours)

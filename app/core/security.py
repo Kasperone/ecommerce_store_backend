@@ -10,14 +10,13 @@ by the refresh flow to look up the persisted DB row and detect reuse.
 import hashlib
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Any, Literal, Optional, Union
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
 
-from jose import jwt, JWTError
+from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from app.core.config import settings
-
 
 TokenType = Literal["access", "refresh"]
 
@@ -49,15 +48,15 @@ class DecodedToken:
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _build_token(
     *,
-    subject: Union[str, Any],
+    subject: str | Any,
     token_type: TokenType,
     expires_delta: timedelta,
-    extra: Optional[dict] = None,
+    extra: dict | None = None,
 ) -> tuple[str, str, datetime]:
     """Build a signed JWT and return ``(token, jti, expires_at)``."""
     now = _utcnow()
@@ -79,15 +78,15 @@ def _build_token(
 
 
 def create_access_token(
-    subject: Union[str, Any], expires_delta: Optional[timedelta] = None
+    subject: str | Any, expires_delta: timedelta | None = None
 ) -> tuple[str, str, datetime]:
     """Issue a short-lived access token. Returns ``(token, jti, expires_at)``."""
     delta = expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    return _build_token(subject=subject, token_type="access", expires_delta=delta)
+    return _build_token(subject=subject, token_type="access", expires_delta=delta)  # noqa: S106 -- token type label, not a credential
 
 
 def create_refresh_token(
-    subject: Union[str, Any], expires_delta: Optional[timedelta] = None
+    subject: str | Any, expires_delta: timedelta | None = None
 ) -> tuple[str, str, datetime]:
     """Issue a refresh token. Returns ``(token, jti, expires_at)``.
 
@@ -95,7 +94,7 @@ def create_refresh_token(
     (storing the SHA-256 of ``token``) before returning anything to the client.
     """
     delta = expires_delta or timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-    return _build_token(subject=subject, token_type="refresh", expires_delta=delta)
+    return _build_token(subject=subject, token_type="refresh", expires_delta=delta)  # noqa: S106 -- token type label, not a credential
 
 
 def decode_token(token: str, *, expected_type: TokenType) -> DecodedToken:
@@ -125,8 +124,8 @@ def decode_token(token: str, *, expected_type: TokenType) -> DecodedToken:
         subject=str(sub),
         jti=str(jti),
         type=token_type,
-        issued_at=datetime.fromtimestamp(int(iat), tz=timezone.utc),
-        expires_at=datetime.fromtimestamp(int(exp), tz=timezone.utc),
+        issued_at=datetime.fromtimestamp(int(iat), tz=UTC),
+        expires_at=datetime.fromtimestamp(int(exp), tz=UTC),
     )
 
 

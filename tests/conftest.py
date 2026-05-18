@@ -8,8 +8,8 @@ once at import time and reads from environment.
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
-from typing import AsyncIterator, Iterator
 
 from dotenv import load_dotenv
 
@@ -34,16 +34,15 @@ if "test" not in _db_url.lower():
 # Now safe to import app code.
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
-from alembic import command  # noqa: E402
-from alembic.config import Config  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 from sqlalchemy import create_engine, text  # noqa: E402
 from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
 
+from alembic import command  # noqa: E402
+from alembic.config import Config  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.core.dependencies import get_db  # noqa: E402
 from app.main import app  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Database lifecycle
@@ -165,7 +164,9 @@ def captured_emails(monkeypatch) -> list[dict]:
         "send_already_registered_email",
     ):
         if hasattr(auth_mod, name):
-            monkeypatch.setattr(auth_mod, name, _make(name.replace("send_", "").replace("_email", "")))
+            monkeypatch.setattr(
+                auth_mod, name, _make(name.replace("send_", "").replace("_email", ""))
+            )
 
     return captured
 

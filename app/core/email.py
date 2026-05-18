@@ -1,7 +1,6 @@
 import logging
+
 import resend
-from typing import Optional
-from pathlib import Path
 
 from app.core.config import settings
 
@@ -16,7 +15,7 @@ def send_email(
     email_to: str,
     subject: str,
     html_content: str,
-    text_content: Optional[str] = None,
+    text_content: str | None = None,
 ) -> dict:
     """
     Send email using Resend API
@@ -64,20 +63,20 @@ def send_verification_email(
 ) -> dict:
     """
     Send verification email with token link
-    
+
     Args:
         email_to: Recipient email address
         username: User's name for personalization
         token: Verification token
-    
+
     Returns:
         Response from Resend API
     """
     subject = f"{settings.EMAIL_FROM_NAME} - Verify your email address"
-    
+
     # Construct verification link
     verification_link = f"{settings.FRONTEND_URL}/verify-email?token={token}"
-    
+
     # HTML email content
     html_content = f"""
     <!DOCTYPE html>
@@ -146,26 +145,26 @@ def send_verification_email(
             <div class="header">
                 <h1>🎉 Welcome to {settings.EMAIL_FROM_NAME}!</h1>
             </div>
-            
+
             <div class="content">
                 <p>Hi {username},</p>
-                
+
                 <p>Thank you for registering with {settings.EMAIL_FROM_NAME}! We're excited to have you on board.</p>
-                
+
                 <p>To complete your registration and verify your email address, please click the button below:</p>
-                
+
                 <div style="text-align: center;">
                     <a href="{verification_link}" class="button">Verify Email Address</a>
                 </div>
-                
+
                 <p>Or copy and paste this link into your browser:</p>
                 <p class="link">{verification_link}</p>
-                
+
                 <p><strong>This link will expire in 24 hours.</strong></p>
-                
+
                 <p>If you didn't create an account with us, you can safely ignore this email.</p>
             </div>
-            
+
             <div class="footer">
                 <p>© 2024 {settings.EMAIL_FROM_NAME}. All rights reserved.</p>
                 <p>If you have any questions, feel free to contact our support team.</p>
@@ -174,24 +173,24 @@ def send_verification_email(
     </body>
     </html>
     """
-    
+
     # Plain text fallback
     text_content = f"""
     Welcome to {settings.EMAIL_FROM_NAME}!
-    
+
     Hi {username},
-    
+
     Thank you for registering! To verify your email address, please click the link below:
-    
+
     {verification_link}
-    
+
     This link will expire in 24 hours.
-    
+
     If you didn't create an account with us, you can safely ignore this email.
-    
+
     © 2024 {settings.EMAIL_FROM_NAME}
     """
-    
+
     return send_email(
         email_to=email_to,
         subject=subject,
@@ -207,16 +206,16 @@ def send_welcome_email(
 ) -> dict:
     """
     Send welcome email after successful verification
-    
+
     Args:
         email_to: Recipient email address
         username: User's name
-    
+
     Returns:
         Response from Resend API
     """
     subject = f"Welcome to {settings.EMAIL_FROM_NAME}!"
-    
+
     html_content = f"""
     <!DOCTYPE html>
     <html>
@@ -266,7 +265,7 @@ def send_welcome_email(
     </body>
     </html>
     """
-    
+
     return send_email(
         email_to=email_to,
         subject=subject,

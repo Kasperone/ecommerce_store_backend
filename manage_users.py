@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Delete a user by email and create a new one. Interactive password prompt."""
 
+import getpass
 import os
 import sys
-import getpass
 
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
@@ -11,9 +11,9 @@ from sqlalchemy.orm import sessionmaker
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "app"))
 
+from app.core.security import get_password_hash
 from app.models import User
 from app.models.user import UserRole
-from app.core.security import get_password_hash
 
 load_dotenv()
 
@@ -68,7 +68,10 @@ def main():
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
-        print(f"\nCreated user id={new_user.id} email={new_user.email} role={new_user.role.value} verified={new_user.is_verified}")
+        print(
+            f"\nCreated user id={new_user.id} email={new_user.email} "
+            f"role={new_user.role.value} verified={new_user.is_verified}"
+        )
         return 0
     except Exception as e:
         db.rollback()
