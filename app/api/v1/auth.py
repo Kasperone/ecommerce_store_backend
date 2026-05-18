@@ -7,7 +7,7 @@ from jose import JWTError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.dependencies import get_current_active_user, get_db
+from app.core.dependencies import client_ip, get_current_active_user, get_db, user_agent
 from app.core.email import (
     send_account_locked_email,
     send_already_registered_email,
@@ -78,19 +78,6 @@ def _clear_refresh_cookie(response: Response) -> None:
         key=REFRESH_COOKIE_NAME,
         path=REFRESH_COOKIE_PATH,
     )
-
-
-def _client_ip(request: Request) -> str | None:
-    if request.client is None:
-        return None
-    return request.client.host
-
-
-def _user_agent(request: Request) -> str | None:
-    ua = request.headers.get("user-agent")
-    if not ua:
-        return None
-    return ua[:512]
 
 
 # Generic message returned by /register and /resend-verification regardless of
@@ -241,8 +228,8 @@ async def login(
         jti=refresh_jti,
         token=refresh,
         expires_at=refresh_exp,
-        ip=_client_ip(request),
-        user_agent=_user_agent(request),
+        ip=client_ip(request),
+        user_agent=user_agent(request),
     )
     _set_refresh_cookie(response, refresh, refresh_exp)
 
@@ -273,6 +260,8 @@ async def update_current_user(
     Requires authentication
     """
     user = crud_user.update(db, db_obj=current_user, obj_in=user_in)
+    db.commit()
+    db.refresh(user)
     return user
 
 
@@ -320,7 +309,7 @@ async def refresh_token(
             "refresh-token reuse detected; revoked family for user_id=%s jti=%s ip=%s",
             row.user_id,
             decoded.jti,
-            _client_ip(request),
+            client_ip(request),
         )
         _clear_refresh_cookie(response)
         raise invalid
@@ -343,8 +332,8 @@ async def refresh_token(
         new_jti=new_jti,
         new_token=new_refresh,
         new_expires_at=new_exp,
-        ip=_client_ip(request),
-        user_agent=_user_agent(request),
+        ip=client_ip(request),
+        user_agent=user_agent(request),
     )
     _set_refresh_cookie(response, new_refresh, new_exp)
 

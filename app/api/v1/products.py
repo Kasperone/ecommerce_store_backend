@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_admin, get_db
 from app.crud import product as crud_product
+from app.models.user import User
 from app.schemas.product import (
     ProductCreate,
     ProductListResponse,
@@ -12,6 +13,7 @@ from app.schemas.product import (
     ProductUpdate,
     ProductWithCategory,
 )
+from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
 
@@ -126,7 +128,8 @@ async def get_product_by_slug(
 async def create_product(
     product_in: ProductCreate,
     db: Session = Depends(get_db),
-    current_admin: dict = Depends(get_current_admin),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
 ):
     """
     Create new product (Admin only)
@@ -150,6 +153,9 @@ async def create_product(
             )
 
     product = crud_product.create(db, obj_in=product_in)
+    audit.record_create(resource_type="product", obj=product)
+    db.commit()
+    db.refresh(product)
     return product
 
 
@@ -158,7 +164,8 @@ async def update_product(
     product_id: int,
     product_in: ProductUpdate,
     db: Session = Depends(get_db),
-    current_admin: dict = Depends(get_current_admin),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
 ):
     """
     Update product (Admin only)
@@ -188,6 +195,9 @@ async def update_product(
             )
 
     product = crud_product.update(db, db_obj=product, obj_in=product_in)
+    audit.record_update(resource_type="product", obj=product)
+    db.commit()
+    db.refresh(product)
     return product
 
 
@@ -195,7 +205,8 @@ async def update_product(
 async def delete_product(
     product_id: int,
     db: Session = Depends(get_db),
-    current_admin: dict = Depends(get_current_admin),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
 ):
     """
     Delete product (Admin only)
@@ -206,5 +217,8 @@ async def delete_product(
     if not product:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
 
+    # Snapshot before delete — the writer needs ``obj`` readable.
+    audit.record_delete(resource_type="product", obj=product)
     crud_product.delete(db, id=product_id)
+    db.commit()
     return None

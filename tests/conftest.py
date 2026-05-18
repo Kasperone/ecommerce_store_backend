@@ -211,3 +211,43 @@ def user_factory(db_session):
         return UserFactory(**kwargs)
 
     return _make
+
+
+# ---------------------------------------------------------------------------
+# Catalog factory fixtures (Category, Product)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def category_factory(db_session):
+    """Returns a callable that creates a Category row via the factory."""
+    from tests.factories.category import CategoryFactory
+
+    CategoryFactory._meta.sqlalchemy_session = db_session  # pyright: ignore[reportAttributeAccessIssue] -- see user_factory
+    CategoryFactory._meta.sqlalchemy_session_persistence = "commit"  # pyright: ignore[reportAttributeAccessIssue] -- see user_factory
+
+    def _make(**kwargs):
+        return CategoryFactory(**kwargs)
+
+    return _make
+
+
+@pytest.fixture
+def product_factory(db_session):
+    """Returns a callable that creates a Product row via the factory.
+
+    Internally uses ``CategoryFactory`` as a SubFactory, which needs the
+    same session binding.
+    """
+    from tests.factories.category import CategoryFactory
+    from tests.factories.product import ProductFactory
+
+    CategoryFactory._meta.sqlalchemy_session = db_session  # pyright: ignore[reportAttributeAccessIssue] -- see user_factory
+    CategoryFactory._meta.sqlalchemy_session_persistence = "commit"  # pyright: ignore[reportAttributeAccessIssue] -- see user_factory
+    ProductFactory._meta.sqlalchemy_session = db_session  # pyright: ignore[reportAttributeAccessIssue] -- see user_factory
+    ProductFactory._meta.sqlalchemy_session_persistence = "commit"  # pyright: ignore[reportAttributeAccessIssue] -- see user_factory
+
+    def _make(**kwargs):
+        return ProductFactory(**kwargs)
+
+    return _make
