@@ -1,7 +1,7 @@
+from typing import Literal
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List, Literal
-
 
 # Both `SECRET_KEY` and `JWT_SECRET_KEY` are HMAC keys; OWASP guidance is
 # >= 256 bits (32 bytes) of entropy. Enforced at startup so a misconfigured
@@ -18,10 +18,10 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     ENVIRONMENT: Literal["development", "staging", "production"] = "development"
     SECRET_KEY: str
-    
+
     # Database
     DATABASE_URL: str
-    
+
     # JWT
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str = "HS256"
@@ -29,43 +29,39 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 14
     JWT_ISSUER: str = "ecommerce-store"
     JWT_AUDIENCE: str = "ecommerce-store-clients"
-    
+
     # CORS
-    CORS_ORIGINS: List[str] = ["http://localhost:3000"]
+    CORS_ORIGINS: list[str] = ["http://localhost:3000"]
 
     # Rate limiting (slowapi). Use ``memory://`` for single-instance dev,
     # ``redis://host:port/db`` for multi-worker / production deployments.
     RATE_LIMIT_STORAGE_URL: str = "memory://"
-    
+
     # Cloudflare R2
     R2_ACCOUNT_ID: str = ""
     R2_ACCESS_KEY_ID: str = ""
     R2_SECRET_ACCESS_KEY: str = ""
     R2_BUCKET_NAME: str = ""
     R2_PUBLIC_URL: str = ""
-    
+
     # Email / Resend
     RESEND_API_KEY: str = ""
     EMAIL_FROM: str = "noreply@ecommerce.com"
     EMAIL_FROM_NAME: str = "E-commerce Store"
     FRONTEND_URL: str = "http://localhost:3000"
-    
+
     # PayU
     PAYU_POS_ID: str = ""
     PAYU_CLIENT_ID: str = ""
     PAYU_CLIENT_SECRET: str = ""
     PAYU_SANDBOX: bool = True
-    
+
     # Stripe
     STRIPE_SECRET_KEY: str = ""
     STRIPE_PUBLISHABLE_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
-    
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        case_sensitive=True,
-        extra="allow"
-    )
+
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="allow")
 
     @field_validator("SECRET_KEY", "JWT_SECRET_KEY")
     @classmethod
@@ -79,4 +75,4 @@ class Settings(BaseSettings):
         return value
 
 
-settings = Settings()
+settings = Settings()  # pyright: ignore[reportCallIssue] -- pydantic-settings loads required fields from env

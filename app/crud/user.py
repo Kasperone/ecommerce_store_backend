@@ -1,16 +1,14 @@
 import hashlib
 import secrets
-from datetime import datetime, timedelta, timezone
-from typing import Optional, Tuple
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
+from app.core.security import get_password_hash, verify_password
 from app.crud.base import CRUDBase
 from app.crud.refresh_token import refresh_token as crud_refresh_token
 from app.models.user import User
 from app.schemas.user import UserCreate, UserUpdate
-from app.core.security import get_password_hash, verify_password
-
 
 PASSWORD_RESET_TOKEN_TTL = timedelta(hours=1)
 
@@ -30,7 +28,7 @@ def _hash_reset_token(token: str) -> str:
 
 def _utcnow_naive() -> datetime:
     """UTC now as naive datetime, matching the model's column type."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _password_changed_bump() -> datetime:
@@ -49,27 +47,27 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
     LOGIN_LOCKOUT_THRESHOLD = LOGIN_LOCKOUT_THRESHOLD
     LOGIN_LOCKOUT_DURATION = LOGIN_LOCKOUT_DURATION
 
-    def get_by_email(self, db: Session, *, email: str) -> Optional[User]:
+    def get_by_email(self, db: Session, *, email: str) -> User | None:
         """
         Get user by email
-        
+
         Args:
             db: Database session
             email: User email
-        
+
         Returns:
             User object or None
         """
         return db.query(User).filter(User.email == email).first()
-    
+
     def create(self, db: Session, *, obj_in: UserCreate) -> User:
         """
         Create new user with hashed password
-        
+
         Args:
             db: Database session
             obj_in: User creation schema
-        
+
         Returns:
             Created user object
         """
@@ -84,18 +82,16 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         db.commit()
         db.refresh(db_obj)
         return db_obj
-    
-    def authenticate(
-        self, db: Session, *, email: str, password: str
-    ) -> Optional[User]:
+
+    def authenticate(self, db: Session, *, email: str, password: str) -> User | None:
         """
         Authenticate user with email and password
-        
+
         Args:
             db: Database session
             email: User email
             password: Plain text password
-        
+
         Returns:
             User object if authenticated, None otherwise
         """
@@ -105,7 +101,7 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         if not verify_password(password, user.hashed_password):
             return None
         return user
-    
+
     def is_active(self, user: User) -> bool:
         """Check if user is active"""
         return user.is_active
@@ -113,6 +109,7 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
     def is_admin(self, user: User) -> bool:
         """Check if user is admin"""
         from app.models.user import UserRole
+
         return user.role == UserRole.ADMIN
 
     def is_locked(self, user: User) -> bool:
@@ -170,16 +167,12 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
 
     def consume_password_reset_token(
         self, db: Session, *, token: str, new_password: str
-    ) -> Tuple[bool, Optional[User]]:
+    ) -> tuple[bool, User | None]:
         """Validate a reset token, set the new password, clear the token,
         and bump password_changed_at. Returns ``(ok, user)``.
         Generic failure on bad/expired token to avoid token enumeration."""
         token_hash = _hash_reset_token(token)
-        candidate = (
-            db.query(User)
-            .filter(User.password_reset_token_hash == token_hash)
-            .first()
-        )
+        candidate = db.query(User).filter(User.password_reset_token_hash == token_hash).first()
         if not candidate or not candidate.password_reset_expires_at:
             return False, None
         if candidate.password_reset_expires_at < _utcnow_naive():

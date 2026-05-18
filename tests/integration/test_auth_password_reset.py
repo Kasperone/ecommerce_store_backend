@@ -23,7 +23,6 @@ from app.crud import refresh_token as crud_refresh_token
 from app.crud.user import _utcnow_naive
 from tests.factories.user import DEFAULT_PASSWORD
 
-
 pytestmark = pytest.mark.integration
 
 
@@ -78,9 +77,7 @@ async def test_confirm_rotates_password_clears_token_bumps_marker(
     user = user_factory(email="confirm@example.com")
     request_resp = await client.post(REQUEST_PATH, json={"email": "confirm@example.com"})
     assert request_resp.status_code == 200
-    token = next(
-        e for e in captured_emails if e["email_to"] == "confirm@example.com"
-    )["token"]
+    token = next(e for e in captured_emails if e["email_to"] == "confirm@example.com")["token"]
     before = user.password_changed_at
 
     response = await client.post(
@@ -107,9 +104,9 @@ async def test_confirm_rejects_expired_token_with_400(
 ):
     user = user_factory(email="confirm-expired@example.com")
     await client.post(REQUEST_PATH, json={"email": "confirm-expired@example.com"})
-    token = next(
-        e for e in captured_emails if e["email_to"] == "confirm-expired@example.com"
-    )["token"]
+    token = next(e for e in captured_emails if e["email_to"] == "confirm-expired@example.com")[
+        "token"
+    ]
 
     # Force expiry into the past.
     db_session.refresh(user)
@@ -129,13 +126,9 @@ async def test_confirm_token_is_one_shot(
     """A used reset token cannot be replayed — second confirm returns 400."""
     user_factory(email="oneshot@example.com")
     await client.post(REQUEST_PATH, json={"email": "oneshot@example.com"})
-    token = next(
-        e for e in captured_emails if e["email_to"] == "oneshot@example.com"
-    )["token"]
+    token = next(e for e in captured_emails if e["email_to"] == "oneshot@example.com")["token"]
 
-    first = await client.post(
-        CONFIRM_PATH, json={"token": token, "new_password": "Brand-NewPwd1"}
-    )
+    first = await client.post(CONFIRM_PATH, json={"token": token, "new_password": "Brand-NewPwd1"})
     assert first.status_code == 200
 
     second = await client.post(
@@ -160,15 +153,11 @@ async def test_confirm_revokes_refresh_family(
         data={"username": "reset-revoke@example.com", "password": DEFAULT_PASSWORD},
     )
     assert login.status_code == 200
-    refresh_jti = decode_token(
-        client.cookies["refresh_token"], expected_type="refresh"
-    ).jti
+    refresh_jti = decode_token(client.cookies["refresh_token"], expected_type="refresh").jti
 
     # Drive the reset.
     await client.post(REQUEST_PATH, json={"email": "reset-revoke@example.com"})
-    token = next(
-        e for e in captured_emails if e["email_to"] == "reset-revoke@example.com"
-    )["token"]
+    token = next(e for e in captured_emails if e["email_to"] == "reset-revoke@example.com")["token"]
     confirm = await client.post(
         CONFIRM_PATH, json={"token": token, "new_password": "Brand-NewPwd1"}
     )
@@ -177,9 +166,7 @@ async def test_confirm_revokes_refresh_family(
     db_session.expire_all()
     row = crud_refresh_token.get_by_jti(db_session, jti=refresh_jti)
     assert row is not None
-    assert row.revoked_at is not None, (
-        "refresh row must be revoked on password-reset confirm"
-    )
+    assert row.revoked_at is not None, "refresh row must be revoked on password-reset confirm"
 
 
 async def test_confirm_clears_refresh_cookie_on_calling_device(
@@ -198,9 +185,7 @@ async def test_confirm_clears_refresh_cookie_on_calling_device(
     assert client.cookies.get("refresh_token") is not None
 
     await client.post(REQUEST_PATH, json={"email": "reset-cookie@example.com"})
-    token = next(
-        e for e in captured_emails if e["email_to"] == "reset-cookie@example.com"
-    )["token"]
+    token = next(e for e in captured_emails if e["email_to"] == "reset-cookie@example.com")["token"]
 
     confirm = await client.post(
         CONFIRM_PATH, json={"token": token, "new_password": "Brand-NewPwd1"}

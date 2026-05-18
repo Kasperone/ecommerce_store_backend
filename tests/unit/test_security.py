@@ -1,6 +1,6 @@
 """Unit tests for app.core.security — pure functions, no DB."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from jose import JWTError, jwt
@@ -14,7 +14,6 @@ from app.core.security import (
     hash_refresh_token,
     verify_password,
 )
-
 
 # ---------------------------------------------------------------------------
 # Argon2id password hashing
@@ -81,16 +80,14 @@ def test_decode_rejects_tampered_signature():
 
 
 def test_decode_rejects_expired_token():
-    token, _, _ = create_access_token(
-        subject=1, expires_delta=timedelta(seconds=-1)
-    )
+    token, _, _ = create_access_token(subject=1, expires_delta=timedelta(seconds=-1))
     with pytest.raises(JWTError):
         decode_token(token, expected_type="access")
 
 
 def test_decode_rejects_wrong_audience():
     """Token signed with a different audience must not validate against ours."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": "1",
         "iat": int(now.timestamp()),
@@ -100,16 +97,14 @@ def test_decode_rejects_wrong_audience():
         "jti": "deadbeef",
         "type": "access",
     }
-    bad_token = jwt.encode(
-        payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM
-    )
+    bad_token = jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
     with pytest.raises(JWTError):
         decode_token(bad_token, expected_type="access")
 
 
 def test_decode_rejects_missing_claims():
     """A signature-valid token without required claims is rejected."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         # Missing jti.
         "sub": "1",
@@ -119,9 +114,7 @@ def test_decode_rejects_missing_claims():
         "aud": settings.JWT_AUDIENCE,
         "type": "access",
     }
-    bad_token = jwt.encode(
-        payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM
-    )
+    bad_token = jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
     with pytest.raises(JWTError):
         decode_token(bad_token, expected_type="access")
 

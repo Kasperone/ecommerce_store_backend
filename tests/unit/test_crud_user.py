@@ -18,7 +18,6 @@ from app.crud.user import (
 )
 from tests.factories.user import DEFAULT_PASSWORD
 
-
 pytestmark = pytest.mark.integration
 
 
@@ -29,18 +28,14 @@ pytestmark = pytest.mark.integration
 
 def test_authenticate_happy_path(db_session, user_factory):
     user = user_factory(email="auth-ok@example.com")
-    got = crud_user.authenticate(
-        db_session, email="auth-ok@example.com", password=DEFAULT_PASSWORD
-    )
+    got = crud_user.authenticate(db_session, email="auth-ok@example.com", password=DEFAULT_PASSWORD)
     assert got is not None
     assert got.id == user.id
 
 
 def test_authenticate_returns_none_for_unknown_email(db_session):
     assert (
-        crud_user.authenticate(
-            db_session, email="ghost@example.com", password=DEFAULT_PASSWORD
-        )
+        crud_user.authenticate(db_session, email="ghost@example.com", password=DEFAULT_PASSWORD)
         is None
     )
 

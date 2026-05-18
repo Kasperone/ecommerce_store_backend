@@ -12,7 +12,6 @@ from app.core.security import decode_token
 from app.crud import refresh_token as crud_refresh_token
 from tests.factories.user import DEFAULT_PASSWORD
 
-
 pytestmark = pytest.mark.integration
 
 
@@ -24,9 +23,7 @@ ME_PATH = "/api/v1/auth/me"
 
 async def _login(client, email: str) -> tuple[str, str]:
     """Log in and return ``(access_token, refresh_cookie)``."""
-    response = await client.post(
-        LOGIN_PATH, data={"username": email, "password": DEFAULT_PASSWORD}
-    )
+    response = await client.post(LOGIN_PATH, data={"username": email, "password": DEFAULT_PASSWORD})
     assert response.status_code == 200, response.text
     return response.json()["access_token"], client.cookies["refresh_token"]
 
@@ -69,9 +66,7 @@ async def test_logout_with_invalid_cookie_is_idempotent_200(client, reset_limite
     assert response.status_code == 200
 
 
-async def test_logout_is_safe_to_call_twice(
-    client, db_session, reset_limiter, user_factory
-):
+async def test_logout_is_safe_to_call_twice(client, db_session, reset_limiter, user_factory):
     user_factory(email="double@example.com")
     _, refresh_cookie = await _login(client, "double@example.com")
     decoded = decode_token(refresh_cookie, expected_type="refresh")
@@ -97,9 +92,9 @@ async def test_logout_all_revokes_every_refresh_row_for_user(
 ):
     """Two logins from the same client mint two live families — both must
     be revoked by /logout-all."""
-    user = user_factory(email="logout-all@example.com")
+    user_factory(email="logout-all@example.com")
 
-    access_token, first_cookie = await _login(client, "logout-all@example.com")
+    _access_token, first_cookie = await _login(client, "logout-all@example.com")
     first_jti = decode_token(first_cookie, expected_type="refresh").jti
 
     # Drop the cookie so the second /login mints a fresh independent family.
@@ -128,26 +123,20 @@ async def test_logout_all_bumps_password_changed_at_invalidating_access_tokens(
     user = user_factory(email="invalidate@example.com")
     access_token, _ = await _login(client, "invalidate@example.com")
 
-    me_before = await client.get(
-        ME_PATH, headers={"Authorization": f"Bearer {access_token}"}
-    )
+    me_before = await client.get(ME_PATH, headers={"Authorization": f"Bearer {access_token}"})
     assert me_before.status_code == 200
 
-    logout = await client.post(
-        LOGOUT_ALL_PATH, headers={"Authorization": f"Bearer {access_token}"}
-    )
+    logout = await client.post(LOGOUT_ALL_PATH, headers={"Authorization": f"Bearer {access_token}"})
     assert logout.status_code == 200
 
     db_session.expire_all()
     db_session.refresh(user)
     assert user.password_changed_at is not None
 
-    me_after = await client.get(
-        ME_PATH, headers={"Authorization": f"Bearer {access_token}"}
-    )
-    assert me_after.status_code == 401, (
-        "access token issued before password_changed_at must stop validating"
-    )
+    me_after = await client.get(ME_PATH, headers={"Authorization": f"Bearer {access_token}"})
+    assert (
+        me_after.status_code == 401
+    ), "access token issued before password_changed_at must stop validating"
 
 
 async def test_logout_all_requires_authentication(client, reset_limiter):

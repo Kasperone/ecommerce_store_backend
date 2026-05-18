@@ -1,5 +1,5 @@
 from pydantic import EmailStr, Field, field_validator
-from typing import Optional
+
 from app.schemas.base import BaseSchema
 
 
@@ -59,7 +59,7 @@ class PasswordResetConfirm(BaseSchema):
 
 class EmailVerification(BaseSchema):
     """Schema for email verification"""
-    
+
     token: str
 
 

@@ -17,7 +17,6 @@ from app.core.security import decode_token, verify_password
 from app.crud import refresh_token as crud_refresh_token
 from tests.factories.user import DEFAULT_PASSWORD
 
-
 pytestmark = pytest.mark.integration
 
 
@@ -27,9 +26,7 @@ ME_PATH = "/api/v1/auth/me"
 
 
 async def _login(client, email: str) -> str:
-    response = await client.post(
-        LOGIN_PATH, data={"username": email, "password": DEFAULT_PASSWORD}
-    )
+    response = await client.post(LOGIN_PATH, data={"username": email, "password": DEFAULT_PASSWORD})
     assert response.status_code == 200, response.text
     return response.json()["access_token"]
 
@@ -95,9 +92,7 @@ async def test_change_password_rotates_and_invalidates_existing_access_token(
     access = await _login(client, "cp-ok@example.com")
 
     # Sanity: token works before the change.
-    me_before = await client.get(
-        ME_PATH, headers={"Authorization": f"Bearer {access}"}
-    )
+    me_before = await client.get(ME_PATH, headers={"Authorization": f"Bearer {access}"})
     assert me_before.status_code == 200
 
     response = await client.post(
@@ -112,12 +107,10 @@ async def test_change_password_rotates_and_invalidates_existing_access_token(
 
     # The same access token must now be rejected — password_changed_at was
     # bumped past its iat by the change.
-    me_after = await client.get(
-        ME_PATH, headers={"Authorization": f"Bearer {access}"}
-    )
-    assert me_after.status_code == 401, (
-        "access tokens issued before /change-password must stop validating"
-    )
+    me_after = await client.get(ME_PATH, headers={"Authorization": f"Bearer {access}"})
+    assert (
+        me_after.status_code == 401
+    ), "access tokens issued before /change-password must stop validating"
 
 
 async def test_change_password_revokes_refresh_family(
@@ -130,9 +123,7 @@ async def test_change_password_revokes_refresh_family(
     """
     user_factory(email="cp-revoke@example.com")
     access = await _login(client, "cp-revoke@example.com")
-    refresh_jti = decode_token(
-        client.cookies["refresh_token"], expected_type="refresh"
-    ).jti
+    refresh_jti = decode_token(client.cookies["refresh_token"], expected_type="refresh").jti
 
     response = await client.post(
         CHANGE_PATH,
@@ -144,9 +135,7 @@ async def test_change_password_revokes_refresh_family(
     db_session.expire_all()
     row = crud_refresh_token.get_by_jti(db_session, jti=refresh_jti)
     assert row is not None
-    assert row.revoked_at is not None, (
-        "refresh row must be revoked on /change-password"
-    )
+    assert row.revoked_at is not None, "refresh row must be revoked on /change-password"
 
 
 async def test_change_password_clears_refresh_cookie(
