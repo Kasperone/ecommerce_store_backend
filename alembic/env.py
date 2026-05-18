@@ -7,6 +7,7 @@ from alembic import context
 # Import settings and models
 from app.core.config import settings
 from app.models import (  # noqa: F401 -- side-effect imports register tables with Base.metadata for autogenerate
+    AdminAuditEvent,
     Category,
     Order,
     OrderItem,

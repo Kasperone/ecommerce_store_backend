@@ -5,12 +5,14 @@ from sqlalchemy.orm import Session
 from app.core.dependencies import get_current_admin, get_db
 from app.crud import category as crud_category
 from app.models.product import Product
+from app.models.user import User
 from app.schemas.category import (
     CategoryCreate,
     CategoryResponse,
     CategoryUpdate,
     CategoryWithProductCount,
 )
+from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
 
@@ -107,7 +109,8 @@ async def get_category_by_slug(
 async def create_category(
     category_in: CategoryCreate,
     db: Session = Depends(get_db),
-    current_admin: dict = Depends(get_current_admin),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
 ):
     """
     Create new category (Admin only)
@@ -122,6 +125,9 @@ async def create_category(
         )
 
     category = crud_category.create(db, obj_in=category_in)
+    audit.record_create(resource_type="category", obj=category)
+    db.commit()
+    db.refresh(category)
     return category
 
 
@@ -130,7 +136,8 @@ async def update_category(
     category_id: int,
     category_in: CategoryUpdate,
     db: Session = Depends(get_db),
-    current_admin: dict = Depends(get_current_admin),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
 ):
     """
     Update category (Admin only)
@@ -151,6 +158,9 @@ async def update_category(
             )
 
     category = crud_category.update(db, db_obj=category, obj_in=category_in)
+    audit.record_update(resource_type="category", obj=category)
+    db.commit()
+    db.refresh(category)
     return category
 
 
@@ -158,7 +168,8 @@ async def update_category(
 async def delete_category(
     category_id: int,
     db: Session = Depends(get_db),
-    current_admin: dict = Depends(get_current_admin),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
 ):
     """
     Delete category (Admin only)
@@ -180,5 +191,8 @@ async def delete_category(
             detail=f"Cannot delete category with {product_count} products. Remove products first.",
         )
 
+    # Snapshot before delete — the writer needs ``obj`` readable.
+    audit.record_delete(resource_type="category", obj=category)
     crud_category.delete(db, id=category_id)
+    db.commit()
     return None
