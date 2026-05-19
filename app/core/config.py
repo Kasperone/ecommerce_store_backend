@@ -74,5 +74,20 @@ class Settings(BaseSettings):
             )
         return value
 
+    @field_validator("R2_SECRET_ACCESS_KEY")
+    @classmethod
+    def _enforce_r2_secret_length(cls, value: str, info) -> str:
+        # R2 secret keys are 64-char hex strings; defaults to "" so dev environments
+        # without R2 still boot. Only enforce minimum length when non-empty so a
+        # misconfigured (truncated) secret fails loudly at startup rather than at
+        # the first upload attempt.
+        if value and len(value.encode("utf-8")) < _MIN_SECRET_BYTES:
+            raise ValueError(
+                f"{info.field_name} must be at least {_MIN_SECRET_BYTES} bytes "
+                f"(got {len(value.encode('utf-8'))}). Copy the full secret from "
+                "Cloudflare R2 dashboard."
+            )
+        return value
+
 
 settings = Settings()  # pyright: ignore[reportCallIssue] -- pydantic-settings loads required fields from env
