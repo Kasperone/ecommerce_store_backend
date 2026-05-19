@@ -23,6 +23,19 @@ class ProductImageResponse(TimestampSchema):
     mime: str
 
 
+class ProductImageUpdate(BaseSchema):
+    """Admin-side PATCH body for an existing image row.
+
+    Image bytes are immutable — to change the file, delete and re-upload.
+    Promoting to ``is_primary=True`` triggers atomic sibling demotion in
+    ``CRUDProductImage.set_primary``.
+    """
+
+    alt_text: str | None = None
+    sort_order: int | None = Field(None, ge=0)
+    is_primary: bool | None = None
+
+
 class ProductBase(BaseSchema):
     """Base product schema"""
 
