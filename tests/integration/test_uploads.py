@@ -7,7 +7,7 @@ The R2 transport is mocked with ``moto[s3]`` — no network. Each test:
 1. enters ``mock_aws()`` so boto3 calls are intercepted,
 2. creates the test bucket,
 3. monkeypatches ``settings.R2_*`` so the upload route sees usable config,
-4. overrides ``get_r2_client`` so the route reaches into the mock.
+4. monkeypatches ``get_r2_client`` so the route's inline call reaches into the mock.
 """
 
 from __future__ import annotations
@@ -23,8 +23,6 @@ from moto import mock_aws
 from PIL import Image
 
 from app.core.security import create_access_token
-from app.core.storage import get_r2_client
-from app.main import app
 from app.models.admin_audit_event import AdminAuditEvent
 from app.models.product_image import ProductImage
 from app.models.user import UserRole
@@ -40,9 +38,15 @@ TEST_PUBLIC_URL = "https://cdn.test.example.com"
 
 @pytest.fixture
 def r2_mock(monkeypatch) -> Iterator[BaseClient]:
-    """Mock R2 via moto + dependency override on the FastAPI app.
+    """Mock R2 via moto + monkeypatch the inline ``get_r2_client`` call.
 
     Yields the S3 client so tests can assert on stored objects directly.
+
+    The upload route used to receive R2 via ``Depends(get_r2_client)`` (and
+    tests overrode it via ``app.dependency_overrides``). Now the route
+    calls ``get_r2_client()`` inline after magic-byte validation so a
+    spoofed extension surfaces as 400 (not 503) when R2 is unconfigured;
+    monkeypatching the imported reference is the equivalent hook.
     """
     monkeypatch.setattr("app.core.config.settings.R2_BUCKET_NAME", TEST_BUCKET)
     monkeypatch.setattr("app.core.config.settings.R2_PUBLIC_URL", TEST_PUBLIC_URL)
@@ -52,11 +56,8 @@ def r2_mock(monkeypatch) -> Iterator[BaseClient]:
     with mock_aws():
         client = boto3.client("s3", region_name="us-east-1")
         client.create_bucket(Bucket=TEST_BUCKET)
-        app.dependency_overrides[get_r2_client] = lambda: client
-        try:
-            yield client
-        finally:
-            app.dependency_overrides.pop(get_r2_client, None)
+        monkeypatch.setattr("app.api.v1.uploads.get_r2_client", lambda: client)
+        yield client
 
 
 def _admin_headers(user_factory, email: str = "admin@upload.test") -> dict:
@@ -127,6 +128,75 @@ async def test_upload_rejects_magic_byte_mismatch(client, product_factory, user_
     )
     assert response.status_code == 400
     assert "Unsupported image format" in response.json()["detail"]
+
+
+async def test_upload_magic_byte_check_runs_before_r2_unconfigured(
+    client,
+    product_factory,
+    user_factory,
+    monkeypatch,
+):
+    """A spoofed extension surfaces as 400 even without R2 creds in the env.
+
+    Regression: the upload route used to receive ``Depends(get_r2_client)``,
+    which would raise 503 before the route body ran. Magic-byte validation
+    happens in the body, so a 400 was unreachable in unconfigured envs.
+    The route now calls ``get_r2_client()`` inline after validation.
+    """
+    # Force an "R2 not configured" state — clear every setting the
+    # storage helper checks.
+    for field in (
+        "R2_ACCOUNT_ID",
+        "R2_ACCESS_KEY_ID",
+        "R2_SECRET_ACCESS_KEY",
+        "R2_BUCKET_NAME",
+        "R2_PUBLIC_URL",
+    ):
+        monkeypatch.setattr(f"app.core.config.settings.{field}", "")
+
+    product = product_factory(slug="upload-magic-bytes-no-r2")
+    headers = _admin_headers(user_factory)
+
+    response = await client.post(
+        f"/api/v1/products/{product.id}/images",
+        files={"file": ("evil.jpg", b"<html>not really a jpeg</html>", "image/jpeg")},
+        headers=headers,
+    )
+    # 400 from magic-byte sniff, NOT 503 from missing R2 config.
+    assert response.status_code == 400
+    assert "Unsupported image format" in response.json()["detail"]
+
+
+async def test_upload_valid_bytes_yields_503_when_r2_unconfigured(
+    client,
+    product_factory,
+    user_factory,
+    monkeypatch,
+):
+    """A valid image with no R2 creds still surfaces 503 — after validation.
+
+    Confirms the inline ``get_r2_client()`` still raises when settings are
+    absent; only the *ordering* relative to validation changed.
+    """
+    for field in (
+        "R2_ACCOUNT_ID",
+        "R2_ACCESS_KEY_ID",
+        "R2_SECRET_ACCESS_KEY",
+        "R2_BUCKET_NAME",
+        "R2_PUBLIC_URL",
+    ):
+        monkeypatch.setattr(f"app.core.config.settings.{field}", "")
+
+    product = product_factory(slug="upload-valid-bytes-no-r2")
+    headers = _admin_headers(user_factory)
+
+    response = await client.post(
+        f"/api/v1/products/{product.id}/images",
+        files={"file": ("ok.png", _png_bytes(), "image/png")},
+        headers=headers,
+    )
+    assert response.status_code == 503
+    assert "R2 not configured" in response.json()["detail"]
 
 
 async def test_upload_rejects_oversized_pre_buffer(client, product_factory, user_factory, r2_mock):
@@ -319,14 +389,17 @@ async def test_delete_continues_when_r2_unavailable(
         def delete_object(self, **_kwargs):
             raise ClientError({"Error": {"Code": "500", "Message": "boom"}}, "DeleteObject")
 
-    app.dependency_overrides[get_r2_client] = lambda: _BrokenClient()
+    import app.api.v1.uploads as uploads_module
+
+    original = uploads_module.get_r2_client
+    uploads_module.get_r2_client = lambda: _BrokenClient()
     try:
         response = await client.delete(
             f"/api/v1/products/{product.id}/images/{image_id}",
             headers=headers,
         )
     finally:
-        app.dependency_overrides[get_r2_client] = lambda: r2_mock
+        uploads_module.get_r2_client = original
 
     assert response.status_code == 204
     assert db_session.query(ProductImage).filter(ProductImage.id == image_id).first() is None
