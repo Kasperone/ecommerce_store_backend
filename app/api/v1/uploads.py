@@ -7,7 +7,6 @@ image has no meaning without a parent. Mounted in ``app/main.py``.
 import logging
 import uuid
 
-from botocore.client import BaseClient
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
@@ -52,15 +51,21 @@ async def upload_product_image(
     db: Session = Depends(get_db),
     current_admin: User = Depends(get_current_admin),
     audit: AuditWriter = Depends(get_audit_writer),
-    r2: BaseClient = Depends(get_r2_client),
 ):
     """Upload an image and attach it to a product (Admin only)."""
     product = crud_product.get(db, id=product_id)
     if product is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
 
+    # Validate the bytes BEFORE asking for an R2 client. The magic-byte sniff
+    # in ``read_with_size_cap`` is the cheapest reject path — a spoofed
+    # extension never reaches the R2 dep, which keeps the error a 400
+    # ("Unsupported image format") instead of a 503 ("R2 not configured")
+    # when the env is missing creds.
     body, detected_mime = await read_with_size_cap(file)
     width, height = capture_dimensions(body)
+
+    r2 = get_r2_client()
 
     ext = MIME_TO_EXTENSION[detected_mime]
     key = f"products/{product_id}/{uuid.uuid4().hex}.{ext}"
@@ -136,10 +141,11 @@ async def delete_product_image(
     db: Session = Depends(get_db),
     current_admin: User = Depends(get_current_admin),
     audit: AuditWriter = Depends(get_audit_writer),
-    r2: BaseClient = Depends(get_r2_client),
 ):
     """Remove an image row and its R2 object."""
     image = _get_image_for_product(db, product_id=product_id, image_id=image_id)
+
+    r2 = get_r2_client()
 
     # Best-effort R2 cleanup. An R2 outage should not strand the DB row —
     # log and continue. Derive the key from the row's URL rather than
