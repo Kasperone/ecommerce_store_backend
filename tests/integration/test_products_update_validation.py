@@ -1,0 +1,61 @@
+"""HTTP-level acceptance for the ``ProductUpdate`` at-least-one-currency rule.
+
+A raw client (or `curl`) that PUTs all three currencies as ``null`` must get
+a clean 422 from the API boundary instead of slipping past Pydantic and
+tripping the DB CHECK constraint as a 500. Partial patches that omit prices
+must still succeed.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from app.core.security import create_access_token
+from app.models.user import UserRole
+
+pytestmark = pytest.mark.integration
+
+
+def _admin_headers(user_factory) -> dict:
+    admin = user_factory(role=UserRole.ADMIN, email="admin-products-update@test")
+    token, _, _ = create_access_token(subject=str(admin.id))
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def test_put_all_three_currencies_null_returns_422(client, user_factory, product_factory):
+    headers = _admin_headers(user_factory)
+    product = product_factory()
+    response = await client.put(
+        f"/api/v1/products/{product.id}",
+        json={"price_usd": None, "price_pln": None, "price_eur": None},
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+    body = response.json()
+    detail = str(body.get("detail"))
+    assert "At least one price is required" in detail
+
+
+async def test_put_partial_patch_without_prices_succeeds(client, user_factory, product_factory):
+    headers = _admin_headers(user_factory)
+    product = product_factory()
+    response = await client.put(
+        f"/api/v1/products/{product.id}",
+        json={"name": "Renamed"},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["name"] == "Renamed"
+
+
+async def test_put_clears_one_keeps_others_succeeds(client, user_factory, product_factory):
+    headers = _admin_headers(user_factory)
+    product = product_factory()
+    response = await client.put(
+        f"/api/v1/products/{product.id}",
+        json={"price_usd": None, "price_pln": 50.0},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["price_usd"] is None
+    assert response.json()["price_pln"] == 50.0
