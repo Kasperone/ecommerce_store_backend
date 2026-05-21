@@ -4,13 +4,8 @@
   and sends the email out of band; always returns generic 200.
 - ``POST /api/v1/auth/password-reset/confirm`` — consumes the token,
   rotates the password, clears the reset state, bumps
-  ``password_changed_at``, and (per the recheck Phase 1.1 contract) must
-  revoke every active refresh token for that user.
-
-The refresh-revocation test is ``xfail(strict=True)`` until recheck
-Phase 1.1 ships: this captures the contract today and will turn into an
-XPASS (= failure) the moment the fix lands, signalling that the marker
-should be removed.
+  ``password_changed_at``, and (per the recheck Phase 1.1 contract)
+  revokes every active refresh token for that user.
 """
 
 from datetime import timedelta

@@ -7,8 +7,7 @@ Contract:
 - Happy path: rotates the password, bumps ``password_changed_at`` (which
   invalidates already-issued access tokens via the iat-floor in
   ``get_current_user``).
-- Recheck Phase 1.2: must also revoke every active refresh row for the
-  user. Captured here as ``xfail(strict=True)`` until that fix ships.
+- Recheck Phase 1.2: also revokes every active refresh row for the user.
 """
 
 import pytest
