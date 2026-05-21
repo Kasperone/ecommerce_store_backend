@@ -4,9 +4,17 @@ from pydantic import Field
 
 from app.schemas.base import BaseSchema, TimestampSchema
 
+META_TITLE_MAX = 70
+META_DESCRIPTION_MAX = 160
+
 
 class CategoryBase(BaseSchema):
-    """Base category schema"""
+    """Base category schema (shared by Create and Response).
+
+    All locale + SEO fields are optional — admins fill them in incrementally.
+    The DB enforces the same length limits via CHECK constraints; the schema
+    mirrors them so a client gets a 422 instead of a 500 from the DB layer.
+    """
 
     name: Annotated[str, Field(min_length=1, max_length=100)]
     slug: Annotated[str, Field(min_length=1, max_length=100)]
@@ -14,6 +22,15 @@ class CategoryBase(BaseSchema):
     is_active: bool = True
     parent_id: int | None = None
     sort_order: Annotated[int, Field(ge=0)] = 0
+
+    name_pl: Annotated[str | None, Field(min_length=1, max_length=100)] = None
+    slug_pl: Annotated[str | None, Field(min_length=1, max_length=100)] = None
+    description_pl: str | None = None
+
+    meta_title: Annotated[str | None, Field(max_length=META_TITLE_MAX)] = None
+    meta_description: Annotated[str | None, Field(max_length=META_DESCRIPTION_MAX)] = None
+    meta_title_pl: Annotated[str | None, Field(max_length=META_TITLE_MAX)] = None
+    meta_description_pl: Annotated[str | None, Field(max_length=META_DESCRIPTION_MAX)] = None
 
 
 class CategoryCreate(CategoryBase):
@@ -23,7 +40,11 @@ class CategoryCreate(CategoryBase):
 
 
 class CategoryUpdate(BaseSchema):
-    """Schema for updating a category"""
+    """Schema for updating a category.
+
+    Mirrors :class:`CategoryBase` but every field is optional so a PATCH can
+    touch a single locale without rewriting the whole row.
+    """
 
     name: Annotated[str | None, Field(min_length=1, max_length=100)] = None
     slug: Annotated[str | None, Field(min_length=1, max_length=100)] = None
@@ -32,8 +53,43 @@ class CategoryUpdate(BaseSchema):
     parent_id: int | None = None
     sort_order: Annotated[int | None, Field(ge=0)] = None
 
+    name_pl: Annotated[str | None, Field(min_length=1, max_length=100)] = None
+    slug_pl: Annotated[str | None, Field(min_length=1, max_length=100)] = None
+    description_pl: str | None = None
 
-class CategoryResponse(CategoryBase, TimestampSchema):
+    meta_title: Annotated[str | None, Field(max_length=META_TITLE_MAX)] = None
+    meta_description: Annotated[str | None, Field(max_length=META_DESCRIPTION_MAX)] = None
+    meta_title_pl: Annotated[str | None, Field(max_length=META_TITLE_MAX)] = None
+    meta_description_pl: Annotated[str | None, Field(max_length=META_DESCRIPTION_MAX)] = None
+
+
+class CategoryHero(BaseSchema):
+    """Hero image columns surfaced on every category response."""
+
+    hero_image_url: str | None = None
+    hero_image_alt: str | None = None
+    hero_width: int | None = None
+    hero_height: int | None = None
+    hero_bytes: int | None = None
+    hero_mime: str | None = None
+
+
+class CategoryHeroAltUpdate(BaseSchema):
+    """Body of ``PATCH /categories/{id}/hero`` (alt-text only).
+
+    Re-upload uses ``POST /hero``; ``PATCH`` is the cheap metadata path.
+    """
+
+    hero_image_alt: Annotated[str | None, Field(max_length=200)] = None
+
+
+class CategoryHeroResponse(CategoryHero):
+    """Returned by the hero upload + alt-text PATCH endpoints."""
+
+    id: int
+
+
+class CategoryResponse(CategoryBase, CategoryHero, TimestampSchema):
     """Schema for category response"""
 
     pass
