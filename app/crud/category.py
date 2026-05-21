@@ -37,6 +37,22 @@ class CRUDCategory(CRUDBase[Category, CategoryCreate, CategoryUpdate]):
     def get_by_slug(self, db: Session, *, slug: str) -> Category | None:
         return db.query(Category).filter(Category.slug == slug).first()
 
+    def get_by_slug_pl(self, db: Session, *, slug_pl: str) -> Category | None:
+        return db.query(Category).filter(Category.slug_pl == slug_pl).first()
+
+    def get_by_any_slug(self, db: Session, *, slug: str) -> Category | None:
+        """Look up by either ``slug`` (EN) or ``slug_pl`` (PL).
+
+        Returns the EN match preferentially when both columns share the same
+        value across rows. Used by ``GET /categories/slug/{slug}`` so the
+        storefront can hit either locale's slug without first knowing which
+        column it lives in.
+        """
+        en_match = self.get_by_slug(db, slug=slug)
+        if en_match is not None:
+            return en_match
+        return self.get_by_slug_pl(db, slug_pl=slug)
+
     def get_active(self, db: Session, *, skip: int = 0, limit: int = 100) -> list[Category]:
         return (
             db.query(Category)

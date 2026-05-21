@@ -1,11 +1,15 @@
+import logging
+import uuid
 from collections import defaultdict
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.dependencies import get_current_admin, get_db
+from app.core.storage import get_r2_client
 from app.crud import category as crud_category
 from app.crud.category import (
     MAX_DEPTH,
@@ -21,12 +25,23 @@ from app.schemas.category import (
     BulkReorderRequest,
     CategoryCreate,
     CategoryDeletePreview,
+    CategoryHeroAltUpdate,
+    CategoryHeroResponse,
     CategoryResponse,
     CategoryTreeNode,
     CategoryUpdate,
     CategoryWithProductCount,
 )
 from app.services.audit import AuditWriter, get_audit_writer
+from app.services.image import (
+    MIME_TO_EXTENSION,
+    capture_dimensions,
+    delete_from_r2,
+    read_with_size_cap,
+    upload_to_r2,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -46,6 +61,30 @@ def _active_product_counts(db: Session) -> dict[int, int]:
         .all()
     )
     return {cat_id: count for cat_id, count in rows if cat_id is not None}
+
+
+def _check_slug_pl_collision(
+    db: Session,
+    *,
+    slug_pl: str | None,
+    exclude_id: int | None,
+) -> None:
+    """Reject a slug_pl that another row already owns.
+
+    The DB has a partial unique index on ``slug_pl WHERE NOT NULL`` so a
+    collision would also surface as an IntegrityError on commit — but routing
+    that through Pydantic gives a clean 400 instead of a 500. ``exclude_id``
+    is the row being edited (skipped during the lookup so a no-op PUT
+    doesn't fight itself).
+    """
+    if not slug_pl:
+        return
+    existing = crud_category.get_by_slug_pl(db, slug_pl=slug_pl)
+    if existing is not None and existing.id != exclude_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Category with this slug_pl already exists",
+        )
 
 
 def _validate_parent(
@@ -189,10 +228,14 @@ async def get_category_by_slug(
     slug: str,
     db: Session = Depends(get_db),
 ):
+    """Get category by slug with product count.
+
+    Searches both ``slug`` (EN) and ``slug_pl`` (PL). When the same value
+    exists across both columns on different rows, the EN row wins —
+    matches the default-locale convention so an English request that
+    accidentally collides with a Polish slug still resolves predictably.
     """
-    Get category by slug with product count
-    """
-    category = crud_category.get_by_slug(db, slug=slug)
+    category = crud_category.get_by_any_slug(db, slug=slug)
     if not category:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
 
@@ -221,6 +264,7 @@ async def create_category(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Category with this slug already exists"
         )
 
+    _check_slug_pl_collision(db, slug_pl=category_in.slug_pl, exclude_id=None)
     _validate_parent(db, proposed_parent_id=category_in.parent_id, self_id=None)
 
     category = crud_category.create(db, obj_in=category_in)
@@ -295,6 +339,9 @@ async def update_category(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Category with this slug already exists",
             )
+
+    if "slug_pl" in category_in.model_fields_set and category_in.slug_pl != category.slug_pl:
+        _check_slug_pl_collision(db, slug_pl=category_in.slug_pl, exclude_id=category.id)
 
     if "parent_id" in category_in.model_fields_set:
         _validate_parent(
@@ -397,5 +444,152 @@ async def delete_category(
         audit.record_update(resource_type="category", obj=child)
     audit.record_delete(resource_type="category", obj=category)
     crud_category.delete(db, id=category_id)
+    db.commit()
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Hero image
+# ---------------------------------------------------------------------------
+
+
+def _r2_key_from_hero_url(url: str) -> str:
+    """Derive the R2 object key from the public hero URL.
+
+    Mirrors the products upload pattern (``app/api/v1/uploads.py``). Stored
+    keys live under ``categories/{id}/`` so the bucket layout is obvious.
+    """
+    return url.removeprefix(settings.R2_PUBLIC_URL).lstrip("/")
+
+
+@router.post(
+    "/{category_id}/hero",
+    response_model=CategoryHeroResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_category_hero(
+    category_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
+):
+    """Upload (or replace) the hero image for ``category_id`` (Admin only).
+
+    Reuses the products upload pipeline (magic-byte sniff → size cap →
+    Pillow dimensions → R2 put) so the security posture stays consistent
+    across the catalog. ``get_r2_client()`` is called inline AFTER
+    validation so a spoofed extension surfaces as 400 even on dev
+    environments where R2 is unconfigured.
+
+    If a previous hero exists, the new upload overwrites the columns; the
+    old R2 object is best-effort deleted (a failure logs and proceeds —
+    the row already reflects the new key, an orphan object is a janitor's
+    problem, not a request-path one).
+    """
+    category = crud_category.get(db, id=category_id)
+    if category is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+
+    body, detected_mime = await read_with_size_cap(file)
+    width, height = capture_dimensions(body)
+
+    r2 = get_r2_client()
+
+    ext = MIME_TO_EXTENSION[detected_mime]
+    key = f"categories/{category_id}/{uuid.uuid4().hex}.{ext}"
+    public_url = upload_to_r2(
+        r2,
+        bucket=settings.R2_BUCKET_NAME,
+        key=key,
+        body=body,
+        content_type=detected_mime,
+    )
+
+    previous_url = category.hero_image_url
+    category.hero_image_url = public_url
+    category.hero_width = width
+    category.hero_height = height
+    category.hero_bytes = len(body)
+    category.hero_mime = detected_mime
+    # alt_text intentionally preserved on re-upload; admins use PATCH to edit it.
+
+    audit.record_update(resource_type="category", obj=category)
+    db.commit()
+    db.refresh(category)
+
+    if previous_url:
+        previous_key = _r2_key_from_hero_url(previous_url)
+        if previous_key and not delete_from_r2(
+            r2, bucket=settings.R2_BUCKET_NAME, key=previous_key
+        ):
+            logger.warning(
+                "R2 delete of previous hero failed for category_id=%s key=%s",
+                category_id,
+                previous_key,
+            )
+
+    return CategoryHeroResponse.model_validate(category)
+
+
+@router.patch("/{category_id}/hero", response_model=CategoryHeroResponse)
+async def update_category_hero_alt(
+    category_id: int,
+    body: CategoryHeroAltUpdate,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
+):
+    """Update only the alt text on the hero image (Admin only).
+
+    Re-upload uses ``POST /hero``. This endpoint exists so an admin can
+    type a description without re-sending the binary.
+    """
+    category = crud_category.get(db, id=category_id)
+    if category is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+    if category.hero_image_url is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Category has no hero image. Upload one before editing alt text.",
+        )
+
+    category.hero_image_alt = body.hero_image_alt
+    audit.record_update(resource_type="category", obj=category)
+    db.commit()
+    db.refresh(category)
+    return CategoryHeroResponse.model_validate(category)
+
+
+@router.delete("/{category_id}/hero", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_category_hero(
+    category_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
+):
+    """Clear the hero columns and best-effort delete the R2 object."""
+    category = crud_category.get(db, id=category_id)
+    if category is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Category not found")
+    if category.hero_image_url is None:
+        return None  # idempotent
+
+    r2 = get_r2_client()
+    key = _r2_key_from_hero_url(category.hero_image_url)
+    if key and not delete_from_r2(r2, bucket=settings.R2_BUCKET_NAME, key=key):
+        logger.warning(
+            "R2 delete failed for category_id=%s key=%s; columns cleared anyway",
+            category_id,
+            key,
+        )
+
+    category.hero_image_url = None
+    category.hero_image_alt = None
+    category.hero_width = None
+    category.hero_height = None
+    category.hero_bytes = None
+    category.hero_mime = None
+    audit.record_update(resource_type="category", obj=category)
     db.commit()
     return None
