@@ -49,6 +49,7 @@ wheels/
 .coverage
 coverage.xml
 htmlcov/
+test-results/
 
 # Alembic
 alembic/versions/*.pyc
