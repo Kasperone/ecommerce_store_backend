@@ -86,6 +86,20 @@ class ProductUpdate(BaseSchema):
 
     category_id: int | None = None
 
+    @model_validator(mode="after")
+    def _at_least_one_currency_if_all_provided(self) -> "ProductUpdate":
+        # Only block the "clear all three at once" case. Partial patches that
+        # omit prices (e.g., `{"name": "x"}`) leave existing currencies alone
+        # and must pass. `model_fields_set` distinguishes "absent from input"
+        # from "explicitly null in input" — both look like None on the model
+        # after parsing.
+        price_fields = {"price_usd", "price_pln", "price_eur"}
+        if not price_fields.issubset(self.model_fields_set):
+            return self
+        if self.price_usd is None and self.price_pln is None and self.price_eur is None:
+            raise ValueError("At least one price is required (USD, PLN, or EUR)")
+        return self
+
 
 class ProductResponse(ProductBase, TimestampSchema):
     """Schema for product response"""
