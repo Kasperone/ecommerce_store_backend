@@ -71,10 +71,15 @@ def test_decode_rejects_wrong_type():
 
 def test_decode_rejects_tampered_signature():
     token, _, _ = create_access_token(subject=1)
-    # Flip the last char of the signature segment.
-    head, _, last = token.rpartition(".")
-    bad_sig = "A" if last[-1] != "A" else "B"
-    tampered = f"{head}.{last[:-1]}{bad_sig}"
+    # Flip the *first* char of the signature segment. The first char
+    # encodes 6 full signature bits, so any base64url substitution
+    # changes at least one signature byte. The last char encodes only
+    # 4 signature bits + 2 padding bits — flipping it can round-trip
+    # to the same signature byte (e.g. A/B/C/D all share top-4=0000),
+    # producing a 1-in-16 flake.
+    head, _, sig = token.rpartition(".")
+    bad_first = "A" if sig[0] != "A" else "B"
+    tampered = f"{head}.{bad_first}{sig[1:]}"
     with pytest.raises(JWTError):
         decode_token(tampered, expected_type="access")
 
