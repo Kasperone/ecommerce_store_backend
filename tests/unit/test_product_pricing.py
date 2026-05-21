@@ -74,34 +74,34 @@ def test_negative_or_zero_price_still_rejected():
 
 def test_update_empty_patch_passes():
     # A bare `{}` patch must succeed — no fields touched, no rule to enforce.
-    ProductUpdate.model_validate({})
+    ProductUpdate()
 
 
 def test_update_partial_patch_without_prices_passes():
     # Updating only `name` leaves existing currencies alone.
-    ProductUpdate.model_validate({"name": "Renamed"})
+    ProductUpdate(name="Renamed")
 
 
 def test_update_single_currency_patch_passes():
     # A patch that sets one currency and omits the others (existing values
     # stay) must succeed.
-    ProductUpdate.model_validate({"price_pln": 42.5})
+    ProductUpdate(price_pln=42.5)
 
 
 def test_update_clear_one_keep_others_passes():
     # Explicitly null on one currency, set another — the row still has at
     # least one price after the patch.
-    ProductUpdate.model_validate({"price_usd": None, "price_pln": 42.5})
+    ProductUpdate(price_usd=None, price_pln=42.5)
 
 
 def test_update_clear_all_three_fails():
     with pytest.raises(ValidationError) as exc_info:
-        ProductUpdate.model_validate({"price_usd": None, "price_pln": None, "price_eur": None})
+        ProductUpdate(price_usd=None, price_pln=None, price_eur=None)
     assert "At least one price is required (USD, PLN, or EUR)" in str(exc_info.value)
 
 
 def test_update_set_all_three_passes():
-    ProductUpdate.model_validate({"price_usd": 10, "price_pln": 40, "price_eur": 9})
+    ProductUpdate(price_usd=10, price_pln=40, price_eur=9)
 
 
 # ---------------------------------------------------------------------------

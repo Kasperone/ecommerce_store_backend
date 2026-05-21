@@ -1,3 +1,5 @@
+from typing import Annotated
+
 from pydantic import Field, computed_field, model_validator
 
 from app.schemas.base import BaseSchema, TimestampSchema
@@ -32,26 +34,26 @@ class ProductImageUpdate(BaseSchema):
     """
 
     alt_text: str | None = None
-    sort_order: int | None = Field(None, ge=0)
+    sort_order: Annotated[int | None, Field(ge=0)] = None
     is_primary: bool | None = None
 
 
 class ProductBase(BaseSchema):
     """Base product schema"""
 
-    name: str = Field(..., min_length=1, max_length=200)
-    slug: str = Field(..., min_length=1, max_length=200)
+    name: Annotated[str, Field(min_length=1, max_length=200)]
+    slug: Annotated[str, Field(min_length=1, max_length=200)]
     description: str | None = None
-    sku: str | None = Field(None, max_length=100)
+    sku: Annotated[str | None, Field(max_length=100)] = None
 
     # Multi-currency prices — individually optional, at least one required on create.
     # The DB-level CHECK constraint (ck_products_at_least_one_price) enforces the
     # same invariant for raw inserts and bulk loads.
-    price_usd: float | None = Field(None, gt=0)
-    price_pln: float | None = Field(None, gt=0)
-    price_eur: float | None = Field(None, gt=0)
+    price_usd: Annotated[float | None, Field(gt=0)] = None
+    price_pln: Annotated[float | None, Field(gt=0)] = None
+    price_eur: Annotated[float | None, Field(gt=0)] = None
 
-    stock: int = Field(default=0, ge=0)
+    stock: Annotated[int, Field(ge=0)] = 0
     is_active: bool = True
     is_featured: bool = False
 
@@ -71,16 +73,16 @@ class ProductCreate(ProductBase):
 class ProductUpdate(BaseSchema):
     """Schema for updating a product"""
 
-    name: str | None = Field(None, min_length=1, max_length=200)
-    slug: str | None = Field(None, min_length=1, max_length=200)
+    name: Annotated[str | None, Field(min_length=1, max_length=200)] = None
+    slug: Annotated[str | None, Field(min_length=1, max_length=200)] = None
     description: str | None = None
-    sku: str | None = Field(None, max_length=100)
+    sku: Annotated[str | None, Field(max_length=100)] = None
 
-    price_usd: float | None = Field(None, gt=0)
-    price_pln: float | None = Field(None, gt=0)
-    price_eur: float | None = Field(None, gt=0)
+    price_usd: Annotated[float | None, Field(gt=0)] = None
+    price_pln: Annotated[float | None, Field(gt=0)] = None
+    price_eur: Annotated[float | None, Field(gt=0)] = None
 
-    stock: int | None = Field(None, ge=0)
+    stock: Annotated[int | None, Field(ge=0)] = None
     is_active: bool | None = None
     is_featured: bool | None = None
 
