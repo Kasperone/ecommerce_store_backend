@@ -1,4 +1,4 @@
-from pydantic import Field, computed_field
+from pydantic import Field, computed_field, model_validator
 
 from app.schemas.base import BaseSchema, TimestampSchema
 from app.schemas.category import CategoryResponse
@@ -44,10 +44,12 @@ class ProductBase(BaseSchema):
     description: str | None = None
     sku: str | None = Field(None, max_length=100)
 
-    # Multi-currency prices
-    price_usd: float = Field(..., gt=0)
-    price_pln: float = Field(..., gt=0)
-    price_eur: float = Field(..., gt=0)
+    # Multi-currency prices — individually optional, at least one required on create.
+    # The DB-level CHECK constraint (ck_products_at_least_one_price) enforces the
+    # same invariant for raw inserts and bulk loads.
+    price_usd: float | None = Field(None, gt=0)
+    price_pln: float | None = Field(None, gt=0)
+    price_eur: float | None = Field(None, gt=0)
 
     stock: int = Field(default=0, ge=0)
     is_active: bool = True
@@ -59,7 +61,11 @@ class ProductBase(BaseSchema):
 class ProductCreate(ProductBase):
     """Schema for creating a product"""
 
-    pass
+    @model_validator(mode="after")
+    def _at_least_one_currency(self) -> "ProductCreate":
+        if self.price_usd is None and self.price_pln is None and self.price_eur is None:
+            raise ValueError("At least one price is required (USD, PLN, or EUR)")
+        return self
 
 
 class ProductUpdate(BaseSchema):
