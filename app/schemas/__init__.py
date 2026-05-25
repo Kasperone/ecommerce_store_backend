@@ -20,6 +20,7 @@ from app.schemas.order import (
     OrderItemBase,
     OrderItemCreate,
     OrderItemResponse,
+    OrderListItem,
     OrderListResponse,
     OrderResponse,
     OrderUpdate,
@@ -75,6 +76,7 @@ __all__ = [
     "OrderUpdate",
     "OrderResponse",
     "OrderWithUser",
+    "OrderListItem",
     "OrderListResponse",
     # Auth
     "Token",
