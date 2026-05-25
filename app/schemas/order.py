@@ -85,10 +85,22 @@ class OrderWithUser(OrderResponse):
     user: UserResponse
 
 
+class OrderListItem(TimestampSchema):
+    """Lightweight order row for list views (no nested line items)."""
+
+    order_number: str
+    status: OrderStatus
+    subtotal: float
+    total: float
+    currency: str
+    item_count: int
+    customer_email: str | None = None
+
+
 class OrderListResponse(BaseSchema):
     """Schema for paginated order list"""
 
-    items: list[OrderResponse]
+    items: list[OrderListItem]
     total: int
     page: int
     page_size: int

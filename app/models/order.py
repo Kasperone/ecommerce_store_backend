@@ -65,6 +65,16 @@ class Order(BaseModel):
     def __repr__(self):
         return f"<Order {self.order_number}>"
 
+    @property
+    def item_count(self) -> int:
+        """Number of line items (eager-loaded in scoped queries — no N+1)."""
+        return len(self.items)
+
+    @property
+    def customer_email(self) -> str | None:
+        """Email of the ordering user, for admin list views."""
+        return self.user.email if self.user else None
+
 
 class OrderItem(BaseModel):
     """Order item model (products in an order)"""
