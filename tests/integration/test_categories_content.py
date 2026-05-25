@@ -433,6 +433,12 @@ async def test_hero_delete_idempotent_when_no_image(client, user_factory, catego
 # ---------------------------------------------------------------------------
 
 
+def _customer_headers(user_factory, email: str) -> dict:
+    customer = user_factory(role=UserRole.CUSTOMER, email=email)
+    token, _, _ = create_access_token(subject=str(customer.id))
+    return {"Authorization": f"Bearer {token}"}
+
+
 async def test_hero_upload_non_admin_rejected(client, user_factory, category_factory, r2_mock):
     category = category_factory(slug="hero-cust")
     customer = user_factory(role=UserRole.CUSTOMER, email="c@cat-hero.test")
@@ -443,3 +449,93 @@ async def test_hero_upload_non_admin_rejected(client, user_factory, category_fac
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 403
+
+
+async def test_hero_patch_non_admin_rejected(client, user_factory, category_factory):
+    # G2: PATCH /hero is admin-only. Auth check fires before the "no image" 400.
+    category = category_factory(slug="hero-patch-cust")
+    response = await client.patch(
+        f"/api/v1/categories/{category.id}/hero",
+        json={"hero_image_alt": "nope"},
+        headers=_customer_headers(user_factory, "c-patch@cat-hero.test"),
+    )
+    assert response.status_code == 403
+
+
+async def test_hero_delete_non_admin_rejected(client, user_factory, category_factory):
+    # G2: DELETE /hero is admin-only.
+    category = category_factory(slug="hero-del-cust")
+    response = await client.delete(
+        f"/api/v1/categories/{category.id}/hero",
+        headers=_customer_headers(user_factory, "c-del@cat-hero.test"),
+    )
+    assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# G3 — PATCH /hero alt-text length boundary (column is String(200))
+# ---------------------------------------------------------------------------
+
+
+async def test_hero_patch_alt_over_200_rejected(client, user_factory, category_factory):
+    # Pydantic max_length=200 runs at body parse, before the route's
+    # "no image set" 400 — so this 422s even without a hero uploaded.
+    category = category_factory(slug="hero-alt-long")
+    headers = _admin_headers(user_factory)
+    response = await client.patch(
+        f"/api/v1/categories/{category.id}/hero",
+        json={"hero_image_alt": "x" * 201},
+        headers=headers,
+    )
+    assert response.status_code == 422
+
+
+async def test_hero_patch_alt_at_200_accepted(
+    client, db_session, user_factory, category_factory, r2_mock
+):
+    category = category_factory(slug="hero-alt-200")
+    headers = _admin_headers(user_factory)
+    await client.post(
+        f"/api/v1/categories/{category.id}/hero",
+        files={"file": ("p.png", _png_bytes(), "image/png")},
+        headers=headers,
+    )
+    alt = "a" * 200
+    response = await client.patch(
+        f"/api/v1/categories/{category.id}/hero",
+        json={"hero_image_alt": alt},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["hero_image_alt"] == alt
+
+
+# ---------------------------------------------------------------------------
+# G4 — SEO meta length boundaries (max is inclusive: 70 / 160)
+# ---------------------------------------------------------------------------
+
+
+async def test_meta_title_at_70_accepted(client, user_factory):
+    headers = _admin_headers(user_factory)
+    response = await client.post(
+        "/api/v1/categories/",
+        json={"name": "Boundary", "slug": "meta-title-70", "meta_title": "t" * 70},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["meta_title"] == "t" * 70
+
+
+async def test_meta_description_at_160_accepted(client, user_factory):
+    headers = _admin_headers(user_factory)
+    response = await client.post(
+        "/api/v1/categories/",
+        json={
+            "name": "Boundary",
+            "slug": "meta-desc-160",
+            "meta_description": "d" * 160,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["meta_description"] == "d" * 160
