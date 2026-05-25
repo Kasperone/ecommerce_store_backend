@@ -26,6 +26,12 @@ def _admin_headers(user_factory, email: str = "admin@cat-tree.test") -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _customer_headers(user_factory, email: str = "cust@cat-tree.test") -> dict:
+    customer = user_factory(role=UserRole.CUSTOMER, email=email)
+    token, _, _ = create_access_token(subject=str(customer.id))
+    return {"Authorization": f"Bearer {token}"}
+
+
 def _audit_count(db: Session, action: str | None = None) -> int:
     q = db.query(AdminAuditEvent).filter(AdminAuditEvent.resource_type == "category")
     if action is not None:
@@ -399,3 +405,58 @@ async def test_cascade_delete_writes_audit_for_each_descendant(
     )
     assert response.status_code == 204
     assert _audit_count(db_session, action="delete") == initial + 3
+
+
+# ---------------------------------------------------------------------------
+# Authorisation — a CUSTOMER token must be rejected on every mutating verb
+# (G2: behaviour was verified live but unpinned by a test). The read-only
+# GET /tree + GET /{id}/delete-preview are admin-gated too, so they belong
+# here even though they don't mutate.
+# ---------------------------------------------------------------------------
+
+
+async def test_delete_preview_non_admin_rejected(client, user_factory, category_factory):
+    category = category_factory(slug="authz-preview")
+    response = await client.get(
+        f"/api/v1/categories/{category.id}/delete-preview",
+        headers=_customer_headers(user_factory),
+    )
+    assert response.status_code == 403
+
+
+async def test_bulk_reorder_non_admin_rejected(client, user_factory, category_factory):
+    category = category_factory(slug="authz-reorder")
+    response = await client.post(
+        "/api/v1/categories/bulk-reorder",
+        json={"items": [{"id": category.id, "parent_id": None, "sort_order": 0}]},
+        headers=_customer_headers(user_factory),
+    )
+    assert response.status_code == 403
+
+
+async def test_create_non_admin_rejected(client, user_factory):
+    response = await client.post(
+        "/api/v1/categories/",
+        json={"name": "Nope", "slug": "authz-create"},
+        headers=_customer_headers(user_factory),
+    )
+    assert response.status_code == 403
+
+
+async def test_update_non_admin_rejected(client, user_factory, category_factory):
+    category = category_factory(slug="authz-update")
+    response = await client.put(
+        f"/api/v1/categories/{category.id}",
+        json={"name": "Renamed"},
+        headers=_customer_headers(user_factory),
+    )
+    assert response.status_code == 403
+
+
+async def test_delete_non_admin_rejected(client, user_factory, category_factory):
+    category = category_factory(slug="authz-delete")
+    response = await client.delete(
+        f"/api/v1/categories/{category.id}",
+        headers=_customer_headers(user_factory),
+    )
+    assert response.status_code == 403
