@@ -72,6 +72,7 @@ from app.api.v1 import (  # noqa: E402
     auth,
     categories,
     orders,
+    payments,
     products,
     uploads,
 )
@@ -80,6 +81,7 @@ app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(products.router, prefix="/api/v1/products", tags=["Products"])
 app.include_router(categories.router, prefix="/api/v1/categories", tags=["Categories"])
 app.include_router(orders.router, prefix="/api/v1/orders", tags=["Orders"])
+app.include_router(payments.router, prefix="/api/v1/payments", tags=["Payments"])
 app.include_router(
     admin_customers.router, prefix="/api/v1/admin/customers", tags=["Admin Customers"]
 )
