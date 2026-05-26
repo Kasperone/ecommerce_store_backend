@@ -1,4 +1,5 @@
 from math import ceil
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -30,6 +31,10 @@ async def list_products(
     max_price: float | None = Query(None, ge=0, description="Maximum price (USD)"),
     in_stock: bool | None = Query(None, description="Filter by stock availability"),
     search: str | None = Query(None, max_length=100, description="Search in name and description"),
+    sort_by: Literal["created_at", "price_usd", "name"] = Query(
+        "created_at", description="Field to sort by"
+    ),
+    order: Literal["asc", "desc"] = Query("desc", description="Sort direction"),
 ):
     """
     Get paginated list of products with filters
@@ -42,6 +47,8 @@ async def list_products(
     - **min_price/max_price**: Price range filter (USD)
     - **in_stock**: Filter by stock availability
     - **search**: Search query for name and description
+    - **sort_by**: Field to sort by (created_at, price_usd, name)
+    - **order**: Sort direction (asc or desc)
     """
     skip = (page - 1) * page_size
 
@@ -57,6 +64,8 @@ async def list_products(
         max_price_usd=max_price,
         in_stock=in_stock,
         search=search,
+        sort_by=sort_by,
+        order=order,
     )
 
     # Get total count
