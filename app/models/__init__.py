@@ -6,6 +6,7 @@ from app.models.order import Order, OrderItem
 from app.models.product import Product
 from app.models.product_image import ProductImage
 from app.models.refresh_token import RefreshToken
+from app.models.review import Review, ReviewStatus
 from app.models.user import User
 from app.models.verification_token import VerificationToken
 
@@ -20,6 +21,8 @@ __all__ = [
     "OrderItem",
     "InventoryMovement",
     "InventoryMovementReason",
+    "Review",
+    "ReviewStatus",
     "VerificationToken",
     "RefreshToken",
 ]

@@ -5,6 +5,7 @@ from app.crud.order import order
 from app.crud.product import product
 from app.crud.product_image import product_image
 from app.crud.refresh_token import refresh_token
+from app.crud.review import review
 from app.crud.user import user
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "inventory",
     "audit_event",
     "refresh_token",
+    "review",
 ]
