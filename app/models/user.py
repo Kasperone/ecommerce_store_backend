@@ -1,5 +1,5 @@
 import enum
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, Integer, String
@@ -91,3 +91,10 @@ class User(BaseModel):
         if self.first_name and self.last_name:
             return f"{self.first_name} {self.last_name}"
         return self.email
+
+    @property
+    def is_locked(self) -> bool:
+        """Whether the user is currently locked out from login (naive-UTC compare)."""
+        if not self.locked_until:
+            return False
+        return self.locked_until > datetime.now(UTC).replace(tzinfo=None)
