@@ -99,6 +99,41 @@ class StripeService:
             raise StripeError("Stripe create-session response missing url/id")
         return {"checkout_url": session.url, "session_id": session.id}
 
+    def create_payment_intent(
+        self,
+        *,
+        ext_order_id: str,
+        amount_minor: int,
+        currency: str,
+        description: str,
+        buyer_email: str,
+    ) -> dict:
+        """Create a PaymentIntent for the in-page Express Checkout Element.
+
+        Returns ``{client_secret, payment_intent_id}``. The client secret is
+        confirmed browser-side by Stripe.js (Apple Pay / Google Pay / Link); the
+        order is settled server-side from the ``payment_intent.succeeded`` webhook,
+        keyed on ``metadata.order_number``. ``automatic_payment_methods`` is what
+        surfaces the wallets (driven by the dashboard's enabled methods). One
+        aggregate ``amount_minor`` so the charge can't drift from ``order.total``.
+        """
+        try:
+            intent = stripe.PaymentIntent.create(
+                api_key=self.secret_key,
+                amount=amount_minor,
+                currency=currency.lower(),
+                automatic_payment_methods={"enabled": True},
+                description=description,
+                receipt_email=buyer_email,
+                metadata={"order_number": ext_order_id},
+            )
+        except stripe.StripeError as exc:
+            raise StripeError(f"Stripe create-payment-intent failed: {exc}") from exc
+
+        if not intent.client_secret or not intent.id:
+            raise StripeError("Stripe create-payment-intent response missing client_secret/id")
+        return {"client_secret": intent.client_secret, "payment_intent_id": intent.id}
+
     def construct_event(self, raw_body: bytes, signature_header: str | None) -> stripe.Event:
         """Verify the ``Stripe-Signature`` header and return the parsed event.
 
