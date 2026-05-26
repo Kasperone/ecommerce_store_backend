@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Manual trigger — lets us rebuild the GHCR `:main` image on demand (e.g. after
+  # an Actions outage/quota stall left `:main` stale relative to the merged code).
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -105,7 +108,7 @@ jobs:
   build-and-push:
     name: Build and push image to GHCR
     needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
 
     permissions:
