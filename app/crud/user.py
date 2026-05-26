@@ -2,12 +2,14 @@ import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.core.security import get_password_hash, verify_password
 from app.crud.base import CRUDBase
 from app.crud.refresh_token import refresh_token as crud_refresh_token
-from app.models.user import User
+from app.models.order import Order, OrderStatus
+from app.models.user import User, UserRole
 from app.schemas.user import UserCreate, UserUpdate
 
 PASSWORD_RESET_TOKEN_TTL = timedelta(hours=1)
@@ -218,6 +220,111 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         crud_refresh_token.revoke_all_for_user(db, user_id=user.id)
         db.refresh(user)
         return True
+
+    # ------------------------------------------------------------------
+    # Admin "customers" view over the users table
+    # ------------------------------------------------------------------
+
+    def _admin_filtered_query(
+        self,
+        db: Session,
+        *,
+        role: "UserRole | None",
+        is_active: bool | None,
+        is_verified: bool | None,
+        search: str | None,
+    ):
+        query = db.query(User)
+        if role is not None:
+            query = query.filter(User.role == role)
+        if is_active is not None:
+            query = query.filter(User.is_active.is_(is_active))
+        if is_verified is not None:
+            query = query.filter(User.is_verified.is_(is_verified))
+        if search:
+            like = f"%{search.strip()}%"
+            query = query.filter(
+                or_(
+                    User.email.ilike(like),
+                    User.first_name.ilike(like),
+                    User.last_name.ilike(like),
+                )
+            )
+        return query
+
+    def get_multi_admin(
+        self,
+        db: Session,
+        *,
+        role: "UserRole | None" = None,
+        is_active: bool | None = None,
+        is_verified: bool | None = None,
+        search: str | None = None,
+        skip: int = 0,
+        limit: int = 20,
+    ) -> list[User]:
+        """Admin list of users with filters, newest first."""
+        query = self._admin_filtered_query(
+            db, role=role, is_active=is_active, is_verified=is_verified, search=search
+        )
+        return (
+            query.order_by(User.created_at.desc(), User.id.desc()).offset(skip).limit(limit).all()
+        )
+
+    def count_admin(
+        self,
+        db: Session,
+        *,
+        role: "UserRole | None" = None,
+        is_active: bool | None = None,
+        is_verified: bool | None = None,
+        search: str | None = None,
+    ) -> int:
+        return self._admin_filtered_query(
+            db, role=role, is_active=is_active, is_verified=is_verified, search=search
+        ).count()
+
+    def order_counts_for(self, db: Session, *, user_ids: list[int]) -> dict[int, int]:
+        """Order counts keyed by user id — one grouped query (avoids N+1 on the list)."""
+        if not user_ids:
+            return {}
+        rows = (
+            db.query(Order.user_id, func.count(Order.id))
+            .filter(Order.user_id.in_(user_ids))
+            .group_by(Order.user_id)
+            .all()
+        )
+        return {uid: count for uid, count in rows}
+
+    def order_metrics(self, db: Session, *, user_id: int) -> dict:
+        """Lifetime order metrics for one customer.
+
+        ``order_count`` / ``last_order_at`` span every order; ``total_spent``
+        (per currency) excludes cancelled orders.
+        """
+        count, last_at = (
+            db.query(func.count(Order.id), func.max(Order.created_at))
+            .filter(Order.user_id == user_id)
+            .one()
+        )
+        spent_rows = (
+            db.query(Order.currency, func.sum(Order.total))
+            .filter(Order.user_id == user_id, Order.status != OrderStatus.CANCELLED)
+            .group_by(Order.currency)
+            .all()
+        )
+        total_spent = {currency: round(float(amount or 0.0), 2) for currency, amount in spent_rows}
+        return {
+            "order_count": count or 0,
+            "total_spent": total_spent,
+            "last_order_at": last_at,
+        }
+
+    def unlock(self, db: Session, *, user: User) -> User:
+        """Clear brute-force lockout state. Caller commits."""
+        self._clear_lockout_in_place(user)
+        db.add(user)
+        return user
 
 
 user = CRUDUser(User)
