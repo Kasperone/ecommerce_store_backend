@@ -1,3 +1,4 @@
+from app.crud.audit_event import audit_event
 from app.crud.category import category
 from app.crud.inventory import inventory
 from app.crud.order import order
@@ -13,5 +14,6 @@ __all__ = [
     "category",
     "order",
     "inventory",
+    "audit_event",
     "refresh_token",
 ]
