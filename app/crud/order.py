@@ -18,6 +18,8 @@ from datetime import UTC, datetime
 from sqlalchemy.orm import Session, selectinload
 
 from app.crud.base import CRUDBase
+from app.crud.inventory import inventory as crud_inventory
+from app.models.inventory_movement import InventoryMovementReason
 from app.models.order import Order, OrderItem, OrderStatus
 from app.models.product import Product
 from app.models.user import User, UserRole
@@ -116,18 +118,22 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
 
         items: list[OrderItem] = []
         subtotal = 0.0
+        # Validate against a local running remainder so duplicate lines for the
+        # same product are checked against the not-yet-committed total. The real
+        # decrement + ledger write happens after the flush (apply_delta needs
+        # order.id) — see the second loop below.
+        remaining: dict[int, int] = {}
         for line in obj_in.items:
             product = products.get(line.product_id)
             if product is None or not product.is_active:
                 raise ProductUnavailableError(line.product_id)
-            # Re-read stock each line so duplicate lines for the same product
-            # are checked against the running (already-decremented) total.
-            if product.stock < line.quantity:
-                raise InsufficientStockError(product.id, product.name, line.quantity, product.stock)
+            available = remaining.get(product.id, product.stock)
+            if available < line.quantity:
+                raise InsufficientStockError(product.id, product.name, line.quantity, available)
+            remaining[product.id] = available - line.quantity
             unit_price = product.get_price(currency)
             line_total = round(unit_price * line.quantity, 2)
             subtotal += line_total
-            product.stock -= line.quantity
             items.append(
                 OrderItem(
                     product_id=product.id,
@@ -157,19 +163,46 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             items=items,
         )
         db.add(order)
+        db.flush()  # populate order.id before writing inventory movements
+
+        # Decrement stock + append the ledger now that order.id exists; one
+        # ORDER_PLACED movement per line (duplicate lines decrement cumulatively).
+        for line in obj_in.items:
+            crud_inventory.apply_delta(
+                db,
+                product=products[line.product_id],
+                delta=-line.quantity,
+                reason=InventoryMovementReason.ORDER_PLACED,
+                actor_user_id=user_id,
+                order_id=order.id,
+            )
+
+        # Flush the stock decrements + movement rows so the unit of work is
+        # consistent before returning (the route owns the commit). Explicit
+        # because the session may have autoflush disabled.
         db.flush()
         db.refresh(order)
         return order
 
-    def cancel(self, db: Session, *, order: Order) -> Order:
+    def cancel(self, db: Session, *, order: Order, actor_user_id: int | None = None) -> Order:
         """Restore stock for every line and mark the order cancelled.
 
+        Writes one ORDER_CANCELLED inventory movement per line via
+        ``crud_inventory.apply_delta``; ``actor_user_id`` attributes the movement
+        to the cancelling user (None when called outside a request, e.g. tests).
         Caller is responsible for the cancellable-status check and the commit.
         """
         for item in order.items:
             product = db.get(Product, item.product_id)
             if product is not None:
-                product.stock += item.quantity
+                crud_inventory.apply_delta(
+                    db,
+                    product=product,
+                    delta=item.quantity,
+                    reason=InventoryMovementReason.ORDER_CANCELLED,
+                    actor_user_id=actor_user_id,
+                    order_id=order.id,
+                )
         order.status = OrderStatus.CANCELLED
         db.add(order)
         return order

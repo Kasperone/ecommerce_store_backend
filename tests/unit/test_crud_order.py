@@ -14,6 +14,7 @@ from app.crud.order import (
     ProductUnavailableError,
     status_transition_error,
 )
+from app.models.inventory_movement import InventoryMovement
 from app.models.order import OrderStatus
 from app.models.user import UserRole
 from app.schemas.order import OrderCreate, OrderItemCreate
@@ -59,6 +60,14 @@ def test_create_computes_totals_and_decrements_stock(db_session, user_factory, p
     # Stock decremented on the product row.
     db_session.refresh(product)
     assert product.stock == 8
+
+    # A single ORDER_PLACED inventory movement was written for the line.
+    movements = db_session.query(InventoryMovement).filter_by(product_id=product.id).all()
+    assert len(movements) == 1
+    assert movements[0].delta == -2
+    assert movements[0].resulting_stock == 8
+    assert movements[0].reason == "order_placed"
+    assert movements[0].order_id == order.id
 
     # Line item snapshots product fields.
     assert len(order.items) == 1
@@ -161,6 +170,17 @@ def test_cancel_restores_stock(db_session, user_factory, product_factory):
     assert order.status == OrderStatus.CANCELLED
     db_session.refresh(product)
     assert product.stock == 10
+
+    # Place wrote one movement; cancel wrote a second (ORDER_CANCELLED, +3).
+    movements = (
+        db_session.query(InventoryMovement)
+        .filter_by(product_id=product.id)
+        .order_by(InventoryMovement.id)
+        .all()
+    )
+    assert [m.reason for m in movements] == ["order_placed", "order_cancelled"]
+    assert movements[-1].delta == 3
+    assert movements[-1].resulting_stock == 10
 
 
 def test_is_cancellable(db_session, user_factory, product_factory):

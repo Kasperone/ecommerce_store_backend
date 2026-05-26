@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
 from app.models.admin_audit_event import AdminAuditEvent
+from app.models.inventory_movement import InventoryMovement
 from app.models.product import Product
 from app.models.user import UserRole
 
@@ -58,6 +59,12 @@ async def test_create_order_happy_path(client, user_factory, product_factory, db
     fresh = db_session.get(Product, product.id)
     db_session.refresh(fresh)
     assert fresh.stock == 8
+
+    # The placement landed on the inventory ledger.
+    movements = db_session.query(InventoryMovement).filter_by(product_id=product.id).all()
+    assert len(movements) == 1
+    assert movements[0].reason == "order_placed"
+    assert movements[0].delta == -2
 
 
 async def test_create_order_insufficient_stock_422(client, user_factory, product_factory):
