@@ -79,6 +79,35 @@ def configured_stripe(monkeypatch):
     monkeypatch.setattr(settings, "STRIPE_WEBHOOK_SECRET", WEBHOOK_SECRET)
 
 
+def _payment_intent_succeeded_event(order_number: str, pi: str = "pi_123") -> bytes:
+    """A Stripe payment_intent.succeeded event — the in-page wallet settle path.
+
+    The event object IS the PaymentIntent, so the id lives at ``object.id`` and
+    our order_number rides in ``object.metadata`` (no client_reference_id here).
+    """
+    return json.dumps(
+        {
+            "id": "evt_pi_1",
+            "object": "event",
+            "type": "payment_intent.succeeded",
+            "data": {"object": {"id": pi, "metadata": {"order_number": order_number}}},
+        }
+    ).encode("utf-8")
+
+
+@pytest.fixture
+def configured_stripe_full(configured_stripe, monkeypatch):
+    """configured_stripe plus a publishable key (the config endpoint returns it)."""
+    monkeypatch.setattr(settings, "STRIPE_PUBLISHABLE_KEY", "pk_test_x")
+
+
+@pytest.fixture
+def unconfigured_stripe(monkeypatch):
+    """Force Stripe settings empty so the suite's ambient .env can't configure it."""
+    monkeypatch.setattr(settings, "STRIPE_SECRET_KEY", "")
+    monkeypatch.setattr(settings, "STRIPE_WEBHOOK_SECRET", "")
+
+
 @pytest.fixture
 def fake_session(monkeypatch):
     """Stub the Stripe SDK's create call with a fake hosted-checkout session."""
@@ -88,6 +117,16 @@ def fake_session(monkeypatch):
         lambda **k: SimpleNamespace(
             url="https://checkout.stripe.com/c/pay/cs_test_1", id="cs_test_1"
         ),
+    )
+
+
+@pytest.fixture
+def fake_payment_intent(monkeypatch):
+    """Stub the Stripe SDK's PaymentIntent.create with a fake intent."""
+    monkeypatch.setattr(
+        stripe.PaymentIntent,
+        "create",
+        lambda **k: SimpleNamespace(client_secret="pi_test_1_secret_abc", id="pi_test_1"),
     )
 
 
@@ -245,3 +284,133 @@ async def test_webhook_is_idempotent(
     assert second.status_code == 200
     db_session.refresh(order)
     assert OrderStatus(order.status) == OrderStatus.PAID
+
+
+# ---------------------------------------------------------------------------
+# GET /payments/stripe/config  (browser Express Checkout config — never 503s)
+# ---------------------------------------------------------------------------
+
+
+async def test_stripe_config_reports_configured(client, user_factory, configured_stripe_full):
+    user = user_factory()
+    resp = await client.get("/api/v1/payments/stripe/config", headers=_headers(user))
+    assert resp.status_code == 200
+    assert resp.json() == {"configured": True, "publishable_key": "pk_test_x"}
+
+
+async def test_stripe_config_reports_unconfigured(client, user_factory, unconfigured_stripe):
+    user = user_factory()
+    resp = await client.get("/api/v1/payments/stripe/config", headers=_headers(user))
+    # Never 503 — the frontend hides the wallet widget on configured:false.
+    assert resp.status_code == 200
+    assert resp.json()["configured"] is False
+
+
+async def test_stripe_config_requires_auth(client):
+    resp = await client.get("/api/v1/payments/stripe/config")
+    assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# POST /payments/stripe/payment-intent/{id}  (create PaymentIntent for wallets)
+# ---------------------------------------------------------------------------
+
+
+async def test_create_payment_intent_returns_client_secret(
+    client, user_factory, product_factory, db_session, configured_stripe, fake_payment_intent
+):
+    user = user_factory()
+    product = product_factory(stock=10, price_usd=499.0)
+    order = _make_pending_order(db_session, user, product)
+
+    resp = await client.post(
+        f"/api/v1/payments/stripe/payment-intent/{order.id}", headers=_headers(user)
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["client_secret"] == "pi_test_1_secret_abc"
+
+
+async def test_create_payment_intent_503_when_unconfigured(
+    client, user_factory, product_factory, db_session, unconfigured_stripe
+):
+    user = user_factory()
+    product = product_factory(stock=5, price_usd=10.0)
+    order = _make_pending_order(db_session, user, product)
+
+    resp = await client.post(
+        f"/api/v1/payments/stripe/payment-intent/{order.id}", headers=_headers(user)
+    )
+    assert resp.status_code == 503
+
+
+async def test_create_payment_intent_401_without_auth(client):
+    resp = await client.post("/api/v1/payments/stripe/payment-intent/1")
+    assert resp.status_code == 401
+
+
+async def test_create_payment_intent_404_for_other_users_order(
+    client, user_factory, product_factory, db_session, configured_stripe, fake_payment_intent
+):
+    owner = user_factory()
+    other = user_factory()
+    product = product_factory(stock=5, price_usd=10.0)
+    order = _make_pending_order(db_session, owner, product)
+
+    resp = await client.post(
+        f"/api/v1/payments/stripe/payment-intent/{order.id}", headers=_headers(other)
+    )
+    assert resp.status_code == 404
+
+
+async def test_create_payment_intent_409_when_not_pending(
+    client, user_factory, product_factory, db_session, configured_stripe, fake_payment_intent
+):
+    user = user_factory()
+    product = product_factory(stock=5, price_usd=10.0)
+    order = _make_pending_order(db_session, user, product)
+    crud_order.cancel(db_session, order=order)
+    db_session.commit()
+
+    resp = await client.post(
+        f"/api/v1/payments/stripe/payment-intent/{order.id}", headers=_headers(user)
+    )
+    assert resp.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# POST /payments/stripe/webhook — payment_intent.succeeded (wallets settle path)
+# ---------------------------------------------------------------------------
+
+
+async def test_webhook_payment_intent_succeeded_marks_paid(
+    client, user_factory, product_factory, db_session, configured_stripe
+):
+    user = user_factory()
+    product = product_factory(stock=5, price_usd=10.0)
+    order = _make_pending_order(db_session, user, product)
+
+    body = _payment_intent_succeeded_event(order.order_number, pi="pi_999")
+    resp = await client.post(
+        "/api/v1/payments/stripe/webhook",
+        content=body,
+        headers={"Stripe-Signature": _stripe_sig(body), "Content-Type": "application/json"},
+    )
+
+    assert resp.status_code == 200
+    db_session.refresh(order)
+    assert OrderStatus(order.status) == OrderStatus.PAID
+    assert order.payment_method == "stripe"
+    assert order.payment_intent_id == "pi_999"
+
+
+async def test_webhook_payment_intent_succeeded_unknown_order_is_noop(
+    client, db_session, configured_stripe
+):
+    body = _payment_intent_succeeded_event("ORD-DOES-NOT-EXIST")
+    resp = await client.post(
+        "/api/v1/payments/stripe/webhook",
+        content=body,
+        headers={"Stripe-Signature": _stripe_sig(body)},
+    )
+    assert resp.status_code == 200
