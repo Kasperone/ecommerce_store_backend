@@ -49,11 +49,16 @@ class Settings(BaseSettings):
     EMAIL_FROM: str = "noreply@ecommerce.com"
     EMAIL_FROM_NAME: str = "E-commerce Store"
     FRONTEND_URL: str = "http://localhost:3000"
+    # Public base URL of this backend — used to build the PayU notifyUrl
+    # (PayU's servers must reach it; set to the public URL in prod).
+    BACKEND_URL: str = "http://localhost:8000"
 
     # PayU
     PAYU_POS_ID: str = ""
     PAYU_CLIENT_ID: str = ""
     PAYU_CLIENT_SECRET: str = ""
+    # "Second key (MD5)" from the PayU POS — used to verify notification signatures.
+    PAYU_SECOND_KEY: str = ""
     PAYU_SANDBOX: bool = True
 
     # Stripe
