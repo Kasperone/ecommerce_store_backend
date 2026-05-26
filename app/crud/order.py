@@ -227,6 +227,33 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         db.add(order)
         return order
 
+    def mark_paid(self, db: Session, *, order: Order, payment_intent_id: str) -> Order:
+        """Idempotently flip a pending order to paid (PayU notification).
+
+        No-op when the order isn't pending, so duplicate/late notifications are
+        safe. Records the PayU order id + method. Caller owns the commit.
+        """
+        if OrderStatus(order.status) != OrderStatus.PENDING:
+            return order
+        order.status = OrderStatus.PAID
+        order.payment_method = "payu"
+        order.payment_intent_id = payment_intent_id
+        db.add(order)
+        return order
+
+    def get_by_order_number(self, db: Session, *, order_number: str) -> Order | None:
+        """Look up an order by its public ``order_number``.
+
+        Used by the unauthenticated PayU webhook, which echoes our order_number
+        back as ``extOrderId``.
+        """
+        return (
+            db.query(Order)
+            .options(selectinload(Order.items))
+            .filter(Order.order_number == order_number)
+            .first()
+        )
+
     def get_scoped(self, db: Session, *, order_id: int, user: User) -> Order | None:
         """Fetch one order visible to ``user``.
 
