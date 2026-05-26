@@ -59,3 +59,40 @@ async def test_put_clears_one_keeps_others_succeeds(client, user_factory, produc
     assert response.status_code == 200, response.text
     assert response.json()["price_usd"] is None
     assert response.json()["price_pln"] == 50.0
+
+
+# ---------------------------------------------------------------------------
+# low_stock_threshold round-trip — the field the admin inventory adjust dialog
+# and the product edit page both write through PUT /products/{id}.
+# ---------------------------------------------------------------------------
+
+
+async def test_put_sets_and_returns_low_stock_threshold(client, user_factory, product_factory):
+    headers = _admin_headers(user_factory)
+    product = product_factory(low_stock_threshold=None)
+
+    response = await client.put(
+        f"/api/v1/products/{product.id}",
+        json={"low_stock_threshold": 5},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["low_stock_threshold"] == 5
+
+    # Round-trips on GET too (the product edit form reads it there).
+    fetched = await client.get(f"/api/v1/products/{product.id}")
+    assert fetched.status_code == 200
+    assert fetched.json()["low_stock_threshold"] == 5
+
+
+async def test_put_clears_low_stock_threshold(client, user_factory, product_factory):
+    headers = _admin_headers(user_factory)
+    product = product_factory(low_stock_threshold=7)
+
+    response = await client.put(
+        f"/api/v1/products/{product.id}",
+        json={"low_stock_threshold": None},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["low_stock_threshold"] is None
