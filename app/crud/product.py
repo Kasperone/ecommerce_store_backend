@@ -1,9 +1,18 @@
-from sqlalchemy import or_
+from sqlalchemy import nulls_last, or_
 from sqlalchemy.orm import Session
 
 from app.crud.base import CRUDBase
 from app.models.product import Product
 from app.schemas.product import ProductCreate, ProductUpdate
+
+# Whitelisted sort columns for the public product list. Keys are the API-facing
+# ``sort_by`` values; resolving through this map (never interpolating the column
+# name) keeps the query param from reaching arbitrary SQL.
+SORTABLE_COLUMNS = {
+    "created_at": Product.created_at,
+    "price_usd": Product.price_usd,
+    "name": Product.name,
+}
 
 
 class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
@@ -48,6 +57,8 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
         max_price_usd: float | None = None,
         in_stock: bool | None = None,
         search: str | None = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
     ) -> list[Product]:
         """
         Get products with filters and pagination
@@ -63,6 +74,8 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
             max_price_usd: Maximum price in USD
             in_stock: Filter by stock availability
             search: Search in name and description
+            sort_by: Column to sort by (created_at, price_usd, name)
+            order: Sort direction (asc or desc)
 
         Returns:
             List of products
@@ -101,6 +114,13 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
                 Product.description.ilike(f"%{search}%"),
             )
             query = query.filter(search_filter)
+
+        # Ordering — resolve through the whitelist so the param can't reach
+        # arbitrary SQL. nulls_last keeps price-less products off the top of a
+        # ``price_usd asc`` sort; the id tiebreak makes paging deterministic.
+        column = SORTABLE_COLUMNS.get(sort_by, Product.created_at)
+        ordering = column.asc() if order == "asc" else column.desc()
+        query = query.order_by(nulls_last(ordering), Product.id.asc())
 
         # Pagination
         return query.offset(skip).limit(limit).all()
