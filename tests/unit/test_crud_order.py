@@ -150,6 +150,52 @@ def test_create_duplicate_lines_check_running_stock(db_session, user_factory, pr
         )
 
 
+def test_create_multi_line_writes_one_movement_per_line(db_session, user_factory, product_factory):
+    user = user_factory()
+    p1 = product_factory(stock=10, price_usd=10.0)
+    p2 = product_factory(stock=5, price_usd=5.0)
+
+    order = crud_order.create_with_items(
+        db_session, user_id=user.id, obj_in=_order_in([(p1.id, 2), (p2.id, 3)])
+    )
+
+    movements = (
+        db_session.query(InventoryMovement).filter(InventoryMovement.order_id == order.id).all()
+    )
+    assert len(movements) == 2  # one per line, even across distinct products
+    by_product = {m.product_id: m for m in movements}
+    assert by_product[p1.id].delta == -2
+    assert by_product[p1.id].resulting_stock == 8
+    assert by_product[p2.id].delta == -3
+    assert by_product[p2.id].resulting_stock == 2
+    assert all(m.reason == "order_placed" for m in movements)
+
+
+def test_create_duplicate_lines_that_fit_write_cumulative_movements(
+    db_session, user_factory, product_factory
+):
+    user = user_factory()
+    product = product_factory(stock=10, price_usd=10.0)
+
+    # Two lines of the same product (2 + 3 = 5 <= stock 10): one movement each,
+    # with resulting_stock stepping down cumulatively (8 then 5).
+    order = crud_order.create_with_items(
+        db_session, user_id=user.id, obj_in=_order_in([(product.id, 2), (product.id, 3)])
+    )
+
+    db_session.refresh(product)
+    assert product.stock == 5
+
+    movements = (
+        db_session.query(InventoryMovement)
+        .filter(InventoryMovement.order_id == order.id)
+        .order_by(InventoryMovement.id)
+        .all()
+    )
+    assert [m.delta for m in movements] == [-2, -3]
+    assert [m.resulting_stock for m in movements] == [8, 5]
+
+
 # ---------------------------------------------------------------------------
 # cancel
 # ---------------------------------------------------------------------------

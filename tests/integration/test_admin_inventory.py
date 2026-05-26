@@ -11,7 +11,9 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
+from app.crud import inventory as crud_inventory
 from app.models.admin_audit_event import AdminAuditEvent
+from app.models.inventory_movement import InventoryMovementReason
 from app.models.user import UserRole
 
 pytestmark = pytest.mark.integration
@@ -195,3 +197,52 @@ async def test_order_place_and_cancel_land_on_ledger(client, user_factory, produ
     assert rows[0]["delta"] == 3
     assert rows[0]["resulting_stock"] == 10
     assert rows[0]["actor_user_id"] == customer.id
+
+
+# ---------------------------------------------------------------------------
+# pagination
+# ---------------------------------------------------------------------------
+
+
+async def test_list_pagination(client, user_factory, product_factory):
+    admin = user_factory(email="page-admin@example.com", role=UserRole.ADMIN)
+    for i in range(25):
+        product_factory(name=f"Bulk {i:02d}")
+
+    p1 = await client.get("/api/v1/admin/inventory/?page=1&page_size=20", headers=_headers(admin))
+    assert p1.status_code == 200
+    body1 = p1.json()
+    assert body1["total"] == 25
+    assert body1["pages"] == 2
+    assert body1["page"] == 1
+    assert len(body1["items"]) == 20
+
+    p2 = await client.get("/api/v1/admin/inventory/?page=2&page_size=20", headers=_headers(admin))
+    assert len(p2.json()["items"]) == 5
+
+
+async def test_movements_pagination(client, user_factory, product_factory, db_session):
+    admin = user_factory(email="page-mv-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=100)
+    for _ in range(25):
+        crud_inventory.apply_delta(
+            db_session,
+            product=product,
+            delta=-1,
+            reason=InventoryMovementReason.MANUAL_ADJUSTMENT,
+        )
+    db_session.commit()
+
+    p1 = await client.get(
+        "/api/v1/admin/inventory/movements?page=1&page_size=20", headers=_headers(admin)
+    )
+    assert p1.status_code == 200
+    body1 = p1.json()
+    assert body1["total"] == 25
+    assert body1["pages"] == 2
+    assert len(body1["items"]) == 20
+
+    p2 = await client.get(
+        "/api/v1/admin/inventory/movements?page=2&page_size=20", headers=_headers(admin)
+    )
+    assert len(p2.json()["items"]) == 5
