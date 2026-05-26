@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from app.models.category import Category
+    from app.models.inventory_movement import InventoryMovement
     from app.models.order import OrderItem
     from app.models.product_image import ProductImage
 
@@ -39,6 +40,8 @@ class Product(BaseModel):
 
     # Inventory
     stock: Mapped[int] = mapped_column(Integer, default=0)
+    # Null = no threshold set → the product is never flagged "low stock".
+    low_stock_threshold: Mapped[int | None] = mapped_column(Integer)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_featured: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -53,6 +56,11 @@ class Product(BaseModel):
         back_populates="product",
         cascade="all, delete-orphan",
         order_by="ProductImage.sort_order",
+    )
+    movements: Mapped[list["InventoryMovement"]] = relationship(
+        "InventoryMovement",
+        back_populates="product",
+        cascade="all, delete-orphan",
     )
 
     def __repr__(self):

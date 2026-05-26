@@ -54,6 +54,9 @@ class ProductBase(BaseSchema):
     price_eur: Annotated[float | None, Field(gt=0)] = None
 
     stock: Annotated[int, Field(ge=0)] = 0
+    # Null = no threshold → never flagged "low stock". Editable here and from the
+    # admin inventory adjust dialog.
+    low_stock_threshold: Annotated[int | None, Field(ge=0)] = None
     is_active: bool = True
     is_featured: bool = False
 
@@ -83,6 +86,7 @@ class ProductUpdate(BaseSchema):
     price_eur: Annotated[float | None, Field(gt=0)] = None
 
     stock: Annotated[int | None, Field(ge=0)] = None
+    low_stock_threshold: Annotated[int | None, Field(ge=0)] = None
     is_active: bool | None = None
     is_featured: bool | None = None
 
