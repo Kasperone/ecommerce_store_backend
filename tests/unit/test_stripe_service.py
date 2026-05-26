@@ -106,6 +106,69 @@ def test_create_checkout_session_raises_when_url_missing(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# create_payment_intent — SDK monkeypatched (in-page Express Checkout / wallets)
+# ---------------------------------------------------------------------------
+
+
+def test_create_payment_intent_returns_client_secret_and_id(monkeypatch):
+    captured: dict = {}
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(client_secret="pi_test_1_secret_abc", id="pi_test_1")
+
+    monkeypatch.setattr(stripe.PaymentIntent, "create", fake_create)
+
+    result = _service().create_payment_intent(
+        ext_order_id="ORD-1",
+        amount_minor=99800,
+        currency="USD",
+        description="Order ORD-1",
+        buyer_email="a@example.com",
+    )
+
+    assert result == {"client_secret": "pi_test_1_secret_abc", "payment_intent_id": "pi_test_1"}
+    # The order number rides in metadata (webhook lookup key), the amount is the
+    # integer minor unit, the currency is lowercased, and wallets are enabled via
+    # automatic_payment_methods.
+    assert captured["metadata"]["order_number"] == "ORD-1"
+    assert captured["amount"] == 99800
+    assert captured["currency"] == "usd"
+    assert captured["automatic_payment_methods"] == {"enabled": True}
+
+
+def test_create_payment_intent_raises_on_stripe_error(monkeypatch):
+    def boom(**kwargs):
+        raise stripe.StripeError("nope")
+
+    monkeypatch.setattr(stripe.PaymentIntent, "create", boom)
+    with pytest.raises(StripeError):
+        _service().create_payment_intent(
+            ext_order_id="ORD-1",
+            amount_minor=1,
+            currency="USD",
+            description="d",
+            buyer_email="a@example.com",
+        )
+
+
+def test_create_payment_intent_raises_when_client_secret_missing(monkeypatch):
+    monkeypatch.setattr(
+        stripe.PaymentIntent,
+        "create",
+        lambda **k: SimpleNamespace(client_secret=None, id="pi_x"),
+    )
+    with pytest.raises(StripeError):
+        _service().create_payment_intent(
+            ext_order_id="ORD-1",
+            amount_minor=1,
+            currency="USD",
+            description="d",
+            buyer_email="a@example.com",
+        )
+
+
+# ---------------------------------------------------------------------------
 # construct_event — the security boundary (real signatures)
 # ---------------------------------------------------------------------------
 
