@@ -227,16 +227,24 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         db.add(order)
         return order
 
-    def mark_paid(self, db: Session, *, order: Order, payment_intent_id: str) -> Order:
-        """Idempotently flip a pending order to paid (PayU notification).
+    def mark_paid(
+        self,
+        db: Session,
+        *,
+        order: Order,
+        payment_intent_id: str,
+        payment_method: str,
+    ) -> Order:
+        """Idempotently flip a pending order to paid (payment-provider webhook).
 
         No-op when the order isn't pending, so duplicate/late notifications are
-        safe. Records the PayU order id + method. Caller owns the commit.
+        safe. Records the provider's payment id + method (``"payu"`` / ``"stripe"``).
+        Caller owns the commit.
         """
         if OrderStatus(order.status) != OrderStatus.PENDING:
             return order
         order.status = OrderStatus.PAID
-        order.payment_method = "payu"
+        order.payment_method = payment_method
         order.payment_intent_id = payment_intent_id
         db.add(order)
         return order
