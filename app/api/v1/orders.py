@@ -161,7 +161,7 @@ async def cancel_order(
             detail=f"Cannot cancel an order with status '{OrderStatus(order.status).value}'",
         )
 
-    crud_order.cancel(db, order=order)
+    crud_order.cancel(db, order=order, actor_user_id=current_user.id)
     db.commit()
     db.refresh(order)
     return order
