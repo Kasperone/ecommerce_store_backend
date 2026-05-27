@@ -14,6 +14,7 @@ from app.schemas.product import (
     ProductUpdate,
     ProductWithCategory,
 )
+from app.services import search_index
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
@@ -165,6 +166,8 @@ async def create_product(
     audit.record_create(resource_type="product", obj=product)
     db.commit()
     db.refresh(product)
+    # Best-effort: keep the search index in step (no-op when Meili unconfigured).
+    search_index.sync_product(db, product.id)
     return product
 
 
@@ -207,6 +210,8 @@ async def update_product(
     audit.record_update(resource_type="product", obj=product)
     db.commit()
     db.refresh(product)
+    # Best-effort re-sync (drops the doc if the update flipped is_active off).
+    search_index.sync_product(db, product.id)
     return product
 
 
@@ -230,4 +235,6 @@ async def delete_product(
     audit.record_delete(resource_type="product", obj=product)
     crud_product.delete(db, id=product_id)
     db.commit()
+    # Best-effort: drop the product from the search index.
+    search_index.delete_product(product_id)
     return None

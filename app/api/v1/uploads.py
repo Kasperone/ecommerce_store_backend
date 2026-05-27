@@ -18,6 +18,7 @@ from app.crud import product_image as crud_product_image
 from app.models.product_image import ProductImage
 from app.models.user import User
 from app.schemas.product import ProductImageResponse, ProductImageUpdate
+from app.services import search_index
 from app.services.audit import AuditWriter, get_audit_writer
 from app.services.image import (
     MIME_TO_EXTENSION,
@@ -94,6 +95,8 @@ async def upload_product_image(
     audit.record_create(resource_type="product_image", obj=image)
     db.commit()
     db.refresh(image)
+    # Re-index the product — its primary image_url may have changed (best-effort).
+    search_index.sync_product(db, product_id)
     return image
 
 
@@ -128,6 +131,8 @@ async def update_product_image(
     audit.record_update(resource_type="product_image", obj=image)
     db.commit()
     db.refresh(image)
+    # Re-index the product — set-primary changes which image_url is indexed.
+    search_index.sync_product(db, product_id)
     return image
 
 
@@ -162,4 +167,6 @@ async def delete_product_image(
     audit.record_delete(resource_type="product_image", obj=image)
     db.delete(image)
     db.commit()
+    # Re-index the product — removing the primary image changes image_url.
+    search_index.sync_product(db, product_id)
     return None

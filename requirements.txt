@@ -7,6 +7,7 @@ argon2-cffi==23.1.0
 argon2-cffi-bindings==25.1.0
 boto3==1.40.53
 botocore==1.40.53
+camel-converter==5.1.0
 certifi==2025.10.5
 cffi==2.0.0
 charset-normalizer==3.4.4
@@ -29,6 +30,7 @@ jmespath==1.0.1
 limits==5.8.0
 Mako==1.3.10
 MarkupSafe==3.0.3
+meilisearch==0.41.0
 packaging==26.2
 passlib==1.7.4
 Pillow==12.2.0
