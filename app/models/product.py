@@ -33,6 +33,12 @@ class Product(BaseModel):
     description: Mapped[str | None] = mapped_column(Text)
     sku: Mapped[str | None] = mapped_column(String(100), unique=True, index=True)
 
+    # Polish locale content — nullable; storefront falls back to the EN field
+    # when unset. Mirrors Category.name_pl/description_pl. No slug_pl: products
+    # keep their single slug (URL i18n is out of scope).
+    name_pl: Mapped[str | None] = mapped_column(String(200))
+    description_pl: Mapped[str | None] = mapped_column(Text)
+
     # Pricing (multi-currency) — individually nullable; ck_products_at_least_one_price
     # guarantees at least one is set at the DB level
     price_usd: Mapped[float | None] = mapped_column(Float)

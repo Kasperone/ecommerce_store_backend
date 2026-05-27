@@ -46,6 +46,11 @@ class ProductBase(BaseSchema):
     description: str | None = None
     sku: Annotated[str | None, Field(max_length=100)] = None
 
+    # Polish locale content — optional, free-text; storefront falls back to the
+    # EN field when unset. Mirrors CategoryBase.name_pl/description_pl.
+    name_pl: Annotated[str | None, Field(min_length=1, max_length=200)] = None
+    description_pl: str | None = None
+
     # Multi-currency prices — individually optional, at least one required on create.
     # The DB-level CHECK constraint (ck_products_at_least_one_price) enforces the
     # same invariant for raw inserts and bulk loads.
@@ -80,6 +85,9 @@ class ProductUpdate(BaseSchema):
     slug: Annotated[str | None, Field(min_length=1, max_length=200)] = None
     description: str | None = None
     sku: Annotated[str | None, Field(max_length=100)] = None
+
+    name_pl: Annotated[str | None, Field(min_length=1, max_length=200)] = None
+    description_pl: str | None = None
 
     price_usd: Annotated[float | None, Field(gt=0)] = None
     price_pln: Annotated[float | None, Field(gt=0)] = None
