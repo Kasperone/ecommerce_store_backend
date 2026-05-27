@@ -42,6 +42,7 @@ def _to_admin_item(review: Review) -> AdminReviewListItem:
         body=review.body,
         status=ReviewStatus(review.status),
         is_verified_purchase=review.is_verified_purchase,
+        helpful_count=review.helpful_count,
         admin_response=review.admin_response,
         admin_response_at=review.admin_response_at,
     )

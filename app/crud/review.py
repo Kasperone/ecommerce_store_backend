@@ -91,21 +91,35 @@ class CRUDReview(CRUDBase[Review, ReviewCreate, ReviewUpdate]):
     # ------------------------------------------------------------------
 
     def get_multi_public(
-        self, db: Session, *, product_id: int, skip: int = 0, limit: int = 20
+        self,
+        db: Session,
+        *,
+        product_id: int,
+        skip: int = 0,
+        limit: int = 20,
+        sort_by: str = "newest",
     ) -> list[Review]:
-        """Approved reviews for a product, newest first, author eager-loaded."""
-        return (
+        """Approved reviews for a product, author eager-loaded.
+
+        ``sort_by="helpful"`` orders by ``helpful_count`` (most helpful first) with
+        a recency tiebreak; anything else falls back to newest-first. The route
+        whitelists ``sort_by`` to a ``Literal`` so the value is never interpolated.
+        """
+        query = (
             db.query(Review)
             .options(selectinload(Review.user))
             .filter(
                 Review.product_id == product_id,
                 Review.status == ReviewStatus.APPROVED.value,
             )
-            .order_by(Review.created_at.desc(), Review.id.desc())
-            .offset(skip)
-            .limit(limit)
-            .all()
         )
+        if sort_by == "helpful":
+            query = query.order_by(
+                Review.helpful_count.desc(), Review.created_at.desc(), Review.id.desc()
+            )
+        else:
+            query = query.order_by(Review.created_at.desc(), Review.id.desc())
+        return query.offset(skip).limit(limit).all()
 
     def count_public(self, db: Session, *, product_id: int) -> int:
         return (

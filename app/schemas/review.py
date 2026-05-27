@@ -49,8 +49,32 @@ class ReviewResponse(TimestampSchema):
     status: ReviewStatus
     is_verified_purchase: bool
     author_name: str
+    helpful_count: int
     admin_response: str | None = None
     admin_response_at: datetime | None = None
+
+
+class ReviewVoteResponse(BaseSchema):
+    """Returned after casting/withdrawing a helpful vote.
+
+    Carries the review's new ``helpful_count`` plus the caller's resulting state
+    so the frontend can reconcile its optimistic toggle without a refetch.
+    """
+
+    review_id: int
+    helpful_count: int
+    my_vote: bool
+
+
+class MyVotesResponse(BaseSchema):
+    """The reviews the caller has voted "helpful" on for a given product.
+
+    Drives the pressed state of the helpful button across a PDP's review list.
+    Client-only on the storefront (mirrors ``GET /reviews/me``) so SSR stays
+    unauthenticated.
+    """
+
+    voted_review_ids: list[int]
 
 
 class ProductReviewSummary(BaseSchema):
@@ -89,6 +113,7 @@ class AdminReviewListItem(TimestampSchema):
     body: str
     status: ReviewStatus
     is_verified_purchase: bool
+    helpful_count: int
     admin_response: str | None = None
     admin_response_at: datetime | None = None
 
