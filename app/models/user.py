@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.models.order import Order
     from app.models.refresh_token import RefreshToken
     from app.models.review import Review
+    from app.models.tag import Tag
     from app.models.verification_token import VerificationToken
 
 
@@ -93,6 +94,10 @@ class User(BaseModel):
         foreign_keys="CustomerNote.user_id",
         back_populates="user",
         cascade="all, delete-orphan",
+    )
+    # Reusable admin labels attached to this customer (many-to-many).
+    tags: Mapped[list["Tag"]] = relationship(
+        "Tag", secondary="customer_tags", back_populates="customers"
     )
 
     def __repr__(self):

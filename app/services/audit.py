@@ -94,6 +94,28 @@ class AuditWriter:
             payload={"before": _snapshot(obj)},
         )
 
+    def record_event(
+        self,
+        *,
+        action: str,
+        resource_type: str,
+        resource_id: int | None,
+        payload: dict[str, Any],
+    ) -> None:
+        """Record an event with a caller-supplied payload.
+
+        For mutations that have no clean ORM-object diff — e.g. attaching or
+        detaching a row from a many-to-many join (a tag ↔ customer link) — where
+        ``record_create/update/delete`` (which read column attrs / ``get_history``)
+        don't apply. The caller describes the change explicitly.
+        """
+        self._write(
+            action=action,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            payload=payload,
+        )
+
     def _write(
         self,
         *,

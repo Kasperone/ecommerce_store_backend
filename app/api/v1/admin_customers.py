@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.core import email as email_service
 from app.core.dependencies import get_current_admin, get_db
 from app.crud import customer_note as crud_customer_note
+from app.crud import tag as crud_tag
 from app.crud import user as crud_user
 from app.models.customer_note import CustomerNote
 from app.models.user import User, UserRole
@@ -31,6 +32,7 @@ from app.schemas.customer_note import (
     CustomerNoteResponse,
     CustomerNoteUpdate,
 )
+from app.schemas.tag import CustomerTagAssign, TagChip
 from app.schemas.user import UserResponse
 from app.services.audit import AuditWriter, get_audit_writer
 
@@ -51,6 +53,7 @@ def _detail(db: Session, user: User) -> CustomerDetail:
         is_locked=user.is_locked,
         locked_until=user.locked_until,
         metrics=CustomerOrderMetrics(**metrics),
+        tags=[TagChip.model_validate(t) for t in user.tags],
     )
 
 
@@ -66,6 +69,7 @@ async def list_customers(
     search: str | None = Query(
         None, max_length=100, description="Search email / first / last name"
     ),
+    tag_id: int | None = Query(None, description="Filter by an assigned tag"),
 ):
     """List users with filters (admin). Newest first."""
     skip = (page - 1) * page_size
@@ -75,11 +79,17 @@ async def list_customers(
         is_active=is_active,
         is_verified=is_verified,
         search=search,
+        tag_id=tag_id,
         skip=skip,
         limit=page_size,
     )
     total = crud_user.count_admin(
-        db, role=role, is_active=is_active, is_verified=is_verified, search=search
+        db,
+        role=role,
+        is_active=is_active,
+        is_verified=is_verified,
+        search=search,
+        tag_id=tag_id,
     )
     user_ids = [u.id for u in users]
     counts = crud_user.order_counts_for(db, user_ids=user_ids)
@@ -100,6 +110,7 @@ async def list_customers(
             shipping_country=u.shipping_country,
             order_count=counts.get(u.id, 0),
             note_count=note_counts.get(u.id, 0),
+            tags=[TagChip.model_validate(t) for t in u.tags],
         )
         for u in users
     ]
@@ -297,3 +308,72 @@ async def delete_customer_note(
     audit.record_delete(resource_type="customer_note", obj=note)
     db.delete(note)
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Customer tags — assignment under /{customer_id}/tags. The vocabulary itself
+# (create/rename/recolor/delete) lives in admin_tags.py. Assign/detach are
+# audited via record_event (a join row has no clean ORM-object diff) as
+# resource_type="customer_tag", resource_id=the customer.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{customer_id}/tags", response_model=list[TagChip])
+async def assign_customer_tag(
+    customer_id: int,
+    payload: CustomerTagAssign,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
+):
+    """Attach a tag to a customer (admin) — by ``tag_id`` or by ``name`` (created
+    if new). Idempotent; returns the customer's full tag list."""
+    user = _get_customer_or_404(db, customer_id)
+
+    if payload.tag_id is not None:
+        tag = crud_tag.get(db, id=payload.tag_id)
+        if tag is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tag not found")
+    else:
+        # name is guaranteed present + normalized by CustomerTagAssign.
+        tag = crud_tag.get_by_name_ci(db, name=payload.name)  # type: ignore[arg-type]
+        if tag is None:
+            tag = crud_tag.create_tag(db, name=payload.name)  # type: ignore[arg-type]
+            audit.record_create(resource_type="tag", obj=tag)
+
+    if crud_tag.attach(db, user=user, tag=tag):
+        audit.record_event(
+            action="create",
+            resource_type="customer_tag",
+            resource_id=user.id,
+            payload={"after": {"tag_id": tag.id, "name": tag.name}},
+        )
+    db.commit()
+    db.refresh(user)
+    return [TagChip.model_validate(t) for t in user.tags]
+
+
+@router.delete("/{customer_id}/tags/{tag_id}", response_model=list[TagChip])
+async def remove_customer_tag(
+    customer_id: int,
+    tag_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
+):
+    """Detach a tag from a customer (admin). Idempotent; returns the remaining tags."""
+    user = _get_customer_or_404(db, customer_id)
+    tag = crud_tag.get(db, id=tag_id)
+    if tag is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tag not found")
+
+    if crud_tag.detach(db, user=user, tag=tag):
+        audit.record_event(
+            action="delete",
+            resource_type="customer_tag",
+            resource_id=user.id,
+            payload={"before": {"tag_id": tag.id, "name": tag.name}},
+        )
+    db.commit()
+    db.refresh(user)
+    return [TagChip.model_validate(t) for t in user.tags]
