@@ -69,11 +69,13 @@ from app.api.v1 import (  # noqa: E402
     admin_audit,
     admin_customers,
     admin_inventory,
+    admin_reviews,
     auth,
     categories,
     orders,
     payments,
     products,
+    reviews,
     uploads,
 )
 
@@ -91,7 +93,11 @@ app.include_router(
 app.include_router(
     admin_audit.router, prefix="/api/v1/admin/audit-events", tags=["Admin Audit Log"]
 )
+app.include_router(admin_reviews.router, prefix="/api/v1/admin/reviews", tags=["Admin Reviews"])
 # Product image upload routes are nested under products since an image has no
 # meaning without a parent. Prefix matches so paths surface as
 # /api/v1/products/{id}/images/...
 app.include_router(uploads.router, prefix="/api/v1/products", tags=["Product Images"])
+# Customer + public reviews are nested under products (a review has no meaning
+# without its product). Paths surface as /api/v1/products/{id}/reviews...
+app.include_router(reviews.router, prefix="/api/v1/products", tags=["Reviews"])
