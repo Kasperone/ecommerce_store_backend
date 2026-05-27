@@ -1,9 +1,11 @@
 import enum
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    DateTime,
     ForeignKey,
     Integer,
     String,
@@ -44,6 +46,11 @@ class Review(BaseModel):
 
     Both foreign keys are ON DELETE CASCADE so a review never outlives its
     product or its author.
+
+    ``admin_response`` is an optional public "Store response" an admin can attach
+    to a review; ``admin_response_at`` is stamped when it is set and nulled when
+    it is cleared. Both are surfaced to customers (the public list returns only
+    approved reviews, so a reply only goes public once its review is approved).
     """
 
     __tablename__ = "reviews"
@@ -63,6 +70,8 @@ class Review(BaseModel):
     body: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), default=ReviewStatus.PENDING.value, index=True)
     is_verified_purchase: Mapped[bool] = mapped_column(Boolean, default=False)
+    admin_response: Mapped[str | None] = mapped_column(Text)
+    admin_response_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     product: Mapped["Product"] = relationship("Product", back_populates="reviews")
     user: Mapped["User"] = relationship("User", back_populates="reviews")

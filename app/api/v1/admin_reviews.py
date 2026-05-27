@@ -42,6 +42,8 @@ def _to_admin_item(review: Review) -> AdminReviewListItem:
         body=review.body,
         status=ReviewStatus(review.status),
         is_verified_purchase=review.is_verified_purchase,
+        admin_response=review.admin_response,
+        admin_response_at=review.admin_response_at,
     )
 
 
@@ -106,12 +108,28 @@ async def moderate_review(
     current_admin: User = Depends(get_current_admin),
     audit: AuditWriter = Depends(get_audit_writer),
 ):
-    """Approve or reject a review (admin). Audited."""
+    """Moderate a review and/or set the store's public reply (admin). Audited.
+
+    Both fields are optional: send ``status`` to approve/reject, send
+    ``admin_response`` to attach a public reply (``null`` clears it). A body with
+    neither field present is a 422 — there is nothing to do.
+    """
     review = crud_review.get(db, id=review_id)
     if review is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
 
-    review.status = payload.status
+    fields = payload.model_fields_set
+    if "status" not in fields and "admin_response" not in fields:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Provide a status and/or an admin_response",
+        )
+
+    if "status" in fields and payload.status is not None:
+        review.status = payload.status
+    if "admin_response" in fields:
+        crud_review.set_admin_response(db, review=review, response=payload.admin_response)
+
     db.add(review)
     audit.record_update(resource_type="review", obj=review)
     db.commit()
