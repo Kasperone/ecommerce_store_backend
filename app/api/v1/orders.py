@@ -1,6 +1,6 @@
 from math import ceil
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_active_user, get_current_admin, get_db
@@ -19,14 +19,21 @@ from app.schemas.order import (
     OrderUpdate,
     OrderWithUser,
 )
+from app.services import search_index
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
 
 
+def _touched_product_ids(order) -> list[int]:
+    """Product ids on an order's line items (for search re-sync; bulk-sync dedupes)."""
+    return [item.product_id for item in order.items if item.product_id is not None]
+
+
 @router.post("/", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
 async def create_order(
     order_in: OrderCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -51,6 +58,8 @@ async def create_order(
 
     db.commit()
     db.refresh(order)
+    # Stock dropped → refresh the in_stock facet off the hot path (best-effort).
+    background_tasks.add_task(search_index.sync_products_in_background, _touched_product_ids(order))
     return order
 
 
@@ -136,6 +145,7 @@ async def update_order(
 @router.post("/{order_id}/cancel", response_model=OrderResponse)
 async def cancel_order(
     order_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -164,4 +174,6 @@ async def cancel_order(
     crud_order.cancel(db, order=order, actor_user_id=current_user.id)
     db.commit()
     db.refresh(order)
+    # Stock restored → refresh the in_stock facet off the hot path (best-effort).
+    background_tasks.add_task(search_index.sync_products_in_background, _touched_product_ids(order))
     return order

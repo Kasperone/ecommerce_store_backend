@@ -25,6 +25,7 @@ from app.schemas.inventory import (
     InventoryStatus,
     StockAdjustRequest,
 )
+from app.services import search_index
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
@@ -121,6 +122,8 @@ async def adjust_stock(
     audit.record_update(resource_type="inventory", obj=product)
     db.commit()
     db.refresh(movement)
+    # Stock changed → refresh the in_stock facet (best-effort, admin path).
+    search_index.sync_product(db, product_id)
     return _movement_item(movement, product.name)
 
 
