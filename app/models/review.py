@@ -18,6 +18,7 @@ from app.models.base import BaseModel
 
 if TYPE_CHECKING:
     from app.models.product import Product
+    from app.models.review_vote import ReviewVote
     from app.models.user import User
 
 
@@ -51,6 +52,12 @@ class Review(BaseModel):
     to a review; ``admin_response_at`` is stamped when it is set and nulled when
     it is cleared. Both are surfaced to customers (the public list returns only
     approved reviews, so a reply only goes public once its review is approved).
+
+    ``helpful_count`` is a denormalized tally of "helpful" votes (one per
+    customer, recorded in ``review_votes``) maintained in-transaction by
+    ``crud_review_vote`` — the only place it changes. It drives display and the
+    optional "most helpful" sort; the per-user ``votes`` rows drive the button's
+    pressed state and stop double-voting.
     """
 
     __tablename__ = "reviews"
@@ -72,9 +79,15 @@ class Review(BaseModel):
     is_verified_purchase: Mapped[bool] = mapped_column(Boolean, default=False)
     admin_response: Mapped[str | None] = mapped_column(Text)
     admin_response_at: Mapped[datetime | None] = mapped_column(DateTime)
+    helpful_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     product: Mapped["Product"] = relationship("Product", back_populates="reviews")
     user: Mapped["User"] = relationship("User", back_populates="reviews")
+    votes: Mapped[list["ReviewVote"]] = relationship(
+        "ReviewVote",
+        back_populates="review",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self) -> str:
         return (

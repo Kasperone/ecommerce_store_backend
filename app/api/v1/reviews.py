@@ -9,21 +9,25 @@ Admin moderation lives in ``admin_reviews.py``.
 """
 
 from math import ceil
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_active_user, get_db
 from app.crud import review as crud_review
+from app.crud import review_vote as crud_review_vote
 from app.models.product import Product
-from app.models.review import ReviewStatus
+from app.models.review import Review, ReviewStatus
 from app.models.user import User
 from app.schemas.review import (
+    MyVotesResponse,
     ProductReviewSummary,
     PublicReviewListResponse,
     ReviewCreate,
     ReviewResponse,
     ReviewUpdate,
+    ReviewVoteResponse,
 )
 
 router = APIRouter()
@@ -50,11 +54,20 @@ async def list_product_reviews(
     db: Session = Depends(get_db),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    sort_by: Literal["newest", "helpful"] = Query(
+        "newest", description="Sort by recency (newest) or helpful-vote count (helpful)"
+    ),
 ):
-    """Public: approved reviews for a product (newest first) + the rating summary."""
+    """Public: approved reviews for a product + the rating summary.
+
+    ``sort_by`` is whitelisted to ``newest`` (default) or ``helpful``; FastAPI 422s
+    anything else, so the value is never interpolated into the ordering.
+    """
     _get_product_or_404(db, product_id)
     skip = (page - 1) * page_size
-    items = crud_review.get_multi_public(db, product_id=product_id, skip=skip, limit=page_size)
+    items = crud_review.get_multi_public(
+        db, product_id=product_id, skip=skip, limit=page_size, sort_by=sort_by
+    )
     total = crud_review.count_public(db, product_id=product_id)
     pages = ceil(total / page_size) if total > 0 else 1
     return {
@@ -162,3 +175,96 @@ async def delete_my_product_review(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
     db.delete(review)
     db.commit()
+
+
+# ----------------------------------------------------------------------
+# Helpful votes
+# ----------------------------------------------------------------------
+
+
+def _get_approved_review_or_404(db: Session, *, product_id: int, review_id: int) -> Review:
+    """Fetch an approved review under ``product_id`` or 404.
+
+    You can only vote on a public (approved) review that actually sits under the
+    product in the path. A missing, mismatched, or unapproved review all return an
+    indistinguishable 404, so voting can't be used to probe moderation state.
+    """
+    review = (
+        db.query(Review)
+        .filter(
+            Review.id == review_id,
+            Review.product_id == product_id,
+            Review.status == ReviewStatus.APPROVED.value,
+        )
+        .first()
+    )
+    if review is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
+    return review
+
+
+@router.get("/{product_id}/reviews/my-votes", response_model=MyVotesResponse)
+async def get_my_review_votes(
+    product_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Authenticated: which of this product's reviews the caller voted helpful on.
+
+    Drives the pressed state of the helpful buttons on the PDP. Client-only on the
+    storefront (like ``/reviews/me``) so the SSR render stays unauthenticated.
+    """
+    _get_product_or_404(db, product_id)
+    voted = crud_review_vote.voted_review_ids_for_product(
+        db, user_id=current_user.id, product_id=product_id
+    )
+    return MyVotesResponse(voted_review_ids=sorted(voted))
+
+
+@router.put("/{product_id}/reviews/{review_id}/vote", response_model=ReviewVoteResponse)
+async def vote_review_helpful(
+    product_id: int,
+    review_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Authenticated: mark a review as helpful (idempotent set).
+
+    404 if the review is missing / unapproved / not under this product; 403 on the
+    caller's own review (self-votes are disallowed). Re-voting is a no-op. Returns
+    the review's new helpful count + the caller's resulting vote state so the
+    frontend can reconcile its optimistic toggle without a refetch.
+    """
+    review = _get_approved_review_or_404(db, product_id=product_id, review_id=review_id)
+    if review.user_id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You cannot vote on your own review",
+        )
+    crud_review_vote.cast_vote(db, review=review, user_id=current_user.id)
+    db.commit()
+    db.refresh(review)
+    return ReviewVoteResponse(review_id=review.id, helpful_count=review.helpful_count, my_vote=True)
+
+
+@router.delete("/{product_id}/reviews/{review_id}/vote", response_model=ReviewVoteResponse)
+async def unvote_review_helpful(
+    product_id: int,
+    review_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Authenticated: withdraw a previous helpful vote (idempotent).
+
+    Returns the review's new helpful count + ``my_vote=False`` (rather than a bare
+    204) so the storefront can snap its displayed tally to the authoritative value,
+    which may have shifted from other shoppers' concurrent votes. Un-voting when no
+    vote exists is a no-op.
+    """
+    review = _get_approved_review_or_404(db, product_id=product_id, review_id=review_id)
+    crud_review_vote.remove_vote(db, review=review, user_id=current_user.id)
+    db.commit()
+    db.refresh(review)
+    return ReviewVoteResponse(
+        review_id=review.id, helpful_count=review.helpful_count, my_vote=False
+    )
