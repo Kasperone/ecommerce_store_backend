@@ -11,6 +11,7 @@ from app.models.base import BaseModel, _utcnow
 if TYPE_CHECKING:
     from app.models.order import Order
     from app.models.refresh_token import RefreshToken
+    from app.models.review import Review
     from app.models.verification_token import VerificationToken
 
 
@@ -80,6 +81,9 @@ class User(BaseModel):
     )
     refresh_tokens: Mapped[list["RefreshToken"]] = relationship(
         "RefreshToken", back_populates="user", cascade="all, delete-orphan"
+    )
+    reviews: Mapped[list["Review"]] = relationship(
+        "Review", back_populates="user", cascade="all, delete-orphan"
     )
 
     def __repr__(self):
