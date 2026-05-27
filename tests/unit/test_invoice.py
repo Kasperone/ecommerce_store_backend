@@ -1,0 +1,151 @@
+"""Unit tests for the invoice PDF service (pure functions, no DB, no HTTP).
+
+Orders are constructed as transient ORM instances so ``build_invoice_pdf`` is
+exercised in isolation from the route/session layer.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+
+from app.models.order import Order, OrderItem, OrderStatus
+from app.models.user import User
+from app.services.invoice import (
+    StoreIdentity,
+    build_invoice_pdf,
+    decompose_gross,
+    derive_invoice_number,
+)
+
+STORE = StoreIdentity(
+    name="E-commerce Store",
+    address_line="ul. Sklepowa 1",
+    postal_city="00-123 Warszawa",
+    country="Polska",
+    tax_id="PL9876543210",
+    email="shop@example.com",
+    vat_rate=23,
+)
+
+
+def _order(user: User, *, currency: str = "PLN") -> Order:
+    order = Order(
+        order_number="ORD-20260527-AB12CD",
+        status=OrderStatus.PAID,
+        subtotal=199.98,
+        tax=0.0,
+        shipping=15.0,
+        total=214.98,
+        currency=currency,
+        shipping_address="ul. Polna 7/3",
+        shipping_city="Kraków",
+        shipping_postal_code="30-001",
+        shipping_country="Polska",
+        payment_method="stripe",
+        created_at=dt.datetime(2026, 5, 27, 10, 30),
+    )
+    order.user = user
+    # Diacritics + the three markup-sensitive chars (& < >) must round-trip.
+    order.items = [
+        OrderItem(
+            product_name="Słuchawki «Ω»",
+            product_sku="SKU-Ł-01",
+            quantity=2,
+            unit_price=79.99,
+            total_price=159.98,
+        ),
+        OrderItem(
+            product_name="Etui & kabel <USB-C>",
+            product_sku=None,
+            quantity=1,
+            unit_price=55.0,
+            total_price=55.0,
+        ),
+    ]
+    return order
+
+
+def _company_user() -> User:
+    return User(
+        email="anna.kowalska@example.com",
+        first_name="Anna",
+        last_name="Kowalska",
+        company_name="Kowalska Sp. z o.o.",
+        company_tax_id="PL1234567890",
+        company_address_street="ul. Kwiatowa 5",
+        company_address_postal_code="00-001",
+        company_address_city="Warszawa",
+        company_address_country="Polska",
+    )
+
+
+def _person_user() -> User:
+    return User(email="john@example.com", first_name="John", last_name="Doe")
+
+
+# --- decompose_gross -------------------------------------------------------
+
+
+def test_decompose_gross_23pct():
+    net, vat = decompose_gross(123.00, 23)
+    assert net == 100.00
+    assert vat == 23.00
+    assert round(net + vat, 2) == 123.00
+
+
+def test_decompose_gross_rounding_edge():
+    # 100 gross @ 23% → 81.30 net + 18.70 VAT, summing back exactly.
+    net, vat = decompose_gross(100.00, 23)
+    assert net == 81.30
+    assert vat == 18.70
+    assert round(net + vat, 2) == 100.00
+
+
+def test_decompose_gross_zero_rate():
+    assert decompose_gross(100.0, 0) == (100.0, 0.0)
+
+
+def test_decompose_gross_negative_rate_treated_as_zero():
+    assert decompose_gross(100.0, -5) == (100.0, 0.0)
+
+
+# --- derive_invoice_number -------------------------------------------------
+
+
+def test_derive_invoice_number_replaces_ord_prefix():
+    assert derive_invoice_number(_order(_person_user())) == "INV-20260527-AB12CD"
+
+
+def test_derive_invoice_number_without_ord_prefix():
+    order = _order(_person_user())
+    order.order_number = "X-999"
+    assert derive_invoice_number(order) == "INV-X-999"
+
+
+# --- build_invoice_pdf -----------------------------------------------------
+
+
+def test_build_pdf_company_buyer_returns_pdf_bytes():
+    pdf = build_invoice_pdf(_order(_company_user()), store=STORE, lang="en")
+    assert pdf[:4] == b"%PDF"
+    assert len(pdf) > 1000
+
+
+def test_build_pdf_person_buyer():
+    pdf = build_invoice_pdf(_order(_person_user()), store=STORE, lang="en")
+    assert pdf[:4] == b"%PDF"
+
+
+def test_build_pdf_polish_with_diacritics_does_not_raise():
+    pdf = build_invoice_pdf(_order(_company_user()), store=STORE, lang="pl")
+    assert pdf[:4] == b"%PDF"
+
+
+def test_build_pdf_zero_vat_receipt():
+    pdf = build_invoice_pdf(_order(_person_user()), store=StoreIdentity(name="Shop", vat_rate=0))
+    assert pdf[:4] == b"%PDF"
+
+
+def test_build_pdf_unknown_lang_falls_back_to_en():
+    pdf = build_invoice_pdf(_order(_person_user()), store=STORE, lang="zz")
+    assert pdf[:4] == b"%PDF"

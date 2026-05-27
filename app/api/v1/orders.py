@@ -1,8 +1,10 @@
 from math import ceil
+from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.dependencies import get_current_active_user, get_current_admin, get_db
 from app.crud import order as crud_order
 from app.crud.order import (
@@ -19,6 +21,7 @@ from app.schemas.order import (
     OrderUpdate,
     OrderWithUser,
 )
+from app.services import invoice as invoice_service
 from app.services import search_index
 from app.services.audit import AuditWriter, get_audit_writer
 
@@ -110,6 +113,39 @@ async def get_order(
     if order is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
     return order
+
+
+@router.get(
+    "/{order_id}/invoice",
+    responses={200: {"content": {"application/pdf": {}}, "description": "Invoice PDF"}},
+)
+async def download_order_invoice(
+    order_id: int,
+    lang: Literal["en", "pl"] = Query("en", description="Invoice language"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Download an order's invoice as a PDF (generated on demand from the snapshot).
+
+    Customers may download only their own orders' invoices; admins may download
+    any. A non-existent or not-owned order returns 404 (existence is not leaked).
+    """
+    order = crud_order.get_scoped(db, order_id=order_id, user=current_user)
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+
+    pdf = invoice_service.build_invoice_pdf(
+        order,
+        store=invoice_service.StoreIdentity.from_settings(settings),
+        lang=lang,
+    )
+    filename = f"invoice-{order.order_number}.pdf"
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.patch("/{order_id}", response_model=OrderWithUser)

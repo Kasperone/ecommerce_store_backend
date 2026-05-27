@@ -72,6 +72,20 @@ class Settings(BaseSettings):
     MEILISEARCH_URL: str = ""
     MEILISEARCH_MASTER_KEY: str = ""
 
+    # Invoice / store identity — printed on generated order invoices. All have
+    # defaults so dev/CI/tests boot without configuration; set real values in
+    # .env for production-looking invoices.
+    STORE_NAME: str = "E-commerce Store"
+    STORE_ADDRESS_LINE: str = ""  # street + building number
+    STORE_POSTAL_CITY: str = ""  # e.g. "00-001 Warszawa"
+    STORE_COUNTRY: str = ""
+    STORE_TAX_ID: str = ""  # NIP / VAT identifier
+    STORE_EMAIL: str = ""
+    # Gross-inclusive VAT rate (%) used to decompose net/VAT on invoices.
+    # 0 → no VAT block (plain receipt). Applied uniformly across currencies in
+    # v1 — per-currency VAT is a future refinement.
+    INVOICE_VAT_RATE: int = 23
+
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="allow")
 
     @field_validator("SECRET_KEY", "JWT_SECRET_KEY")
