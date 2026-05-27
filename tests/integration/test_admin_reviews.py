@@ -202,6 +202,100 @@ async def test_moderate_404(client, user_factory):
 
 
 # ---------------------------------------------------------------------------
+# admin reply (set / clear / combined) + audit
+# ---------------------------------------------------------------------------
+
+
+async def test_set_admin_response_stamps_and_audits(
+    client, user_factory, product_factory, db_session
+):
+    admin = user_factory(role=UserRole.ADMIN)
+    reviewer = user_factory()
+    product = product_factory()
+    review = _seed_review(db_session, product_id=product.id, user_id=reviewer.id)
+
+    resp = await client.patch(
+        f"/api/v1/admin/reviews/{review.id}",
+        json={"admin_response": "Thanks for your feedback!"},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["admin_response"] == "Thanks for your feedback!"
+    assert body["admin_response_at"] is not None
+    assert body["status"] == "pending"  # a reply-only PATCH leaves status untouched
+    assert _audit_count(db_session, action="update", resource_id=review.id) == 1
+
+
+async def test_clear_admin_response(client, user_factory, product_factory, db_session):
+    admin = user_factory(role=UserRole.ADMIN)
+    reviewer = user_factory()
+    product = product_factory()
+    review = _seed_review(db_session, product_id=product.id, user_id=reviewer.id)
+
+    await client.patch(
+        f"/api/v1/admin/reviews/{review.id}",
+        json={"admin_response": "Initial reply"},
+        headers=_headers(admin),
+    )
+    cleared = await client.patch(
+        f"/api/v1/admin/reviews/{review.id}",
+        json={"admin_response": None},
+        headers=_headers(admin),
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["admin_response"] is None
+    assert cleared.json()["admin_response_at"] is None
+
+
+async def test_moderate_status_and_reply_together(
+    client, user_factory, product_factory, db_session
+):
+    admin = user_factory(role=UserRole.ADMIN)
+    reviewer = user_factory()
+    product = product_factory()
+    review = _seed_review(db_session, product_id=product.id, user_id=reviewer.id)
+
+    resp = await client.patch(
+        f"/api/v1/admin/reviews/{review.id}",
+        json={"status": "approved", "admin_response": "Glad you like it!"},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "approved"
+    assert body["admin_response"] == "Glad you like it!"
+
+
+async def test_moderate_empty_body_422(client, user_factory, product_factory, db_session):
+    admin = user_factory(role=UserRole.ADMIN)
+    reviewer = user_factory()
+    product = product_factory()
+    review = _seed_review(db_session, product_id=product.id, user_id=reviewer.id)
+
+    resp = await client.patch(
+        f"/api/v1/admin/reviews/{review.id}",
+        json={},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 422
+
+
+async def test_moderate_reply_over_max_422(client, user_factory, product_factory, db_session):
+    admin = user_factory(role=UserRole.ADMIN)
+    reviewer = user_factory()
+    product = product_factory()
+    review = _seed_review(db_session, product_id=product.id, user_id=reviewer.id)
+
+    resp = await client.patch(
+        f"/api/v1/admin/reviews/{review.id}",
+        json={"admin_response": "x" * 2001},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
 # delete + audit
 # ---------------------------------------------------------------------------
 

@@ -115,17 +115,19 @@ async def create_product_review(
     return review
 
 
-@router.get("/{product_id}/reviews/me", response_model=ReviewResponse)
+@router.get("/{product_id}/reviews/me", response_model=ReviewResponse | None)
 async def get_my_product_review(
     product_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Authenticated: the caller's own review for a product (any status), or 404."""
-    review = crud_review.get_by_product_and_user(db, product_id=product_id, user_id=current_user.id)
-    if review is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
-    return review
+    """Authenticated: the caller's own review for a product (any status).
+
+    Returns ``200`` with ``null`` when the caller hasn't reviewed this product
+    yet — "no review" is an expected state on every PDP, not an error, so the
+    frontend reads it without treating a 404 as a console error.
+    """
+    return crud_review.get_by_product_and_user(db, product_id=product_id, user_id=current_user.id)
 
 
 @router.put("/{product_id}/reviews/me", response_model=ReviewResponse)

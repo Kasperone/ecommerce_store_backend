@@ -177,3 +177,33 @@ def test_admin_query_filters(db_session, user_factory, product_factory):
 
     pending_rows = crud_review.get_multi_admin(db_session, status="pending")
     assert [r.id for r in pending_rows] == [pending.id]
+
+
+def test_set_admin_response_sets_and_stamps(db_session, user_factory, product_factory):
+    user = user_factory()
+    product = product_factory()
+    review = _approved(db_session, product_id=product.id, user_id=user.id, rating=5)
+    crud_review.set_admin_response(
+        db_session, review=review, response="  Thanks for the feedback!  "
+    )
+    db_session.commit()
+    db_session.refresh(review)
+    assert review.admin_response == "Thanks for the feedback!"  # surrounding whitespace trimmed
+    assert review.admin_response_at is not None
+
+
+@pytest.mark.parametrize("blank", [None, "", "   "])
+def test_set_admin_response_clears(db_session, user_factory, product_factory, blank):
+    user = user_factory()
+    product = product_factory()
+    review = _approved(db_session, product_id=product.id, user_id=user.id, rating=4)
+    crud_review.set_admin_response(db_session, review=review, response="A reply")
+    db_session.commit()
+    db_session.refresh(review)
+    assert review.admin_response == "A reply"
+    # None / empty / whitespace all clear the reply and null the timestamp.
+    crud_review.set_admin_response(db_session, review=review, response=blank)
+    db_session.commit()
+    db_session.refresh(review)
+    assert review.admin_response is None
+    assert review.admin_response_at is None
