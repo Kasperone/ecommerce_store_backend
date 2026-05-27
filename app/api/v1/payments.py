@@ -15,7 +15,7 @@ idempotent (``crud_order.mark_paid`` no-ops unless the order is still pending).
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
@@ -30,6 +30,7 @@ from app.schemas.payment import (
     StripeConfigResponse,
     StripePaymentIntentResponse,
 )
+from app.services import order_email
 from app.services.payu import PayUError, get_payu_client
 from app.services.stripe import StripeError, get_stripe_service, stripe_configured
 
@@ -89,7 +90,11 @@ async def create_payu_checkout(
 
 
 @router.post("/payu/notify")
-async def payu_notify(request: Request, db: Session = Depends(get_db)):
+async def payu_notify(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     """PayU server-to-server notification. Verify the signature, then settle."""
     client = get_payu_client()
     raw = await request.body()
@@ -109,7 +114,9 @@ async def payu_notify(request: Request, db: Session = Depends(get_db)):
     if ext_order_id and payu_order.get("status") == "COMPLETED":
         order = crud_order.get_by_order_number(db, order_number=ext_order_id)
         if order is not None:
-            # Idempotent: mark_paid no-ops if the order isn't pending.
+            # Email only on the real pending→paid transition (mark_paid no-ops
+            # otherwise, so duplicate PayU retries don't re-send).
+            was_pending = OrderStatus(order.status) == OrderStatus.PENDING
             crud_order.mark_paid(
                 db,
                 order=order,
@@ -117,6 +124,10 @@ async def payu_notify(request: Request, db: Session = Depends(get_db)):
                 payment_method="payu",
             )
             db.commit()
+            if was_pending:
+                background_tasks.add_task(
+                    order_email.send_order_event_in_background, order.id, "paid"
+                )
 
     # 200 so PayU stops retrying (we ack even for statuses we don't act on).
     return {"status": "ok"}
@@ -225,7 +236,11 @@ async def create_stripe_payment_intent(
 
 
 @router.post("/stripe/webhook")
-async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
+async def stripe_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     """Stripe server-to-server webhook. Verify the signature, then settle."""
     service = get_stripe_service()
     raw = await request.body()
@@ -248,32 +263,47 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     # Two settle paths, same outcome: the hosted-redirect card button emits
     # checkout.session.completed; the in-page Express Checkout Element (wallets)
     # emits payment_intent.succeeded. Both carry our order_number in metadata.
+    paid_order_id: int | None = None
     if event_type == "checkout.session.completed":
         # payment_status guards against async methods that complete unpaid.
         if obj.get("payment_status") == "paid":
             order_number = obj.get("client_reference_id") or (obj.get("metadata") or {}).get(
                 "order_number"
             )
-            _settle_stripe_order(
+            paid_order_id = _settle_stripe_order(
                 db, order_number=order_number, payment_intent_id=obj.get("payment_intent") or ""
             )
     elif event_type == "payment_intent.succeeded":
         # The event object IS the PaymentIntent; success is implied by the type.
         order_number = (obj.get("metadata") or {}).get("order_number")
-        _settle_stripe_order(db, order_number=order_number, payment_intent_id=obj.get("id") or "")
+        paid_order_id = _settle_stripe_order(
+            db, order_number=order_number, payment_intent_id=obj.get("id") or ""
+        )
+
+    if paid_order_id is not None:
+        background_tasks.add_task(order_email.send_order_event_in_background, paid_order_id, "paid")
 
     # 200 so Stripe stops retrying (we ack even for events we don't act on).
     return {"status": "ok"}
 
 
-def _settle_stripe_order(db: Session, *, order_number: str | None, payment_intent_id: str) -> None:
-    """Flip a pending order to paid from a verified Stripe webhook (idempotent)."""
+def _settle_stripe_order(
+    db: Session, *, order_number: str | None, payment_intent_id: str
+) -> int | None:
+    """Flip a pending order to paid from a verified Stripe webhook (idempotent).
+
+    Returns the order id when this call performed the real pending→paid
+    transition (so the caller emails exactly once), else None.
+    """
     if not order_number:
-        return
+        return None
     order = crud_order.get_by_order_number(db, order_number=order_number)
-    if order is not None:
-        # Idempotent: mark_paid no-ops if the order isn't pending.
-        crud_order.mark_paid(
-            db, order=order, payment_intent_id=payment_intent_id, payment_method="stripe"
-        )
-        db.commit()
+    if order is None:
+        return None
+    # Idempotent: mark_paid no-ops if the order isn't pending.
+    was_pending = OrderStatus(order.status) == OrderStatus.PENDING
+    crud_order.mark_paid(
+        db, order=order, payment_intent_id=payment_intent_id, payment_method="stripe"
+    )
+    db.commit()
+    return order.id if was_pending else None

@@ -22,7 +22,7 @@ from app.schemas.order import (
     OrderWithUser,
 )
 from app.services import invoice as invoice_service
-from app.services import search_index
+from app.services import order_email, search_index
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
@@ -63,6 +63,8 @@ async def create_order(
     db.refresh(order)
     # Stock dropped → refresh the in_stock facet off the hot path (best-effort).
     background_tasks.add_task(search_index.sync_products_in_background, _touched_product_ids(order))
+    # Order-confirmation email with the invoice attached (best-effort, off the hot path).
+    background_tasks.add_task(order_email.send_order_event_in_background, order.id, "confirmation")
     return order
 
 
@@ -152,6 +154,7 @@ async def download_order_invoice(
 async def update_order(
     order_id: int,
     order_in: OrderUpdate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_admin: User = Depends(get_current_admin),
     audit: AuditWriter = Depends(get_audit_writer),
@@ -166,6 +169,8 @@ async def update_order(
     if order is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
 
+    previous_status = OrderStatus(order.status).value
+
     if order_in.status is not None:
         error = status_transition_error(order.status, OrderStatus(order_in.status))
         if error is not None:
@@ -175,6 +180,13 @@ async def update_order(
     audit.record_update(resource_type="order", obj=order)
     db.commit()
     db.refresh(order)
+
+    # Notify the customer on a real status change (paid/shipped/delivered).
+    new_status = OrderStatus(order.status).value
+    if new_status != previous_status:
+        event = order_email.event_for_status(new_status)
+        if event is not None:
+            background_tasks.add_task(order_email.send_order_event_in_background, order.id, event)
     return order
 
 
@@ -212,4 +224,6 @@ async def cancel_order(
     db.refresh(order)
     # Stock restored → refresh the in_stock facet off the hot path (best-effort).
     background_tasks.add_task(search_index.sync_products_in_background, _touched_product_ids(order))
+    # Cancellation email (best-effort, off the hot path).
+    background_tasks.add_task(order_email.send_order_event_in_background, order.id, "cancelled")
     return order
