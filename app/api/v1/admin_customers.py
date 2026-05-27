@@ -14,7 +14,9 @@ from sqlalchemy.orm import Session
 
 from app.core import email as email_service
 from app.core.dependencies import get_current_admin, get_db
+from app.crud import customer_note as crud_customer_note
 from app.crud import user as crud_user
+from app.models.customer_note import CustomerNote
 from app.models.user import User, UserRole
 from app.schemas.auth import GenericMessage
 from app.schemas.customer import (
@@ -23,6 +25,11 @@ from app.schemas.customer import (
     CustomerListItem,
     CustomerListResponse,
     CustomerOrderMetrics,
+)
+from app.schemas.customer_note import (
+    CustomerNoteCreate,
+    CustomerNoteResponse,
+    CustomerNoteUpdate,
 )
 from app.schemas.user import UserResponse
 from app.services.audit import AuditWriter, get_audit_writer
@@ -74,7 +81,9 @@ async def list_customers(
     total = crud_user.count_admin(
         db, role=role, is_active=is_active, is_verified=is_verified, search=search
     )
-    counts = crud_user.order_counts_for(db, user_ids=[u.id for u in users])
+    user_ids = [u.id for u in users]
+    counts = crud_user.order_counts_for(db, user_ids=user_ids)
+    note_counts = crud_customer_note.note_counts_for(db, user_ids=user_ids)
     items = [
         CustomerListItem(
             id=u.id,
@@ -90,6 +99,7 @@ async def list_customers(
             company_name=u.company_name,
             shipping_country=u.shipping_country,
             order_count=counts.get(u.id, 0),
+            note_count=note_counts.get(u.id, 0),
         )
         for u in users
     ]
@@ -198,3 +208,92 @@ async def send_customer_password_reset(
     audit.record_update(resource_type="customer", obj=user)
     db.commit()
     return {"message": PASSWORD_RESET_TRIGGERED_MESSAGE}
+
+
+# ---------------------------------------------------------------------------
+# Customer notes (internal CRM) — nested under /{customer_id}/notes.
+# Audited as resource_type="customer_note". Any admin may edit/delete any note
+# (small trusted team, every mutation recorded); author_id stays for attribution.
+# ---------------------------------------------------------------------------
+
+
+def _get_customer_or_404(db: Session, customer_id: int) -> User:
+    user = crud_user.get(db, id=customer_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
+    return user
+
+
+def _get_note_or_404(db: Session, customer_id: int, note_id: int) -> CustomerNote:
+    note = crud_customer_note.get(db, id=note_id)
+    # Scope the note to its customer so /customers/{other}/notes/{id} 404s.
+    if note is None or note.user_id != customer_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
+    return note
+
+
+@router.get("/{customer_id}/notes", response_model=list[CustomerNoteResponse])
+async def list_customer_notes(
+    customer_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+):
+    """List a customer's internal notes (admin), newest first."""
+    _get_customer_or_404(db, customer_id)
+    return crud_customer_note.get_for_customer(db, user_id=customer_id)
+
+
+@router.post(
+    "/{customer_id}/notes",
+    response_model=CustomerNoteResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_customer_note(
+    customer_id: int,
+    payload: CustomerNoteCreate,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
+):
+    """Add an internal note to a customer (admin). Author = the acting admin."""
+    _get_customer_or_404(db, customer_id)
+    note = crud_customer_note.create_for_customer(
+        db, user_id=customer_id, author_id=current_admin.id, body=payload.body
+    )
+    audit.record_create(resource_type="customer_note", obj=note)
+    db.commit()
+    db.refresh(note)
+    return note
+
+
+@router.patch("/{customer_id}/notes/{note_id}", response_model=CustomerNoteResponse)
+async def update_customer_note(
+    customer_id: int,
+    note_id: int,
+    payload: CustomerNoteUpdate,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
+):
+    """Edit a note's text (admin)."""
+    note = _get_note_or_404(db, customer_id, note_id)
+    crud_customer_note.update(db, db_obj=note, obj_in=payload)
+    audit.record_update(resource_type="customer_note", obj=note)
+    db.commit()
+    db.refresh(note)
+    return note
+
+
+@router.delete("/{customer_id}/notes/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_customer_note(
+    customer_id: int,
+    note_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
+):
+    """Delete a note (admin)."""
+    note = _get_note_or_404(db, customer_id, note_id)
+    audit.record_delete(resource_type="customer_note", obj=note)
+    db.delete(note)
+    db.commit()

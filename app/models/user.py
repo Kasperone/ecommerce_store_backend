@@ -9,6 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import BaseModel, _utcnow
 
 if TYPE_CHECKING:
+    from app.models.customer_note import CustomerNote
     from app.models.order import Order
     from app.models.refresh_token import RefreshToken
     from app.models.review import Review
@@ -84,6 +85,14 @@ class User(BaseModel):
     )
     reviews: Mapped[list["Review"]] = relationship(
         "Review", back_populates="user", cascade="all, delete-orphan"
+    )
+    # Notes written *about* this user by admins. ``CustomerNote`` has two FKs to
+    # users (subject + author); name the subject FK so SQLAlchemy can resolve it.
+    notes: Mapped[list["CustomerNote"]] = relationship(
+        "CustomerNote",
+        foreign_keys="CustomerNote.user_id",
+        back_populates="user",
+        cascade="all, delete-orphan",
     )
 
     def __repr__(self):

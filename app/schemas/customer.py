@@ -36,6 +36,7 @@ class CustomerListItem(TimestampSchema):
     company_name: str | None = None
     shipping_country: str | None = None
     order_count: int = 0
+    note_count: int = 0
 
 
 class CustomerDetail(UserResponse):
