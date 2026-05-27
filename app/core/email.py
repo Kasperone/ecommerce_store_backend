@@ -1,8 +1,13 @@
 import logging
+from html import escape as html_escape
+from typing import TYPE_CHECKING
 
 import resend
 
 from app.core.config import settings
+
+if TYPE_CHECKING:
+    from app.models.order import Order
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +21,7 @@ def send_email(
     subject: str,
     html_content: str,
     text_content: str | None = None,
+    attachments: list[dict] | None = None,
 ) -> dict:
     """
     Send email using Resend API
@@ -42,6 +48,9 @@ def send_email(
 
         if text_content:
             params["text"] = text_content
+
+        if attachments:
+            params["attachments"] = attachments
 
         response = resend.Emails.send(params)  # pyright: ignore[reportArgumentType] -- resend SDK's SendParams TypedDict is stricter than our plain-dict construction
         return response  # pyright: ignore[reportReturnType] -- resend's SendResponse is dict-shaped; legacy annotation is dict, not the SDK type
@@ -561,4 +570,103 @@ def send_already_registered_email(
         subject=subject,
         html_content=html_content,
         text_content=text_content,
+    )
+
+
+def send_order_email(
+    *,
+    email_to: str,
+    subject: str,
+    heading: str,
+    intro_html: str,
+    order: "Order",
+    invoice_pdf: bytes | None = None,
+) -> dict:
+    """Send a transactional order email (confirmation / status change).
+
+    ``intro_html`` is trusted markup composed by the order-email service; the
+    product names + address pulled off ``order`` are HTML-escaped here. When
+    ``invoice_pdf`` is supplied it rides along as an ``invoice-<order_number>.pdf``
+    attachment. ``order`` must be a loaded instance (``items`` not lazy).
+    """
+    currency = order.currency
+
+    def money(amount: float) -> str:
+        return f"{amount:,.2f} {currency}"
+
+    item_rows = "".join(
+        f'<tr><td style="padding:8px 0;border-bottom:1px solid #eee;">'
+        f'{html_escape(item.product_name)} <span style="color:#6b7280;">'
+        f"&times; {item.quantity}</span></td>"
+        f'<td style="padding:8px 0;border-bottom:1px solid #eee;text-align:right;'
+        f'white-space:nowrap;">{money(item.total_price)}</td></tr>'
+        for item in order.items
+    )
+
+    ship_street = html_escape(order.shipping_address or "")
+    ship_city = html_escape(
+        " ".join(p for p in (order.shipping_postal_code, order.shipping_city) if p)
+    )
+    ship_country = html_escape(order.shipping_country or "")
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{html_escape(heading)}</title>
+    </head>
+    <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+                 line-height:1.6;color:#333;max-width:600px;margin:0 auto;padding:20px;">
+        <div style="background:#ffffff;border-radius:8px;padding:40px;
+                    box-shadow:0 2px 4px rgba(0,0,0,0.1);">
+            <h1 style="color:#2563eb;margin-top:0;font-size:24px;">{html_escape(heading)}</h1>
+            {intro_html}
+            <h2 style="font-size:16px;margin-top:28px;">Order {html_escape(order.order_number)}</h2>
+            <table style="width:100%;border-collapse:collapse;font-size:14px;">{item_rows}</table>
+            <table style="width:100%;border-collapse:collapse;font-size:14px;margin-top:8px;">
+                <tr><td style="padding:2px 0;color:#6b7280;">Subtotal</td>
+                    <td style="padding:2px 0;text-align:right;">{money(order.subtotal)}</td></tr>
+                <tr><td style="padding:2px 0;color:#6b7280;">Shipping</td>
+                    <td style="padding:2px 0;text-align:right;">{money(order.shipping)}</td></tr>
+                <tr><td style="padding:6px 0;font-weight:600;border-top:1px solid #e5e7eb;">Total</td>
+                    <td style="padding:6px 0;text-align:right;font-weight:600;
+                        border-top:1px solid #e5e7eb;">{money(order.total)}</td></tr>
+            </table>
+            <h2 style="font-size:16px;margin-top:28px;">Shipping address</h2>
+            <p style="color:#6b7280;margin:0;">{ship_street}<br>{ship_city}<br>{ship_country}</p>
+            <div style="margin-top:40px;padding-top:20px;border-top:1px solid #e5e7eb;
+                        font-size:13px;color:#6b7280;">
+                &copy; {settings.EMAIL_FROM_NAME}
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+    text_lines = "".join(
+        f"- {item.product_name} x{item.quantity}: {money(item.total_price)}\n"
+        for item in order.items
+    )
+    text_content = (
+        f"{heading}\n\n"
+        f"Order {order.order_number}\n"
+        f"{text_lines}\n"
+        f"Total: {money(order.total)}\n\n"
+        f"© {settings.EMAIL_FROM_NAME}\n"
+    )
+
+    attachments = None
+    if invoice_pdf is not None:
+        attachments = [
+            {"filename": f"invoice-{order.order_number}.pdf", "content": list(invoice_pdf)}
+        ]
+
+    return send_email(
+        email_to=email_to,
+        subject=subject,
+        html_content=html_content,
+        text_content=text_content,
+        attachments=attachments,
     )
