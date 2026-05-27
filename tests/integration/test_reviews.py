@@ -200,16 +200,63 @@ async def test_summary_endpoint(client, user_factory, product_factory, db_sessio
     assert resp.json()["total"] == 1
 
 
+async def test_public_list_surfaces_admin_response(
+    client, user_factory, product_factory, db_session
+):
+    product = product_factory()
+    user = user_factory()
+    await client.post(
+        f"/api/v1/products/{product.id}/reviews",
+        json={"rating": 5, "body": GOOD_BODY},
+        headers=_headers(user),
+    )
+    # Approve + attach a store reply directly (mirrors the admin endpoint).
+    row = (
+        db_session.query(Review)
+        .filter(Review.product_id == product.id, Review.user_id == user.id)
+        .first()
+    )
+    assert row is not None
+    row.status = ReviewStatus.APPROVED.value
+    row.admin_response = "Thanks for the kind words!"
+    db_session.commit()
+
+    resp = await client.get(f"/api/v1/products/{product.id}/reviews")
+    assert resp.status_code == 200
+    item = resp.json()["items"][0]
+    assert item["admin_response"] == "Thanks for the kind words!"
+    assert item["admin_response_at"] is None  # set directly without stamping
+
+
 # ---------------------------------------------------------------------------
 # own review get / edit / delete
 # ---------------------------------------------------------------------------
 
 
-async def test_get_my_review_404_when_none(client, user_factory, product_factory):
+async def test_get_my_review_null_when_none(client, user_factory, product_factory):
+    # "No review yet" is an expected state, not an error: 200 + null, so the PDP
+    # doesn't log a 404 console error for every authed-but-unreviewed visitor.
     user = user_factory()
     product = product_factory()
     resp = await client.get(f"/api/v1/products/{product.id}/reviews/me", headers=_headers(user))
-    assert resp.status_code == 404
+    assert resp.status_code == 200
+    assert resp.json() is None
+
+
+async def test_get_my_review_returns_it_when_exists(client, user_factory, product_factory):
+    user = user_factory()
+    product = product_factory()
+    await client.post(
+        f"/api/v1/products/{product.id}/reviews",
+        json={"rating": 4, "body": GOOD_BODY},
+        headers=_headers(user),
+    )
+    resp = await client.get(f"/api/v1/products/{product.id}/reviews/me", headers=_headers(user))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body is not None
+    assert body["rating"] == 4
+    assert body["admin_response"] is None
 
 
 async def test_edit_my_review_resets_to_pending(client, user_factory, product_factory, db_session):
@@ -246,4 +293,5 @@ async def test_delete_my_review(client, user_factory, product_factory):
     )
     assert deleted.status_code == 204
     gone = await client.get(f"/api/v1/products/{product.id}/reviews/me", headers=_headers(user))
-    assert gone.status_code == 404
+    assert gone.status_code == 200
+    assert gone.json() is None

@@ -10,6 +10,8 @@ Queries that feed a response carrying ``author_name`` / product fields
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, selectinload
 
@@ -19,6 +21,11 @@ from app.models.product import Product
 from app.models.review import Review, ReviewStatus
 from app.models.user import User
 from app.schemas.review import ReviewCreate, ReviewUpdate
+
+
+def _utcnow_naive() -> datetime:
+    """UTC now as naive datetime, matching the model's column type."""
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class CRUDReview(CRUDBase[Review, ReviewCreate, ReviewUpdate]):
@@ -202,6 +209,24 @@ class CRUDReview(CRUDBase[Review, ReviewCreate, ReviewUpdate]):
         return self._admin_query(
             db, status=status, product_id=product_id, rating=rating, search=search
         ).count()
+
+    def set_admin_response(self, db: Session, *, review: Review, response: str | None) -> Review:
+        """Set or clear the public store reply on a review (no flush/commit).
+
+        A non-blank ``response`` is trimmed, stored, and stamps
+        ``admin_response_at`` to now; ``None`` or a blank string clears both.
+        Left unflushed so the audit writer can read the diff via ``get_history``
+        before the route commits — same contract as ``CRUDBase.update``.
+        """
+        text = (response or "").strip()
+        if text:
+            review.admin_response = text
+            review.admin_response_at = _utcnow_naive()
+        else:
+            review.admin_response = None
+            review.admin_response_at = None
+        db.add(review)
+        return review
 
 
 review = CRUDReview(Review)

@@ -10,7 +10,12 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.review import ReviewCreate, ReviewModerate, ReviewUpdate
+from app.schemas.review import (
+    ADMIN_RESPONSE_MAX,
+    ReviewCreate,
+    ReviewModerate,
+    ReviewUpdate,
+)
 
 GOOD_BODY = "Solid build quality, would buy again."
 
@@ -62,3 +67,31 @@ def test_moderate_accepts_terminal_states(status):
 def test_moderate_rejects_non_terminal(status):
     with pytest.raises(ValidationError):
         ReviewModerate(status=status)
+
+
+def test_moderate_status_now_optional():
+    # Both fields are optional; an empty body parses (the route 422s it because
+    # there's nothing to do — the schema doesn't, so reply-only PATCHes work).
+    payload = ReviewModerate()
+    assert payload.status is None
+    assert payload.admin_response is None
+    assert payload.model_fields_set == set()
+
+
+def test_moderate_accepts_admin_response():
+    payload = ReviewModerate(admin_response="Thanks for the feedback!")
+    assert payload.admin_response == "Thanks for the feedback!"
+    assert "admin_response" in payload.model_fields_set
+
+
+def test_moderate_explicit_null_response_is_tracked():
+    # null is the clear signal; it must land in model_fields_set so the route can
+    # tell "clear the reply" apart from "field omitted".
+    payload = ReviewModerate(admin_response=None)
+    assert payload.admin_response is None
+    assert "admin_response" in payload.model_fields_set
+
+
+def test_moderate_admin_response_over_max_rejected():
+    with pytest.raises(ValidationError):
+        ReviewModerate(admin_response="x" * (ADMIN_RESPONSE_MAX + 1))

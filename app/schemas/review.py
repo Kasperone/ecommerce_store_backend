@@ -8,6 +8,7 @@ moderation view at ``/api/v1/admin/reviews``.
 ``rating`` is bounded 1-5 (mirrored by the DB ``ck_reviews_rating_range`` CHECK).
 """
 
+from datetime import datetime
 from typing import Annotated, Literal
 
 from pydantic import Field
@@ -18,6 +19,7 @@ from app.schemas.base import BaseSchema, TimestampSchema
 BODY_MIN = 10
 BODY_MAX = 5000
 TITLE_MAX = 200
+ADMIN_RESPONSE_MAX = 2000
 
 
 class ReviewCreate(BaseSchema):
@@ -47,6 +49,8 @@ class ReviewResponse(TimestampSchema):
     status: ReviewStatus
     is_verified_purchase: bool
     author_name: str
+    admin_response: str | None = None
+    admin_response_at: datetime | None = None
 
 
 class ProductReviewSummary(BaseSchema):
@@ -85,16 +89,22 @@ class AdminReviewListItem(TimestampSchema):
     body: str
     status: ReviewStatus
     is_verified_purchase: bool
+    admin_response: str | None = None
+    admin_response_at: datetime | None = None
 
 
 class ReviewModerate(BaseSchema):
-    """Admin PATCH body — approve or reject a review.
+    """Admin PATCH body — approve/reject and/or set/clear the store's reply.
 
-    ``pending`` is intentionally not accepted: moderation is a forward decision,
-    not a way to un-decide. Re-opening would be a separate explicit action.
+    Both fields are optional and independent: send ``status`` to moderate, send
+    ``admin_response`` to attach a public reply (``null`` clears it, and the
+    server stamps/un-stamps ``admin_response_at``). The route 422s a body with
+    neither field set. ``pending`` is intentionally not an accepted status:
+    moderation is a forward decision, not a way to un-decide.
     """
 
-    status: Literal["approved", "rejected"]
+    status: Literal["approved", "rejected"] | None = None
+    admin_response: Annotated[str | None, Field(max_length=ADMIN_RESPONSE_MAX)] = None
 
 
 class AdminReviewListResponse(BaseSchema):
