@@ -6,8 +6,11 @@ These power `/api/v1/admin/customers`. Distinct from `UserResponse` (self-servic
 
 from datetime import datetime
 
+from pydantic import Field
+
 from app.models.user import UserRole
 from app.schemas.base import BaseSchema, TimestampSchema
+from app.schemas.tag import TagChip
 from app.schemas.user import UserResponse
 
 
@@ -37,14 +40,16 @@ class CustomerListItem(TimestampSchema):
     shipping_country: str | None = None
     order_count: int = 0
     note_count: int = 0
+    tags: list[TagChip] = Field(default_factory=list)
 
 
 class CustomerDetail(UserResponse):
-    """Full customer record + lockout state + lifetime metrics."""
+    """Full customer record + lockout state + lifetime metrics + tags."""
 
     is_locked: bool
     locked_until: datetime | None = None
     metrics: CustomerOrderMetrics
+    tags: list[TagChip] = Field(default_factory=list)
 
 
 class CustomerAdminUpdate(BaseSchema):

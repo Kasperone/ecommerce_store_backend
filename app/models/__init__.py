@@ -9,6 +9,7 @@ from app.models.product_image import ProductImage
 from app.models.refresh_token import RefreshToken
 from app.models.review import Review, ReviewStatus
 from app.models.review_vote import ReviewVote
+from app.models.tag import Tag, customer_tags
 from app.models.user import User
 from app.models.verification_token import VerificationToken
 
@@ -27,6 +28,8 @@ __all__ = [
     "Review",
     "ReviewStatus",
     "ReviewVote",
+    "Tag",
+    "customer_tags",
     "VerificationToken",
     "RefreshToken",
 ]
