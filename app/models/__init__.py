@@ -1,6 +1,7 @@
 from app.models.admin_audit_event import AdminAuditEvent
 from app.models.base import Base
 from app.models.category import Category
+from app.models.customer_note import CustomerNote
 from app.models.inventory_movement import InventoryMovement, InventoryMovementReason
 from app.models.order import Order, OrderItem
 from app.models.product import Product
@@ -16,6 +17,7 @@ __all__ = [
     "Base",
     "User",
     "Category",
+    "CustomerNote",
     "Product",
     "ProductImage",
     "Order",

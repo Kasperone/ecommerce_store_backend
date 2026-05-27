@@ -1,5 +1,6 @@
 from app.crud.audit_event import audit_event
 from app.crud.category import category
+from app.crud.customer_note import customer_note
 from app.crud.inventory import inventory
 from app.crud.order import order
 from app.crud.product import product
@@ -11,6 +12,7 @@ from app.crud.user import user
 
 __all__ = [
     "user",
+    "customer_note",
     "product",
     "product_image",
     "category",
