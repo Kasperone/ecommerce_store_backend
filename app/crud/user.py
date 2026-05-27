@@ -3,12 +3,13 @@ import secrets
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.security import get_password_hash, verify_password
 from app.crud.base import CRUDBase
 from app.crud.refresh_token import refresh_token as crud_refresh_token
 from app.models.order import Order, OrderStatus
+from app.models.tag import Tag
 from app.models.user import User, UserRole
 from app.schemas.user import UserCreate, UserUpdate
 
@@ -233,6 +234,7 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         is_active: bool | None,
         is_verified: bool | None,
         search: str | None,
+        tag_id: int | None = None,
     ):
         query = db.query(User)
         if role is not None:
@@ -241,6 +243,9 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
             query = query.filter(User.is_active.is_(is_active))
         if is_verified is not None:
             query = query.filter(User.is_verified.is_(is_verified))
+        if tag_id is not None:
+            # EXISTS subquery — no row duplication, no DISTINCT needed.
+            query = query.filter(User.tags.any(Tag.id == tag_id))
         if search:
             like = f"%{search.strip()}%"
             query = query.filter(
@@ -260,15 +265,26 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         is_active: bool | None = None,
         is_verified: bool | None = None,
         search: str | None = None,
+        tag_id: int | None = None,
         skip: int = 0,
         limit: int = 20,
     ) -> list[User]:
-        """Admin list of users with filters, newest first."""
+        """Admin list of users with filters, newest first. Tags are eager-loaded
+        (one IN query for the whole page) so the route renders chips without N+1."""
         query = self._admin_filtered_query(
-            db, role=role, is_active=is_active, is_verified=is_verified, search=search
+            db,
+            role=role,
+            is_active=is_active,
+            is_verified=is_verified,
+            search=search,
+            tag_id=tag_id,
         )
         return (
-            query.order_by(User.created_at.desc(), User.id.desc()).offset(skip).limit(limit).all()
+            query.options(selectinload(User.tags))
+            .order_by(User.created_at.desc(), User.id.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
         )
 
     def count_admin(
@@ -279,9 +295,15 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         is_active: bool | None = None,
         is_verified: bool | None = None,
         search: str | None = None,
+        tag_id: int | None = None,
     ) -> int:
         return self._admin_filtered_query(
-            db, role=role, is_active=is_active, is_verified=is_verified, search=search
+            db,
+            role=role,
+            is_active=is_active,
+            is_verified=is_verified,
+            search=search,
+            tag_id=tag_id,
         ).count()
 
     def order_counts_for(self, db: Session, *, user_ids: list[int]) -> dict[int, int]:
