@@ -110,6 +110,8 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "RUF", "ASYNC", "S"]
 "alembic/versions/**" = ["ALL"]
 # HTML email templates: breaking long lines mid-attribute hurts readability.
 "app/core/email.py" = ["E501"]
+# Order-email subjects + intro markup read better unwrapped (same rationale).
+"app/services/order_email.py" = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
