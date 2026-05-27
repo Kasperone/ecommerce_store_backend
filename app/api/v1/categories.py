@@ -32,6 +32,7 @@ from app.schemas.category import (
     CategoryUpdate,
     CategoryWithProductCount,
 )
+from app.services import search_index
 from app.services.audit import AuditWriter, get_audit_writer
 from app.services.image import (
     MIME_TO_EXTENSION,
@@ -271,6 +272,8 @@ async def create_category(
     audit.record_create(resource_type="category", obj=category)
     db.commit()
     db.refresh(category)
+    # Best-effort: index the new category (no-op when Meili unconfigured).
+    search_index.sync_category(db, category.id)
     return category
 
 
@@ -354,6 +357,10 @@ async def update_category(
     audit.record_update(resource_type="category", obj=category)
     db.commit()
     db.refresh(category)
+    # Re-index the category, and its products too — the name is denormalized
+    # onto each product doc as category_name/category_name_pl (best-effort).
+    search_index.sync_category(db, category.id)
+    search_index.sync_products_for_category(db, category.id)
     return category
 
 
@@ -405,6 +412,7 @@ async def delete_category(
         audit.record_delete(resource_type="category", obj=category)
         crud_category.delete(db, id=category_id)
         db.commit()
+        search_index.delete_category(category_id)
         return None
 
     if mode == "cascade":
@@ -424,9 +432,12 @@ async def delete_category(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=str(exc),
             ) from exc
+        deleted_ids = [row.id for row in deleted_rows]
         for row in deleted_rows:
             audit.record_delete(resource_type="category", obj=row)
         db.commit()
+        for deleted_id in deleted_ids:
+            search_index.delete_category(deleted_id)
         return None
 
     # mode == "reparent_to_root"
@@ -439,12 +450,17 @@ async def delete_category(
             ),
         )
     children = db.query(Category).filter(Category.parent_id == category_id).all()
+    child_ids = [child.id for child in children]
     for child in children:
         child.parent_id = None
         audit.record_update(resource_type="category", obj=child)
     audit.record_delete(resource_type="category", obj=category)
     crud_category.delete(db, id=category_id)
     db.commit()
+    search_index.delete_category(category_id)
+    # Re-index lifted children — their parent_name is now null.
+    for child_id in child_ids:
+        search_index.sync_category(db, child_id)
     return None
 
 

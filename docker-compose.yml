@@ -40,6 +40,30 @@ services:
       timeout: 5s
       retries: 5
 
+  # Meilisearch (storefront search). DEV ONLY — see header note. A master key
+  # is required even in dev so the instance isn't open on the LAN; generate one
+  # like REDIS_PASSWORD (`python -c 'import secrets; print(secrets.token_urlsafe(24))'`).
+  # MEILI_HTTP_ADDR is set to 0.0.0.0 so the backend reaches it at the hive IP.
+  meilisearch:
+    image: getmeili/meilisearch:v1.12
+    container_name: ecommerce_meilisearch
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?set MEILI_MASTER_KEY in .env}
+      MEILI_ENV: development
+      MEILI_HTTP_ADDR: 0.0.0.0:7700
+    ports:
+      - "7700:7700"
+    volumes:
+      - meili_data:/meili_data
+    healthcheck:
+      # The image is Alpine-based; busybox wget is available, curl is not.
+      test: ["CMD-SHELL", "wget --no-verbose --spider http://localhost:7700/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
 volumes:
   postgres_data:
   redis_data:
+  meili_data:
