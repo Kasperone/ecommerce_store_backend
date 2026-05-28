@@ -7,11 +7,20 @@ boundaries, the admin stock-list filters, and movement-log ordering.
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import func
 
 from app.crud import inventory as crud_inventory
 from app.models.inventory_movement import InventoryMovement, InventoryMovementReason
+from app.models.warehouse import StockLevel, Warehouse
 
 pytestmark = pytest.mark.integration
+
+
+def _make_warehouse(db_session, code: str) -> Warehouse:
+    wh = Warehouse(name=code, code=code, is_active=True, is_default=False)
+    db_session.add(wh)
+    db_session.flush()
+    return wh
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +78,91 @@ def test_apply_delta_rejects_negative_result(db_session, product_factory):
 
 
 # ---------------------------------------------------------------------------
+# apply_delta — multi-warehouse
+# ---------------------------------------------------------------------------
+
+
+def test_apply_delta_defaults_to_default_warehouse_and_seeds_from_stock(
+    db_session, product_factory
+):
+    """A factory product has stock but no materialised level; the first default
+    apply_delta seeds the default level from product.stock, so the movement's
+    per-warehouse resulting_stock equals the total."""
+    product = product_factory(stock=10)
+    movement = crud_inventory.apply_delta(
+        db_session, product=product, delta=-3, reason=InventoryMovementReason.ORDER_PLACED
+    )
+    db_session.flush()
+
+    assert movement.warehouse_id is not None
+    assert movement.resulting_stock == 7
+    assert product.stock == 7
+
+
+def test_apply_delta_targets_explicit_warehouse_and_maintains_total(db_session, product_factory):
+    """Moving stock from default into a second warehouse keeps the total invariant
+    Product.stock == sum(StockLevel.quantity)."""
+    product = product_factory(stock=10)
+    eu = _make_warehouse(db_session, "EU-T2")
+
+    # Materialise + decrement the default, then add the same amount to EU.
+    crud_inventory.apply_delta(
+        db_session, product=product, delta=-3, reason=InventoryMovementReason.MANUAL_ADJUSTMENT
+    )
+    moved = crud_inventory.apply_delta(
+        db_session,
+        product=product,
+        delta=3,
+        reason=InventoryMovementReason.MANUAL_ADJUSTMENT,
+        warehouse_id=eu.id,
+    )
+    db_session.flush()
+
+    assert moved.warehouse_id == eu.id
+    assert moved.resulting_stock == 3  # EU seeded at 0, then +3
+    assert product.stock == 10  # net unchanged
+    total_levels = (
+        db_session.query(func.coalesce(func.sum(StockLevel.quantity), 0))
+        .filter(StockLevel.product_id == product.id)
+        .scalar()
+    )
+    assert total_levels == 10  # invariant: total == sum of levels
+
+
+def test_apply_delta_non_default_warehouse_seeds_zero(db_session, product_factory):
+    """A non-default warehouse with no prior level seeds at 0, so a decrement
+    there fails even though the product has stock in the default warehouse."""
+    product = product_factory(stock=10)
+    eu = _make_warehouse(db_session, "EU-T3")
+
+    with pytest.raises(ValueError, match="negative"):
+        crud_inventory.apply_delta(
+            db_session,
+            product=product,
+            delta=-1,
+            reason=InventoryMovementReason.ORDER_PLACED,
+            warehouse_id=eu.id,
+        )
+
+
+def test_apply_delta_allow_negative_permits_backorder(db_session, product_factory):
+    """allow_negative lets a level (and the total) go below zero — the backorder
+    path. resulting_stock reflects the negative level."""
+    product = product_factory(stock=2)
+    movement = crud_inventory.apply_delta(
+        db_session,
+        product=product,
+        delta=-5,
+        reason=InventoryMovementReason.ORDER_PLACED,
+        allow_negative=True,
+    )
+    db_session.flush()
+
+    assert movement.resulting_stock == -3
+    assert product.stock == -3
+
+
+# ---------------------------------------------------------------------------
 # status_for
 # ---------------------------------------------------------------------------
 
@@ -88,6 +182,14 @@ def test_apply_delta_rejects_negative_result(db_session, product_factory):
 def test_status_for(db_session, product_factory, stock, threshold, expected):
     product = product_factory(stock=stock, low_stock_threshold=threshold)
     assert crud_inventory.status_for(product) == expected
+
+
+def test_status_for_backorder(db_session, product_factory):
+    """At/below zero stock, a backorder-enabled product is ``backorder``, not ``out_of_stock``."""
+    assert crud_inventory.status_for(product_factory(stock=0, allow_backorder=True)) == "backorder"
+    assert (
+        crud_inventory.status_for(product_factory(stock=0, allow_backorder=False)) == "out_of_stock"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +242,8 @@ def test_movements_for_newest_first_with_product_name(db_session, product_factor
     db_session.flush()
 
     rows = crud_inventory.movements_for(db_session, product_id=product.id)
-    assert [m.id for m, _ in rows] == [second.id, first.id]  # newest first (id desc tiebreak)
-    assert all(name == product.name for _, name in rows)
+    assert [m.id for m, _, _ in rows] == [second.id, first.id]  # newest first (id desc tiebreak)
+    assert all(pname == product.name for _, pname, _ in rows)
+    # movements default to the default warehouse, so the joined name is populated.
+    assert all(wname is not None for _, _, wname in rows)
     assert crud_inventory.count_movements(db_session, product_id=product.id) == 2

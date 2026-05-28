@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from app.models.order import OrderItem
     from app.models.product_image import ProductImage
     from app.models.review import Review
+    from app.models.warehouse import StockLevel
 
 
 class Product(BaseModel):
@@ -49,6 +50,10 @@ class Product(BaseModel):
     stock: Mapped[int] = mapped_column(Integer, default=0)
     # Null = no threshold set → the product is never flagged "low stock".
     low_stock_threshold: Mapped[int | None] = mapped_column(Integer)
+    # When True, an order may be placed beyond available stock (the warehouse
+    # level goes negative = "on backorder"); status surfaces as "backorder"
+    # rather than "out_of_stock".
+    allow_backorder: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_featured: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -66,6 +71,11 @@ class Product(BaseModel):
     )
     movements: Mapped[list["InventoryMovement"]] = relationship(
         "InventoryMovement",
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
+    stock_levels: Mapped[list["StockLevel"]] = relationship(
+        "StockLevel",
         back_populates="product",
         cascade="all, delete-orphan",
     )

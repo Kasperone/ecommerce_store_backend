@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from app.crud import order as crud_order
+from app.crud import warehouse as crud_warehouse
 from app.crud.order import (
     InsufficientStockError,
     ProductUnavailableError,
@@ -61,13 +62,17 @@ def test_create_computes_totals_and_decrements_stock(db_session, user_factory, p
     db_session.refresh(product)
     assert product.stock == 8
 
-    # A single ORDER_PLACED inventory movement was written for the line.
+    # A single ORDER_PLACED inventory movement was written for the line,
+    # attributed to the default warehouse (where orders are fulfilled from).
+    default_warehouse = crud_warehouse.get_default(db_session)
+    assert default_warehouse is not None
     movements = db_session.query(InventoryMovement).filter_by(product_id=product.id).all()
     assert len(movements) == 1
     assert movements[0].delta == -2
     assert movements[0].resulting_stock == 8
     assert movements[0].reason == "order_placed"
     assert movements[0].order_id == order.id
+    assert movements[0].warehouse_id == default_warehouse.id
 
     # Line item snapshots product fields.
     assert len(order.items) == 1
@@ -120,6 +125,21 @@ def test_create_rejects_insufficient_stock(db_session, user_factory, product_fac
     # Stock untouched on rejection.
     db_session.refresh(product)
     assert product.stock == 1
+
+
+def test_create_allows_backorder_beyond_stock(db_session, user_factory, product_factory):
+    user = user_factory()
+    product = product_factory(stock=2, allow_backorder=True, price_usd=10.0)
+
+    order = crud_order.create_with_items(
+        db_session, user_id=user.id, obj_in=_order_in([(product.id, 5)])
+    )
+    db_session.refresh(product)
+
+    # Stock went negative — the order is on backorder.
+    assert product.stock == -3
+    movements = db_session.query(InventoryMovement).filter_by(order_id=order.id).all()
+    assert movements[0].resulting_stock == -3
 
 
 def test_create_rejects_inactive_product(db_session, user_factory, product_factory):

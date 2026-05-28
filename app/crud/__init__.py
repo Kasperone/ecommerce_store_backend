@@ -11,6 +11,7 @@ from app.crud.review import review
 from app.crud.review_vote import review_vote
 from app.crud.tag import tag
 from app.crud.user import user
+from app.crud.warehouse import warehouse
 
 __all__ = [
     "user",
@@ -26,4 +27,5 @@ __all__ = [
     "review",
     "review_vote",
     "tag",
+    "warehouse",
 ]
