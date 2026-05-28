@@ -39,6 +39,10 @@ class User(BaseModel):
     first_name: Mapped[str] = mapped_column(String(100))
     last_name: Mapped[str] = mapped_column(String(100))
     phone: Mapped[str | None] = mapped_column(String(20))
+    # Preferred language for transactional emails ("en"/"pl"). NOT NULL, defaults
+    # "en" (server_default backfills existing rows). Read at send time — the email
+    # language can't come from request context (webhooks/admin actions have none).
+    locale: Mapped[str] = mapped_column(String(5), default="en", server_default="en")
 
     # Shipping Address (optional)
     shipping_street: Mapped[str | None] = mapped_column(String(255))

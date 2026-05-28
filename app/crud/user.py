@@ -80,6 +80,7 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
             first_name=obj_in.first_name,
             last_name=obj_in.last_name,
             phone=obj_in.phone or None,
+            locale=obj_in.locale,
         )
         db.add(db_obj)
         db.commit()

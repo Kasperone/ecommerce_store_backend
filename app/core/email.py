@@ -573,23 +573,38 @@ def send_already_registered_email(
     )
 
 
-def send_order_email(
-    *,
-    email_to: str,
-    subject: str,
-    heading: str,
-    intro_html: str,
-    order: "Order",
-    invoice_pdf: bytes | None = None,
-) -> dict:
-    """Send a transactional order email (confirmation / status change).
+# Localized labels for the order-email shell (subject/heading/intro are localized
+# upstream in the order-email service). Fallback "en" for any unknown locale.
+_ORDER_EMAIL_LABELS: dict[str, dict[str, str]] = {
+    "en": {
+        "order": "Order",
+        "subtotal": "Subtotal",
+        "shipping": "Shipping",
+        "total": "Total",
+        "ship_addr": "Shipping address",
+    },
+    "pl": {
+        "order": "Zamówienie",
+        "subtotal": "Suma częściowa",
+        "shipping": "Dostawa",
+        "total": "Razem",
+        "ship_addr": "Adres dostawy",
+    },
+}
 
-    ``intro_html`` is trusted markup composed by the order-email service; the
-    product names + address pulled off ``order`` are HTML-escaped here. When
-    ``invoice_pdf`` is supplied it rides along as an ``invoice-<order_number>.pdf``
-    attachment. ``order`` must be a loaded instance (``items`` not lazy).
+
+def render_order_email_body(
+    *, order: "Order", heading: str, intro_html: str, lang: str = "en"
+) -> tuple[str, str]:
+    """Build the ``(html, text)`` body of an order email.
+
+    Pure — no transport — so the localized shell is unit-testable in isolation.
+    Product names + the address are HTML-escaped; ``intro_html`` is trusted markup
+    composed upstream. The shell labels render in ``lang`` (EN/PL; subject/heading/
+    intro are localized upstream). ``order`` must be loaded (``items`` not lazy).
     """
     currency = order.currency
+    labels = _ORDER_EMAIL_LABELS.get(lang, _ORDER_EMAIL_LABELS["en"])
 
     def money(amount: float) -> str:
         return f"{amount:,.2f} {currency}"
@@ -623,18 +638,18 @@ def send_order_email(
                     box-shadow:0 2px 4px rgba(0,0,0,0.1);">
             <h1 style="color:#2563eb;margin-top:0;font-size:24px;">{html_escape(heading)}</h1>
             {intro_html}
-            <h2 style="font-size:16px;margin-top:28px;">Order {html_escape(order.order_number)}</h2>
+            <h2 style="font-size:16px;margin-top:28px;">{labels['order']} {html_escape(order.order_number)}</h2>
             <table style="width:100%;border-collapse:collapse;font-size:14px;">{item_rows}</table>
             <table style="width:100%;border-collapse:collapse;font-size:14px;margin-top:8px;">
-                <tr><td style="padding:2px 0;color:#6b7280;">Subtotal</td>
+                <tr><td style="padding:2px 0;color:#6b7280;">{labels['subtotal']}</td>
                     <td style="padding:2px 0;text-align:right;">{money(order.subtotal)}</td></tr>
-                <tr><td style="padding:2px 0;color:#6b7280;">Shipping</td>
+                <tr><td style="padding:2px 0;color:#6b7280;">{labels['shipping']}</td>
                     <td style="padding:2px 0;text-align:right;">{money(order.shipping)}</td></tr>
-                <tr><td style="padding:6px 0;font-weight:600;border-top:1px solid #e5e7eb;">Total</td>
+                <tr><td style="padding:6px 0;font-weight:600;border-top:1px solid #e5e7eb;">{labels['total']}</td>
                     <td style="padding:6px 0;text-align:right;font-weight:600;
                         border-top:1px solid #e5e7eb;">{money(order.total)}</td></tr>
             </table>
-            <h2 style="font-size:16px;margin-top:28px;">Shipping address</h2>
+            <h2 style="font-size:16px;margin-top:28px;">{labels['ship_addr']}</h2>
             <p style="color:#6b7280;margin:0;">{ship_street}<br>{ship_city}<br>{ship_country}</p>
             <div style="margin-top:40px;padding-top:20px;border-top:1px solid #e5e7eb;
                         font-size:13px;color:#6b7280;">
@@ -651,10 +666,32 @@ def send_order_email(
     )
     text_content = (
         f"{heading}\n\n"
-        f"Order {order.order_number}\n"
+        f"{labels['order']} {order.order_number}\n"
         f"{text_lines}\n"
-        f"Total: {money(order.total)}\n\n"
+        f"{labels['total']}: {money(order.total)}\n\n"
         f"© {settings.EMAIL_FROM_NAME}\n"
+    )
+    return html_content, text_content
+
+
+def send_order_email(
+    *,
+    email_to: str,
+    subject: str,
+    heading: str,
+    intro_html: str,
+    order: "Order",
+    invoice_pdf: bytes | None = None,
+    lang: str = "en",
+) -> dict:
+    """Send a transactional order email (confirmation / status change).
+
+    Body built by ``render_order_email_body`` (localized to ``lang``). When
+    ``invoice_pdf`` is supplied it rides along as an ``invoice-<order_number>.pdf``
+    attachment. ``order`` must be a loaded instance (``items`` not lazy).
+    """
+    html_content, text_content = render_order_email_body(
+        order=order, heading=heading, intro_html=intro_html, lang=lang
     )
 
     attachments = None
