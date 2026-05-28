@@ -213,6 +213,78 @@ async def test_adjust_targets_specific_warehouse(
 
 
 # ---------------------------------------------------------------------------
+# restock
+# ---------------------------------------------------------------------------
+
+
+async def test_restock_adds_stock_and_records_movement(
+    client, user_factory, product_factory, db_session: Session
+):
+    admin = user_factory(email="restock-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10)
+    resp = await client.post(
+        f"/api/v1/admin/inventory/products/{product.id}/restock",
+        json={"warehouse_id": _default_wh_id(db_session), "quantity": 5, "note": "PO-123"},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["delta"] == 5
+    assert body["resulting_stock"] == 15
+    assert body["reason"] == "restock"
+    assert body["note"] == "PO-123"
+    db_session.refresh(product)
+    assert product.stock == 15
+
+
+async def test_restock_specific_warehouse(
+    client, user_factory, product_factory, db_session: Session
+):
+    from app.models.warehouse import Warehouse
+
+    admin = user_factory(email="restock-wh@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10)
+    eu = Warehouse(name="EU", code="EU-RST", is_active=True, is_default=False)
+    db_session.add(eu)
+    db_session.commit()
+    resp = await client.post(
+        f"/api/v1/admin/inventory/products/{product.id}/restock",
+        json={"warehouse_id": eu.id, "quantity": 7},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["resulting_stock"] == 7  # EU seeded at 0, +7
+    db_session.refresh(product)
+    assert product.stock == 17  # total rose
+
+
+async def test_restock_zero_quantity_422(
+    client, user_factory, product_factory, db_session: Session
+):
+    admin = user_factory(email="restock-zero@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10)
+    resp = await client.post(
+        f"/api/v1/admin/inventory/products/{product.id}/restock",
+        json={"warehouse_id": _default_wh_id(db_session), "quantity": 0},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 422
+
+
+async def test_restock_unknown_warehouse_404(
+    client, user_factory, product_factory, db_session: Session
+):
+    admin = user_factory(email="restock-404@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10)
+    resp = await client.post(
+        f"/api/v1/admin/inventory/products/{product.id}/restock",
+        json={"warehouse_id": 999999, "quantity": 1},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # transfer
 # ---------------------------------------------------------------------------
 

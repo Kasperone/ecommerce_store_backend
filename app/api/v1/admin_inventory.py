@@ -24,6 +24,7 @@ from app.schemas.inventory import (
     InventoryMovementItem,
     InventoryMovementListResponse,
     InventoryStatus,
+    RestockRequest,
     StockAdjustRequest,
     StockLevelItem,
     TransferRequest,
@@ -166,6 +167,43 @@ async def adjust_stock(
     db.refresh(movement)
     # Stock changed → refresh the in_stock facet (best-effort, admin path).
     search_index.sync_product(db, product_id)
+    return _movement_item(movement, product.name, warehouse.name)
+
+
+@router.post("/products/{product_id}/restock", response_model=InventoryMovementItem)
+async def restock_product(
+    product_id: int,
+    payload: RestockRequest,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
+):
+    """Add incoming stock to a warehouse (admin) — a supplier/purchase-order receipt.
+
+    Records a ``restock`` movement of ``+quantity`` and an audit row in one
+    transaction. 404 on unknown product/warehouse.
+    """
+    product = crud_product.get(db, id=product_id)
+    if product is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+    warehouse = crud_warehouse.get(db, payload.warehouse_id)
+    if warehouse is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Warehouse not found")
+
+    movement = crud_inventory.apply_delta(
+        db,
+        product=product,
+        delta=payload.quantity,
+        reason=InventoryMovementReason.RESTOCK,
+        warehouse_id=warehouse.id,
+        actor_user_id=current_admin.id,
+        note=payload.note,
+    )
+    audit.record_update(resource_type="inventory", obj=product)
+    db.commit()
+    db.refresh(movement)
+    # Stock rose → refresh the in_stock facet (best-effort, admin path).
+    search_index.sync_product(db, product.id)
     return _movement_item(movement, product.name, warehouse.name)
 
 

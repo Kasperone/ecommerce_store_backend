@@ -49,6 +49,16 @@ class StockAdjustRequest(BaseSchema):
     note: Annotated[str | None, Field(max_length=255)] = None
 
 
+class RestockRequest(BaseSchema):
+    """Record incoming stock into a warehouse (a purchase-order / supplier receipt).
+
+    Adds ``quantity`` units to ``warehouse_id`` as a ``restock`` movement."""
+
+    warehouse_id: int
+    quantity: Annotated[int, Field(ge=1)]
+    note: Annotated[str | None, Field(max_length=255)] = None
+
+
 class TransferRequest(BaseSchema):
     """Move ``quantity`` units of a product from one warehouse to another.
 
