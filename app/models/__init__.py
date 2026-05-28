@@ -3,6 +3,7 @@ from app.models.base import Base
 from app.models.category import Category
 from app.models.customer_note import CustomerNote
 from app.models.inventory_movement import InventoryMovement, InventoryMovementReason
+from app.models.invoice import Invoice, InvoiceCounter
 from app.models.order import Order, OrderItem
 from app.models.product import Product
 from app.models.product_image import ProductImage
@@ -25,6 +26,8 @@ __all__ = [
     "OrderItem",
     "InventoryMovement",
     "InventoryMovementReason",
+    "Invoice",
+    "InvoiceCounter",
     "Review",
     "ReviewStatus",
     "ReviewVote",

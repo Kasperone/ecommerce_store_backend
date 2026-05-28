@@ -46,12 +46,13 @@ async def test_owner_downloads_invoice_pdf(client, user_factory, product_factory
     product = product_factory(stock=10, price_usd=25.0)
     order_id = await _create_order(client, owner, product, 2)
 
+    # A freshly-created order is pending → proforma (no series number assigned yet).
     resp = await client.get(f"/api/v1/orders/{order_id}/invoice", headers=_headers(owner))
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "application/pdf"
     disposition = resp.headers["content-disposition"]
     assert "attachment" in disposition
-    assert "invoice-ORD-" in disposition
+    assert "proforma-PF-" in disposition
     assert resp.content[:4] == b"%PDF"
 
 
