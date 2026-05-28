@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.dependencies import get_current_active_user, get_current_admin, get_db
+from app.crud import invoice as crud_invoice
 from app.crud import order as crud_order
 from app.crud.order import (
     InsufficientStockError,
@@ -204,19 +205,27 @@ async def download_order_invoice(
     """
     Download an order's invoice as a PDF (generated on demand from the snapshot).
 
-    Customers may download only their own orders' invoices; admins may download
-    any. A non-existent or not-owned order returns 404 (existence is not leaked).
+    A paid order yields its numbered faktura (stable number + issue date from the
+    registry); a not-yet-paid order yields a proforma. Customers may download only
+    their own orders' invoices; admins may download any. A non-existent or not-owned
+    order returns 404 (existence is not leaked). Pure read — no number is assigned here.
     """
     order = crud_order.get_scoped(db, order_id=order_id, user=current_user)
     if order is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
 
-    pdf = invoice_service.build_invoice_pdf(
+    pdf = invoice_service.render_invoice_pdf(
+        db,
         order,
         store=invoice_service.StoreIdentity.from_settings(settings),
         lang=lang,
     )
-    filename = f"invoice-{order.order_number}.pdf"
+    issued = crud_invoice.get_by_order_id(db, order.id)
+    if issued is not None:
+        # Series number carries '/'; sanitise for the download filename.
+        filename = f"invoice-{issued.invoice_number.replace('/', '-')}.pdf"
+    else:
+        filename = f"proforma-{invoice_service.derive_proforma_number(order)}.pdf"
     return Response(
         content=pdf,
         media_type="application/pdf",
@@ -252,6 +261,11 @@ async def update_order(
 
     crud_order.apply_admin_update(db, order=order, obj_in=order_in)
     audit.record_update(resource_type="order", obj=order)
+    # Issue the sequential faktura on a genuine admin pending→paid (the webhook path
+    # issues via mark_paid). After the audit read: issue_for_order flushes, which
+    # would otherwise clear the status change from get_history.
+    if OrderStatus(order.status) == OrderStatus.PAID and previous_status != OrderStatus.PAID.value:
+        crud_invoice.issue_for_order(db, order=order)
     db.commit()
     db.refresh(order)
 

@@ -16,9 +16,11 @@ from app.core import email
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.crud import order as crud_order
-from app.services.invoice import StoreIdentity, build_invoice_pdf
+from app.services.invoice import StoreIdentity, render_invoice_pdf
 
 if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
     from app.models.order import Order
 
 logger = logging.getLogger(__name__)
@@ -81,11 +83,14 @@ def _spec_for(event: str, order: Order) -> _EventSpec | None:
     return specs.get(event)
 
 
-def send_order_event(order: Order, event: str) -> None:
+def send_order_event(db: Session, order: Order, event: str) -> None:
     """Compose + send one order email for a loaded order (best-effort).
 
-    Swallows + logs any failure — a transactional email must never bubble into
-    the caller's request or transaction.
+    ``db`` is needed to resolve the invoice document: a paid order's confirmation/
+    paid email carries its numbered faktura, while a still-pending confirmation
+    carries a proforma (``render_invoice_pdf`` decides from the registry). Swallows
+    + logs any failure — a transactional email must never bubble into the caller's
+    request or transaction.
     """
     spec = _spec_for(event, order)
     if spec is None:
@@ -93,7 +98,7 @@ def send_order_event(order: Order, event: str) -> None:
         return
     try:
         invoice_pdf = (
-            build_invoice_pdf(order, store=StoreIdentity.from_settings(settings))
+            render_invoice_pdf(db, order, store=StoreIdentity.from_settings(settings))
             if spec.attach_invoice
             else None
         )
@@ -123,6 +128,6 @@ def send_order_event_in_background(order_id: int, event: str) -> None:
         if order is None:
             logger.warning("Order %s not found for %s email", order_id, event)
             return
-        send_order_event(order, event)
+        send_order_event(db, order, event)
     finally:
         db.close()
