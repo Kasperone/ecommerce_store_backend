@@ -13,6 +13,7 @@ from app.models.review_vote import ReviewVote
 from app.models.tag import Tag, customer_tags
 from app.models.user import User
 from app.models.verification_token import VerificationToken
+from app.models.warehouse import StockLevel, Warehouse
 
 __all__ = [
     "AdminAuditEvent",
@@ -35,4 +36,6 @@ __all__ = [
     "customer_tags",
     "VerificationToken",
     "RefreshToken",
+    "Warehouse",
+    "StockLevel",
 ]
