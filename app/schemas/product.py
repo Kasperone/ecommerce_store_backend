@@ -93,7 +93,11 @@ class ProductUpdate(BaseSchema):
     price_pln: Annotated[float | None, Field(gt=0)] = None
     price_eur: Annotated[float | None, Field(gt=0)] = None
 
-    stock: Annotated[int | None, Field(ge=0)] = None
+    # `stock` is intentionally NOT updatable here: under multi-warehouse it is the
+    # maintained sum of per-warehouse levels, mutated only through the inventory
+    # endpoints (adjust / restock / transfer) so the ledger and the
+    # Product.stock == sum(levels) invariant stay intact. Set initial stock at
+    # create time; change it afterwards via /api/v1/admin/inventory.
     low_stock_threshold: Annotated[int | None, Field(ge=0)] = None
     is_active: bool | None = None
     is_featured: bool | None = None
