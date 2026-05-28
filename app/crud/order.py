@@ -142,7 +142,7 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
                     db, product=product, warehouse_id=default_warehouse.id
                 ),
             )
-            if available < line.quantity:
+            if available < line.quantity and not product.allow_backorder:
                 raise InsufficientStockError(product.id, product.name, line.quantity, available)
             remaining[product.id] = available - line.quantity
             unit_price = product.get_price(currency)
@@ -190,6 +190,7 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
                 warehouse_id=default_warehouse.id,
                 actor_user_id=user_id,
                 order_id=order.id,
+                allow_negative=products[line.product_id].allow_backorder,
             )
 
         # Flush the stock decrements + movement rows so the unit of work is

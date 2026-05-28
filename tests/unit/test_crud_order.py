@@ -127,6 +127,21 @@ def test_create_rejects_insufficient_stock(db_session, user_factory, product_fac
     assert product.stock == 1
 
 
+def test_create_allows_backorder_beyond_stock(db_session, user_factory, product_factory):
+    user = user_factory()
+    product = product_factory(stock=2, allow_backorder=True, price_usd=10.0)
+
+    order = crud_order.create_with_items(
+        db_session, user_id=user.id, obj_in=_order_in([(product.id, 5)])
+    )
+    db_session.refresh(product)
+
+    # Stock went negative — the order is on backorder.
+    assert product.stock == -3
+    movements = db_session.query(InventoryMovement).filter_by(order_id=order.id).all()
+    assert movements[0].resulting_stock == -3
+
+
 def test_create_rejects_inactive_product(db_session, user_factory, product_factory):
     user = user_factory()
     product = product_factory(stock=10, price_usd=20.0, is_active=False)

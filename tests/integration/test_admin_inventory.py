@@ -96,6 +96,20 @@ async def test_list_with_status_and_search(client, user_factory, product_factory
     assert {r["id"] for r in search_resp.json()["items"]} == {high.id}
 
 
+async def test_list_status_backorder(client, user_factory, product_factory):
+    admin = user_factory(email="bo-admin@example.com", role=UserRole.ADMIN)
+    product_factory(stock=0, allow_backorder=True, name="BackorderMe")
+    product_factory(stock=0, allow_backorder=False, name="GoneForGood")
+
+    resp = await client.get("/api/v1/admin/inventory/?status=backorder", headers=_headers(admin))
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    by_name = {r["name"]: r for r in items}
+    assert "BackorderMe" in by_name
+    assert "GoneForGood" not in by_name
+    assert by_name["BackorderMe"]["status"] == "backorder"
+
+
 # ---------------------------------------------------------------------------
 # CSV export
 # ---------------------------------------------------------------------------

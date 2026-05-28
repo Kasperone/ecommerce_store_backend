@@ -165,10 +165,11 @@ class CRUDInventory:
         return movement
 
     def status_for(self, product: Product) -> InventoryStatus:
-        """Stock status: ``out_of_stock`` (<=0) / ``low_stock`` (at or below a set
-        threshold, but >0) / ``in_stock``. A null threshold means never "low"."""
+        """Stock status: ``backorder`` (<=0 and backorder allowed) / ``out_of_stock``
+        (<=0, no backorder) / ``low_stock`` (at or below a set threshold, but >0) /
+        ``in_stock``. A null threshold means never "low"."""
         if product.stock <= 0:
-            return "out_of_stock"
+            return "backorder" if product.allow_backorder else "out_of_stock"
         if product.low_stock_threshold is not None and product.stock <= product.low_stock_threshold:
             return "low_stock"
         return "in_stock"
@@ -183,7 +184,9 @@ class CRUDInventory:
             like = f"%{search.strip()}%"
             query = query.filter(or_(Product.name.ilike(like), Product.sku.ilike(like)))
         if status == "out_of_stock":
-            query = query.filter(Product.stock <= 0)
+            query = query.filter(Product.stock <= 0, Product.allow_backorder.is_(False))
+        elif status == "backorder":
+            query = query.filter(Product.stock <= 0, Product.allow_backorder.is_(True))
         elif status == "low_stock":
             query = query.filter(
                 Product.low_stock_threshold.isnot(None),

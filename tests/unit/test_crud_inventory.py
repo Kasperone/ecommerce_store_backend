@@ -184,6 +184,14 @@ def test_status_for(db_session, product_factory, stock, threshold, expected):
     assert crud_inventory.status_for(product) == expected
 
 
+def test_status_for_backorder(db_session, product_factory):
+    """At/below zero stock, a backorder-enabled product is ``backorder``, not ``out_of_stock``."""
+    assert crud_inventory.status_for(product_factory(stock=0, allow_backorder=True)) == "backorder"
+    assert (
+        crud_inventory.status_for(product_factory(stock=0, allow_backorder=False)) == "out_of_stock"
+    )
+
+
 # ---------------------------------------------------------------------------
 # admin list filters
 # ---------------------------------------------------------------------------

@@ -33,6 +33,7 @@ class InventoryExportRow:
     stock: int
     low_stock_threshold: int | None
     status: str
+    allow_backorder: bool
     warehouses: list[tuple[str, int]]  # (warehouse_code, quantity)
 
 
@@ -43,6 +44,7 @@ CSV_HEADERS: list[str] = [
     "stock",
     "low_stock_threshold",
     "status",
+    "allow_backorder",
     "warehouses",
 ]
 
@@ -60,6 +62,7 @@ def _row(row: InventoryExportRow) -> list[str]:
         str(row.stock),
         "" if row.low_stock_threshold is None else str(row.low_stock_threshold),
         row.status,
+        "true" if row.allow_backorder else "false",
         _pack_warehouses(row),
     ]
 

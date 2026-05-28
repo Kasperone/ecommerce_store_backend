@@ -147,6 +147,7 @@ async def export_inventory(
                 stock=product.stock,
                 low_stock_threshold=product.low_stock_threshold,
                 status=crud_inventory.status_for(product),
+                allow_backorder=product.allow_backorder,
                 warehouses=[(wh.code, qty) for wh, qty in levels],
             )
         )

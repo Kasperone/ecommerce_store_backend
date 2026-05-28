@@ -62,6 +62,8 @@ class ProductBase(BaseSchema):
     # Null = no threshold → never flagged "low stock". Editable here and from the
     # admin inventory adjust dialog.
     low_stock_threshold: Annotated[int | None, Field(ge=0)] = None
+    # When True, orders may exceed available stock ("on backorder").
+    allow_backorder: bool = False
     is_active: bool = True
     is_featured: bool = False
 
@@ -99,6 +101,7 @@ class ProductUpdate(BaseSchema):
     # Product.stock == sum(levels) invariant stay intact. Set initial stock at
     # create time; change it afterwards via /api/v1/admin/inventory.
     low_stock_threshold: Annotated[int | None, Field(ge=0)] = None
+    allow_backorder: bool | None = None
     is_active: bool | None = None
     is_featured: bool | None = None
 

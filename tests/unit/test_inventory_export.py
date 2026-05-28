@@ -27,6 +27,7 @@ def test_row_packs_warehouses_and_fields():
         stock=10,
         low_stock_threshold=3,
         status="in_stock",
+        allow_backorder=False,
         warehouses=[("MAIN", 6), ("EU-1", 4)],
     )
     r = _parse(build_inventory_csv([row]))[0]
@@ -36,6 +37,7 @@ def test_row_packs_warehouses_and_fields():
     assert r["stock"] == "10"
     assert r["low_stock_threshold"] == "3"
     assert r["status"] == "in_stock"
+    assert r["allow_backorder"] == "false"
     assert r["warehouses"] == "MAIN: 6; EU-1: 4"
 
 
@@ -47,6 +49,7 @@ def test_none_sku_and_threshold_render_empty():
         stock=0,
         low_stock_threshold=None,
         status="out_of_stock",
+        allow_backorder=False,
         warehouses=[("MAIN", 0)],
     )
     r = _parse(build_inventory_csv([row]))[0]

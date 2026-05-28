@@ -50,6 +50,10 @@ class Product(BaseModel):
     stock: Mapped[int] = mapped_column(Integer, default=0)
     # Null = no threshold set → the product is never flagged "low stock".
     low_stock_threshold: Mapped[int | None] = mapped_column(Integer)
+    # When True, an order may be placed beyond available stock (the warehouse
+    # level goes negative = "on backorder"); status surfaces as "backorder"
+    # rather than "out_of_stock".
+    allow_backorder: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_featured: Mapped[bool] = mapped_column(Boolean, default=False)
 

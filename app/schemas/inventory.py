@@ -11,7 +11,7 @@ from pydantic import Field
 
 from app.schemas.base import BaseSchema, TimestampSchema
 
-InventoryStatus = Literal["in_stock", "low_stock", "out_of_stock"]
+InventoryStatus = Literal["in_stock", "low_stock", "out_of_stock", "backorder"]
 
 
 class InventoryListItem(BaseSchema):
