@@ -3,7 +3,9 @@
 Composed off the order lifecycle and sent **best-effort** inside a
 ``BackgroundTask`` so a Resend hiccup never fails checkout or an admin status
 update. The confirmation + paid events attach the invoice PDF (built via the
-invoice service). English-only for now — ``User`` has no locale field yet.
+invoice service). Localized to the recipient's ``User.locale`` (EN/PL) — the
+language is a stored preference because the send happens off the request (webhook
+/ admin action), where there is no customer UI locale to read.
 """
 
 from __future__ import annotations
@@ -38,49 +40,102 @@ class _EventSpec:
 # PATCH. Cancelled is fired by the cancel endpoint, confirmation by order create.
 _STATUS_EVENTS = {"paid": "paid", "shipped": "shipped", "delivered": "delivered"}
 
+# Events that attach the order document: confirmation rides a *proforma* (the order
+# is still pending), paid rides the numbered *faktura* (see render_invoice_pdf).
+_ATTACH_EVENTS = {"confirmation", "paid"}
+
+# Per-locale email copy. ``subject`` interpolates {name}/{num}; ``intro`` is a plain
+# sentence the builder wraps in <p> and follows with the "view order" link. Fallback
+# is "en" for any unknown locale.
+_EVENT_TEXT: dict[str, dict[str, dict[str, str]]] = {
+    "en": {
+        "confirmation": {
+            "subject": "{name} — Order {num} confirmed",
+            "heading": "Thanks for your order!",
+            "intro": "We've received your order and it's now being processed. "
+            "Your proforma invoice is attached.",
+        },
+        "paid": {
+            "subject": "{name} — Payment received for order {num}",
+            "heading": "Payment received",
+            "intro": "We've received your payment — thank you! Your paid invoice is attached.",
+        },
+        "shipped": {
+            "subject": "{name} — Order {num} shipped",
+            "heading": "Your order is on its way",
+            "intro": "Good news — your order has shipped.",
+        },
+        "delivered": {
+            "subject": "{name} — Order {num} delivered",
+            "heading": "Your order has been delivered",
+            "intro": "Your order has been marked delivered. We hope you enjoy it!",
+        },
+        "cancelled": {
+            "subject": "{name} — Order {num} cancelled",
+            "heading": "Your order was cancelled",
+            "intro": "Your order has been cancelled and any reserved stock released. "
+            "If this was unexpected, please contact us.",
+        },
+    },
+    "pl": {
+        "confirmation": {
+            "subject": "{name} — Zamówienie {num} potwierdzone",
+            "heading": "Dziękujemy za zamówienie!",
+            "intro": "Otrzymaliśmy Twoje zamówienie i jest ono realizowane. "
+            "Faktura proforma w załączniku.",
+        },
+        "paid": {
+            "subject": "{name} — Otrzymano płatność za zamówienie {num}",
+            "heading": "Płatność otrzymana",
+            "intro": "Otrzymaliśmy Twoją płatność — dziękujemy! Opłacona faktura w załączniku.",
+        },
+        "shipped": {
+            "subject": "{name} — Zamówienie {num} wysłane",
+            "heading": "Twoje zamówienie jest w drodze",
+            "intro": "Dobra wiadomość — Twoje zamówienie zostało wysłane.",
+        },
+        "delivered": {
+            "subject": "{name} — Zamówienie {num} dostarczone",
+            "heading": "Twoje zamówienie zostało dostarczone",
+            "intro": "Twoje zamówienie zostało oznaczone jako dostarczone. "
+            "Mamy nadzieję, że spełni Twoje oczekiwania!",
+        },
+        "cancelled": {
+            "subject": "{name} — Zamówienie {num} anulowane",
+            "heading": "Twoje zamówienie zostało anulowane",
+            "intro": "Twoje zamówienie zostało anulowane, a zarezerwowany towar zwolniony. "
+            "Jeśli to pomyłka, skontaktuj się z nami.",
+        },
+    },
+}
+
+_VIEW_LABEL = {"en": "View your order", "pl": "Zobacz swoje zamówienie"}
+
+
+def _texts_for(lang: str) -> dict[str, dict[str, str]]:
+    return _EVENT_TEXT.get(lang, _EVENT_TEXT["en"])
+
 
 def event_for_status(status: str) -> str | None:
     """The email event for a status the admin PATCH transitions into (or None)."""
     return _STATUS_EVENTS.get(status)
 
 
-def _spec_for(event: str, order: Order) -> _EventSpec | None:
-    name = settings.EMAIL_FROM_NAME
-    num = order.order_number
+def _spec_for(event: str, order: Order, lang: str) -> _EventSpec | None:
+    entry = _texts_for(lang).get(event)
+    if entry is None:
+        return None
+    view_label = _VIEW_LABEL.get(lang, _VIEW_LABEL["en"])
     view = (
         f'<p style="margin:16px 0;"><a href="{settings.FRONTEND_URL}/account/orders/{order.id}" '
-        f'style="color:#2563eb;">View your order</a></p>'
+        f'style="color:#2563eb;">{view_label}</a></p>'
     )
-    specs: dict[str, _EventSpec] = {
-        "confirmation": _EventSpec(
-            subject=f"{name} — Order {num} confirmed",
-            heading="Thanks for your order!",
-            intro_html=f"<p>We've received your order and it's now being processed. Your invoice is attached.</p>{view}",
-            attach_invoice=True,
-        ),
-        "paid": _EventSpec(
-            subject=f"{name} — Payment received for order {num}",
-            heading="Payment received",
-            intro_html=f"<p>We've received your payment — thank you! Your paid invoice is attached.</p>{view}",
-            attach_invoice=True,
-        ),
-        "shipped": _EventSpec(
-            subject=f"{name} — Order {num} shipped",
-            heading="Your order is on its way",
-            intro_html=f"<p>Good news — your order has shipped.</p>{view}",
-        ),
-        "delivered": _EventSpec(
-            subject=f"{name} — Order {num} delivered",
-            heading="Your order has been delivered",
-            intro_html=f"<p>Your order has been marked delivered. We hope you enjoy it!</p>{view}",
-        ),
-        "cancelled": _EventSpec(
-            subject=f"{name} — Order {num} cancelled",
-            heading="Your order was cancelled",
-            intro_html=f"<p>Your order has been cancelled and any reserved stock released. If this was unexpected, please contact us.</p>{view}",
-        ),
-    }
-    return specs.get(event)
+    return _EventSpec(
+        subject=entry["subject"].format(name=settings.EMAIL_FROM_NAME, num=order.order_number),
+        heading=entry["heading"],
+        intro_html=f"<p>{entry['intro']}</p>{view}",
+        attach_invoice=event in _ATTACH_EVENTS,
+    )
 
 
 def send_order_event(db: Session, order: Order, event: str) -> None:
@@ -88,17 +143,19 @@ def send_order_event(db: Session, order: Order, event: str) -> None:
 
     ``db`` is needed to resolve the invoice document: a paid order's confirmation/
     paid email carries its numbered faktura, while a still-pending confirmation
-    carries a proforma (``render_invoice_pdf`` decides from the registry). Swallows
-    + logs any failure — a transactional email must never bubble into the caller's
-    request or transaction.
+    carries a proforma (``render_invoice_pdf`` decides from the registry). The email
+    + attached document render in the recipient's ``User.locale`` (fallback "en").
+    Swallows + logs any failure — a transactional email must never bubble into the
+    caller's request or transaction.
     """
-    spec = _spec_for(event, order)
+    lang = (order.user.locale if order.user else None) or "en"
+    spec = _spec_for(event, order, lang)
     if spec is None:
         logger.warning("Unknown order-email event %r (order %s)", event, order.order_number)
         return
     try:
         invoice_pdf = (
-            render_invoice_pdf(db, order, store=StoreIdentity.from_settings(settings))
+            render_invoice_pdf(db, order, store=StoreIdentity.from_settings(settings), lang=lang)
             if spec.attach_invoice
             else None
         )
@@ -109,6 +166,7 @@ def send_order_event(db: Session, order: Order, event: str) -> None:
             intro_html=spec.intro_html,
             order=order,
             invoice_pdf=invoice_pdf,
+            lang=lang,
         )
     except Exception:
         logger.warning(
