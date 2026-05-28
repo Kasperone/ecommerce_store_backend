@@ -52,7 +52,7 @@ async def test_owner_downloads_invoice_pdf(client, user_factory, product_factory
     assert resp.headers["content-type"] == "application/pdf"
     disposition = resp.headers["content-disposition"]
     assert "attachment" in disposition
-    assert "proforma-ORD-" in disposition
+    assert "proforma-PF-" in disposition
     assert resp.content[:4] == b"%PDF"
 
 

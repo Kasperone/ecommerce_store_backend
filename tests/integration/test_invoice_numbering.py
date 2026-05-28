@@ -98,7 +98,7 @@ async def test_pending_order_is_proforma_then_faktura_after_paid(
     order_id = await _create_order(client, owner, product)
 
     before = await client.get(f"/api/v1/orders/{order_id}/invoice", headers=_headers(owner))
-    assert "proforma-ORD-" in before.headers["content-disposition"]
+    assert "proforma-PF-" in before.headers["content-disposition"]
 
     await _mark_paid(client, admin, order_id)
 

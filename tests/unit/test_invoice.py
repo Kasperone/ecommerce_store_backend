@@ -14,7 +14,7 @@ from app.services.invoice import (
     StoreIdentity,
     build_invoice_pdf,
     decompose_gross,
-    derive_invoice_number,
+    derive_proforma_number,
 )
 
 STORE = StoreIdentity(
@@ -109,17 +109,17 @@ def test_decompose_gross_negative_rate_treated_as_zero():
     assert decompose_gross(100.0, -5) == (100.0, 0.0)
 
 
-# --- derive_invoice_number -------------------------------------------------
+# --- derive_proforma_number ------------------------------------------------
 
 
-def test_derive_invoice_number_replaces_ord_prefix():
-    assert derive_invoice_number(_order(_person_user())) == "INV-20260527-AB12CD"
+def test_derive_proforma_number_replaces_ord_prefix():
+    assert derive_proforma_number(_order(_person_user())) == "PF-20260527-AB12CD"
 
 
-def test_derive_invoice_number_without_ord_prefix():
+def test_derive_proforma_number_without_ord_prefix():
     order = _order(_person_user())
     order.order_number = "X-999"
-    assert derive_invoice_number(order) == "INV-X-999"
+    assert derive_proforma_number(order) == "PF-X-999"
 
 
 # --- build_invoice_pdf -----------------------------------------------------
@@ -170,7 +170,7 @@ def test_build_pdf_unknown_lang_falls_back_to_en():
 def test_build_pdf_proforma_mode_en_and_pl():
     # The proforma label path (new keys) must render valid PDF bytes in both locales.
     order = _order(_person_user())
-    ref = derive_invoice_number(order)
+    ref = derive_proforma_number(order)
     for lang in ("en", "pl"):
         pdf = build_invoice_pdf(
             order, store=STORE, invoice_number=ref, issued_at=ISSUED, is_proforma=True, lang=lang

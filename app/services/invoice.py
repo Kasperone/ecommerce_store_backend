@@ -4,8 +4,8 @@ Two document kinds share one renderer. A **faktura** is a numbered, legally-issu
 invoice: its sequential gap-free number + issue date live in the ``invoices``
 registry, assigned on the order's ``pending → paid`` transition (see
 ``app/crud/invoice.py``). A **proforma** is the pre-payment document (order
-confirmation / pending download); it bears the order-derived reference
-(``derive_invoice_number``) and is **not** part of the legal series.
+confirmation / pending download); it bears its own order-derived reference
+(``derive_proforma_number`` → ``PF-…``) and is **not** part of the legal series.
 
 ``build_invoice_pdf`` is pure — the caller passes the resolved number + date +
 kind. ``render_invoice_pdf`` is the DB-aware orchestrator that looks up the
@@ -113,12 +113,18 @@ def decompose_gross(total_gross: float, vat_rate_pct: int) -> tuple[float, float
     return net, vat
 
 
-def derive_invoice_number(order: Order) -> str:
-    """Invoice reference derived 1:1 from the order number (``ORD-`` → ``INV-``)."""
+def derive_proforma_number(order: Order) -> str:
+    """Proforma reference derived 1:1 from the order number (``ORD-`` → ``PF-``).
+
+    Unique + stable per order (the order number is unique), so a client holding
+    proformas for several orders can tell them apart and pay each. Not a legal
+    series and intentionally distinct from the gap-free faktura ``FV/…`` numbers —
+    a proforma that never gets paid must never consume a faktura number.
+    """
     number = order.order_number
     if number.startswith("ORD-"):
-        return "INV-" + number[len("ORD-") :]
-    return "INV-" + number
+        return "PF-" + number[len("ORD-") :]
+    return "PF-" + number
 
 
 _LABELS: dict[str, dict[str, str]] = {
@@ -425,7 +431,7 @@ def render_invoice_pdf(
     return build_invoice_pdf(
         order,
         store=store,
-        invoice_number=derive_invoice_number(order),
+        invoice_number=derive_proforma_number(order),
         issued_at=dt.date.today(),
         is_proforma=True,
         lang=lang,

@@ -225,7 +225,7 @@ async def download_order_invoice(
         # Series number carries '/'; sanitise for the download filename.
         filename = f"invoice-{issued.invoice_number.replace('/', '-')}.pdf"
     else:
-        filename = f"proforma-{order.order_number}.pdf"
+        filename = f"proforma-{invoice_service.derive_proforma_number(order)}.pdf"
     return Response(
         content=pdf,
         media_type="application/pdf",
