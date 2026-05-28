@@ -234,6 +234,8 @@ def test_movements_for_newest_first_with_product_name(db_session, product_factor
     db_session.flush()
 
     rows = crud_inventory.movements_for(db_session, product_id=product.id)
-    assert [m.id for m, _ in rows] == [second.id, first.id]  # newest first (id desc tiebreak)
-    assert all(name == product.name for _, name in rows)
+    assert [m.id for m, _, _ in rows] == [second.id, first.id]  # newest first (id desc tiebreak)
+    assert all(pname == product.name for _, pname, _ in rows)
+    # movements default to the default warehouse, so the joined name is populated.
+    assert all(wname is not None for _, _, wname in rows)
     assert crud_inventory.count_movements(db_session, product_id=product.id) == 2

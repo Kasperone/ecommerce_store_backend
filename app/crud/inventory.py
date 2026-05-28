@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.crud.warehouse import warehouse as crud_warehouse
 from app.models.inventory_movement import InventoryMovement, InventoryMovementReason
 from app.models.product import Product
-from app.models.warehouse import StockLevel
+from app.models.warehouse import StockLevel, Warehouse
 from app.schemas.inventory import InventoryStatus
 
 
@@ -227,35 +227,69 @@ class CRUDInventory:
     # Movement log
     # ------------------------------------------------------------------
 
+    def levels_for_product(self, db: Session, *, product: Product) -> list[tuple[Warehouse, int]]:
+        """Per-warehouse stock for a product as ``(warehouse, quantity)``.
+
+        Every materialised level joined to its warehouse, plus a synthesised
+        default-warehouse entry (from unallocated stock) when the default level
+        has not been materialised yet — so the breakdown always accounts for the
+        full ``product.stock``. Default first, then by code.
+        """
+        default = crud_warehouse.get_default(db)
+        rows = (
+            db.query(StockLevel, Warehouse)
+            .join(Warehouse, StockLevel.warehouse_id == Warehouse.id)
+            .filter(StockLevel.product_id == product.id)
+            .all()
+        )
+        levels: list[tuple[Warehouse, int]] = [(wh, lvl.quantity) for lvl, wh in rows]
+        if default is not None and not any(wh.id == default.id for wh, _ in levels):
+            levels.append(
+                (default, self._default_unallocated(db, product=product, default_id=default.id))
+            )
+        levels.sort(key=lambda pair: (not pair[0].is_default, pair[0].code))
+        return levels
+
     def movements_for(
         self,
         db: Session,
         *,
         product_id: int | None = None,
+        warehouse_id: int | None = None,
         skip: int = 0,
         limit: int = 20,
-    ) -> list[tuple[InventoryMovement, str]]:
-        """Movement log rows as ``(movement, product_name)``, newest first.
+    ) -> list[tuple[InventoryMovement, str, str | None]]:
+        """Movement log rows as ``(movement, product_name, warehouse_name)``, newest first.
 
-        Joins ``Product`` so the list view shows the product name without an N+1.
+        Joins ``Product`` for the product name and left-joins ``Warehouse`` for the
+        warehouse name (a movement's ``warehouse_id`` is SET NULL if the warehouse
+        was later deleted, so the join must be outer).
         """
-        query = db.query(InventoryMovement, Product.name).join(
-            Product, InventoryMovement.product_id == Product.id
+        query = (
+            db.query(InventoryMovement, Product.name, Warehouse.name)
+            .join(Product, InventoryMovement.product_id == Product.id)
+            .outerjoin(Warehouse, InventoryMovement.warehouse_id == Warehouse.id)
         )
         if product_id is not None:
             query = query.filter(InventoryMovement.product_id == product_id)
+        if warehouse_id is not None:
+            query = query.filter(InventoryMovement.warehouse_id == warehouse_id)
         rows = (
             query.order_by(InventoryMovement.created_at.desc(), InventoryMovement.id.desc())
             .offset(skip)
             .limit(limit)
             .all()
         )
-        return [(movement, name) for movement, name in rows]
+        return [(movement, pname, wname) for movement, pname, wname in rows]
 
-    def count_movements(self, db: Session, *, product_id: int | None = None) -> int:
+    def count_movements(
+        self, db: Session, *, product_id: int | None = None, warehouse_id: int | None = None
+    ) -> int:
         query = db.query(InventoryMovement)
         if product_id is not None:
             query = query.filter(InventoryMovement.product_id == product_id)
+        if warehouse_id is not None:
+            query = query.filter(InventoryMovement.warehouse_id == warehouse_id)
         return query.count()
 
 

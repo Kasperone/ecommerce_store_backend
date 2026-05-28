@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
 from app.crud import inventory as crud_inventory
+from app.crud import warehouse as crud_warehouse
 from app.models.admin_audit_event import AdminAuditEvent
 from app.models.inventory_movement import InventoryMovementReason
 from app.models.user import UserRole
@@ -22,6 +23,12 @@ pytestmark = pytest.mark.integration
 def _headers(user) -> dict:
     token, _, _ = create_access_token(subject=str(user.id))
     return {"Authorization": f"Bearer {token}"}
+
+
+def _default_wh_id(db) -> int:
+    wh = crud_warehouse.get_default(db)
+    assert wh is not None
+    return wh.id
 
 
 def _order_body(product_id: int, quantity: int = 1, currency: str = "USD") -> dict:
@@ -102,7 +109,7 @@ async def test_adjust_sets_absolute_records_movement_and_audit(
 
     resp = await client.patch(
         f"/api/v1/admin/inventory/products/{product.id}/stock",
-        json={"new_stock": 42, "note": "recount"},
+        json={"warehouse_id": _default_wh_id(db_session), "new_stock": 42, "note": "recount"},
         headers=_headers(admin),
     )
     assert resp.status_code == 200
@@ -112,6 +119,7 @@ async def test_adjust_sets_absolute_records_movement_and_audit(
     assert body["reason"] == "manual_adjustment"
     assert body["note"] == "recount"
     assert body["product_name"] == "Adjustable"
+    assert body["warehouse_id"] == _default_wh_id(db_session)
     assert body["actor_user_id"] == admin.id
 
     audit = (
@@ -126,36 +134,82 @@ async def test_adjust_sets_absolute_records_movement_and_audit(
     assert audit == 1
 
 
-async def test_adjust_noop_rejected(client, user_factory, product_factory):
+async def test_adjust_noop_rejected(client, user_factory, product_factory, db_session: Session):
     admin = user_factory(email="noop-admin@example.com", role=UserRole.ADMIN)
     product = product_factory(stock=7)
     resp = await client.patch(
         f"/api/v1/admin/inventory/products/{product.id}/stock",
-        json={"new_stock": 7},
+        json={"warehouse_id": _default_wh_id(db_session), "new_stock": 7},
         headers=_headers(admin),
     )
     assert resp.status_code == 400
 
 
-async def test_adjust_negative_rejected(client, user_factory, product_factory):
+async def test_adjust_negative_rejected(client, user_factory, product_factory, db_session: Session):
     admin = user_factory(email="neg-admin@example.com", role=UserRole.ADMIN)
     product = product_factory(stock=7)
     resp = await client.patch(
         f"/api/v1/admin/inventory/products/{product.id}/stock",
-        json={"new_stock": -1},
+        json={"warehouse_id": _default_wh_id(db_session), "new_stock": -1},
         headers=_headers(admin),
     )
     assert resp.status_code == 422
 
 
-async def test_adjust_missing_product_404(client, user_factory):
+async def test_adjust_missing_product_404(client, user_factory, db_session: Session):
     admin = user_factory(email="404-admin@example.com", role=UserRole.ADMIN)
     resp = await client.patch(
         "/api/v1/admin/inventory/products/999999/stock",
-        json={"new_stock": 5},
+        json={"warehouse_id": _default_wh_id(db_session), "new_stock": 5},
         headers=_headers(admin),
     )
     assert resp.status_code == 404
+
+
+async def test_adjust_missing_warehouse_404(
+    client, user_factory, product_factory, db_session: Session
+):
+    admin = user_factory(email="adj-wh404@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=7)
+    resp = await client.patch(
+        f"/api/v1/admin/inventory/products/{product.id}/stock",
+        json={"warehouse_id": 999999, "new_stock": 5},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 404
+
+
+async def test_adjust_targets_specific_warehouse(
+    client, user_factory, product_factory, db_session: Session
+):
+    """Adjusting a non-default warehouse sets that warehouse's level (seeded at 0),
+    independent of the product's default-warehouse stock; the product total rises."""
+    from app.models.warehouse import Warehouse
+
+    admin = user_factory(email="adj-wh@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10)
+    eu = Warehouse(name="EU", code="EU-ADJ", is_active=True, is_default=False)
+    db_session.add(eu)
+    db_session.commit()
+
+    resp = await client.patch(
+        f"/api/v1/admin/inventory/products/{product.id}/stock",
+        json={"warehouse_id": eu.id, "new_stock": 4},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["warehouse_id"] == eu.id
+    assert body["delta"] == 4  # EU seeded at 0
+    assert body["resulting_stock"] == 4
+
+    levels = await client.get(
+        f"/api/v1/admin/inventory/products/{product.id}/levels", headers=_headers(admin)
+    )
+    by_code = {row["warehouse_code"]: row["quantity"] for row in levels.json()}
+    assert by_code["EU-ADJ"] == 4
+    assert by_code["MAIN"] == 10  # default unchanged
+    assert sum(by_code.values()) == 14  # == product total
 
 
 # ---------------------------------------------------------------------------
