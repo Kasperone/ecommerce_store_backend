@@ -15,14 +15,17 @@ class InventoryMovementReason(str, enum.Enum):
     """Why a stock movement happened.
 
     Stored as the lowercase value string in a plain ``String`` column (not a PG
-    enum type) so adding a reason is a code-only change, no migration. ``RESTOCK``
-    is reserved for the future purchase-order / restock workflow.
+    enum type) so adding a reason is a code-only change, no migration. A transfer
+    between warehouses writes a paired ``TRANSFER_OUT`` (source) + ``TRANSFER_IN``
+    (destination). ``RESTOCK`` records incoming stock (purchase-order receipts).
     """
 
     ORDER_PLACED = "order_placed"
     ORDER_CANCELLED = "order_cancelled"
     MANUAL_ADJUSTMENT = "manual_adjustment"
     RESTOCK = "restock"
+    TRANSFER_OUT = "transfer_out"
+    TRANSFER_IN = "transfer_in"
 
 
 class InventoryMovement(BaseModel):

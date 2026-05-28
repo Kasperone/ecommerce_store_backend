@@ -49,6 +49,31 @@ class StockAdjustRequest(BaseSchema):
     note: Annotated[str | None, Field(max_length=255)] = None
 
 
+class TransferRequest(BaseSchema):
+    """Move ``quantity`` units of a product from one warehouse to another.
+
+    Writes a paired ``transfer_out`` / ``transfer_in`` movement; the product total
+    is unchanged. The source must hold at least ``quantity`` (no backorder on a
+    transfer)."""
+
+    product_id: int
+    from_warehouse_id: int
+    to_warehouse_id: int
+    quantity: Annotated[int, Field(ge=1)]
+    note: Annotated[str | None, Field(max_length=255)] = None
+
+
+class TransferResponse(BaseSchema):
+    """Result of a stock transfer: the new level in each warehouse."""
+
+    product_id: int
+    from_warehouse_id: int
+    to_warehouse_id: int
+    quantity: int
+    from_resulting_stock: int
+    to_resulting_stock: int
+
+
 class StockLevelItem(BaseSchema):
     """One per-warehouse stock level for a product (the breakdown view).
 

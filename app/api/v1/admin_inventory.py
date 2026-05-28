@@ -26,6 +26,8 @@ from app.schemas.inventory import (
     InventoryStatus,
     StockAdjustRequest,
     StockLevelItem,
+    TransferRequest,
+    TransferResponse,
 )
 from app.services import search_index
 from app.services.audit import AuditWriter, get_audit_writer
@@ -165,6 +167,88 @@ async def adjust_stock(
     # Stock changed → refresh the in_stock facet (best-effort, admin path).
     search_index.sync_product(db, product_id)
     return _movement_item(movement, product.name, warehouse.name)
+
+
+@router.post("/transfer", response_model=TransferResponse)
+async def transfer_stock(
+    payload: TransferRequest,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
+):
+    """Move stock between two warehouses (admin).
+
+    Writes a paired transfer_out (source) + transfer_in (destination) movement in
+    one transaction; the product total is unchanged. 404 on unknown
+    product/warehouse, 422 on same-warehouse or insufficient source stock.
+    """
+    if payload.from_warehouse_id == payload.to_warehouse_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Source and destination warehouses must differ",
+        )
+    product = crud_product.get(db, id=payload.product_id)
+    if product is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+    source = crud_warehouse.get(db, payload.from_warehouse_id)
+    dest = crud_warehouse.get(db, payload.to_warehouse_id)
+    if source is None or dest is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Warehouse not found")
+
+    available = crud_inventory.get_level_quantity(db, product=product, warehouse_id=source.id)
+    if available < payload.quantity:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Insufficient stock in {source.code}: "
+                f"have {available}, need {payload.quantity}"
+            ),
+        )
+
+    out_movement = crud_inventory.apply_delta(
+        db,
+        product=product,
+        delta=-payload.quantity,
+        reason=InventoryMovementReason.TRANSFER_OUT,
+        warehouse_id=source.id,
+        actor_user_id=current_admin.id,
+        note=payload.note,
+    )
+    in_movement = crud_inventory.apply_delta(
+        db,
+        product=product,
+        delta=payload.quantity,
+        reason=InventoryMovementReason.TRANSFER_IN,
+        warehouse_id=dest.id,
+        actor_user_id=current_admin.id,
+        note=payload.note,
+    )
+    audit.record_event(
+        action="transfer",
+        resource_type="inventory",
+        resource_id=product.id,
+        payload={
+            "transfer": {
+                "product_id": product.id,
+                "from_warehouse_id": source.id,
+                "to_warehouse_id": dest.id,
+                "quantity": payload.quantity,
+            }
+        },
+    )
+    db.commit()
+    db.refresh(out_movement)
+    db.refresh(in_movement)
+    # Total unchanged, but the in_stock facet is unaffected anyway; sync is cheap.
+    search_index.sync_product(db, product.id)
+    return TransferResponse(
+        product_id=product.id,
+        from_warehouse_id=source.id,
+        to_warehouse_id=dest.id,
+        quantity=payload.quantity,
+        from_resulting_stock=out_movement.resulting_stock,
+        to_resulting_stock=in_movement.resulting_stock,
+    )
 
 
 @router.get("/movements", response_model=InventoryMovementListResponse)

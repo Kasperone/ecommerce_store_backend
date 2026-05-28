@@ -213,6 +213,121 @@ async def test_adjust_targets_specific_warehouse(
 
 
 # ---------------------------------------------------------------------------
+# transfer
+# ---------------------------------------------------------------------------
+
+
+async def test_transfer_moves_stock_between_warehouses(
+    client, user_factory, product_factory, db_session: Session
+):
+    from app.models.warehouse import Warehouse
+
+    admin = user_factory(email="xfer-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10)
+    eu = Warehouse(name="EU", code="EU-XFER", is_active=True, is_default=False)
+    db_session.add(eu)
+    db_session.commit()
+
+    resp = await client.post(
+        "/api/v1/admin/inventory/transfer",
+        json={
+            "product_id": product.id,
+            "from_warehouse_id": _default_wh_id(db_session),
+            "to_warehouse_id": eu.id,
+            "quantity": 4,
+        },
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["from_resulting_stock"] == 6
+    assert body["to_resulting_stock"] == 4
+
+    # Product total unchanged; two paired movements written.
+    levels = (
+        await client.get(
+            f"/api/v1/admin/inventory/products/{product.id}/levels", headers=_headers(admin)
+        )
+    ).json()
+    by_code = {r["warehouse_code"]: r["quantity"] for r in levels}
+    assert by_code["MAIN"] == 6
+    assert by_code["EU-XFER"] == 4
+    assert sum(by_code.values()) == 10
+
+    reasons = {
+        m["reason"]
+        for m in (
+            await client.get(
+                f"/api/v1/admin/inventory/movements?product_id={product.id}",
+                headers=_headers(admin),
+            )
+        ).json()["items"]
+    }
+    assert {"transfer_out", "transfer_in"} <= reasons
+
+
+async def test_transfer_same_warehouse_422(
+    client, user_factory, product_factory, db_session: Session
+):
+    admin = user_factory(email="xfer-same@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10)
+    wh = _default_wh_id(db_session)
+    resp = await client.post(
+        "/api/v1/admin/inventory/transfer",
+        json={
+            "product_id": product.id,
+            "from_warehouse_id": wh,
+            "to_warehouse_id": wh,
+            "quantity": 1,
+        },
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 422
+
+
+async def test_transfer_insufficient_source_422(
+    client, user_factory, product_factory, db_session: Session
+):
+    from app.models.warehouse import Warehouse
+
+    admin = user_factory(email="xfer-insuff@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10)
+    eu = Warehouse(name="EU", code="EU-INS", is_active=True, is_default=False)
+    db_session.add(eu)
+    db_session.commit()
+    # EU has 0; cannot transfer out of it.
+    resp = await client.post(
+        "/api/v1/admin/inventory/transfer",
+        json={
+            "product_id": product.id,
+            "from_warehouse_id": eu.id,
+            "to_warehouse_id": _default_wh_id(db_session),
+            "quantity": 1,
+        },
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 422
+
+
+async def test_transfer_unknown_warehouse_404(
+    client, user_factory, product_factory, db_session: Session
+):
+    admin = user_factory(email="xfer-404@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10)
+    resp = await client.post(
+        "/api/v1/admin/inventory/transfer",
+        json={
+            "product_id": product.id,
+            "from_warehouse_id": _default_wh_id(db_session),
+            "to_warehouse_id": 999999,
+            "quantity": 1,
+        },
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # movement log + order integration
 # ---------------------------------------------------------------------------
 
