@@ -112,6 +112,11 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "RUF", "ASYNC", "S"]
 "app/core/email.py" = ["E501"]
 # Order-email subjects + intro markup read better unwrapped (same rationale).
 "app/services/order_email.py" = ["E501"]
+# The packed "items" CSV column uses "×" (U+00D7) as the qty marker by design —
+# a human-readable blob the UTF-8+BOM file carries safely (same as the ł/ą/ę
+# addresses). RUF001/RUF002 flag it as visually ambiguous with ASCII "x".
+"app/services/order_export.py" = ["RUF001", "RUF002"]
+"tests/unit/test_order_export.py" = ["RUF001"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]

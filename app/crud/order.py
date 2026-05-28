@@ -13,9 +13,9 @@ Tax and shipping are 0.0 for now — there is no tax/shipping engine yet, so
 from __future__ import annotations
 
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time, timedelta
 
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Query, Session, selectinload
 
 from app.crud.base import CRUDBase
 from app.crud.inventory import inventory as crud_inventory
@@ -277,31 +277,91 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             query = query.filter(Order.user_id == user.id)
         return query.first()
 
+    def _apply_scope_and_filters(
+        self,
+        query: Query[Order],
+        *,
+        user: User,
+        status: OrderStatus | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> Query[Order]:
+        """Apply customer/admin scoping + status + ``created_at`` date-range filters.
+
+        Shared by the scoped list, its count, and the CSV exporter so the three
+        never drift ("export = what you see"). The date range bounds ``created_at``
+        by UTC calendar day with ``date_to`` inclusive (``< day after date_to``);
+        ``created_at`` is naive UTC, so the boundaries are UTC days, not the
+        admin's local timezone.
+        """
+        if user.role != UserRole.ADMIN:
+            query = query.filter(Order.user_id == user.id)
+        if status is not None:
+            query = query.filter(Order.status == status)
+        if date_from is not None:
+            query = query.filter(Order.created_at >= datetime.combine(date_from, time.min))
+        if date_to is not None:
+            query = query.filter(
+                Order.created_at < datetime.combine(date_to, time.min) + timedelta(days=1)
+            )
+        return query
+
     def get_multi_scoped(
         self,
         db: Session,
         *,
         user: User,
         status: OrderStatus | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
         skip: int = 0,
         limit: int = 20,
     ) -> list[Order]:
         query = db.query(Order).options(selectinload(Order.items), selectinload(Order.user))
-        if user.role != UserRole.ADMIN:
-            query = query.filter(Order.user_id == user.id)
-        if status is not None:
-            query = query.filter(Order.status == status)
+        query = self._apply_scope_and_filters(
+            query, user=user, status=status, date_from=date_from, date_to=date_to
+        )
         return (
             query.order_by(Order.created_at.desc(), Order.id.desc()).offset(skip).limit(limit).all()
         )
 
-    def count_scoped(self, db: Session, *, user: User, status: OrderStatus | None = None) -> int:
+    def count_scoped(
+        self,
+        db: Session,
+        *,
+        user: User,
+        status: OrderStatus | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> int:
         query = db.query(Order)
-        if user.role != UserRole.ADMIN:
-            query = query.filter(Order.user_id == user.id)
-        if status is not None:
-            query = query.filter(Order.status == status)
+        query = self._apply_scope_and_filters(
+            query, user=user, status=status, date_from=date_from, date_to=date_to
+        )
         return query.count()
+
+    def get_for_export(
+        self,
+        db: Session,
+        *,
+        user: User,
+        status: OrderStatus | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+    ) -> list[Order]:
+        """Load every order matching the scope/filters (no pagination) for CSV export.
+
+        Same filters as the scoped list so the export mirrors the on-screen view.
+        Eager-loads ``items`` + ``user`` (the exporter packs line items and the
+        customer name/email per row). MVP loads all rows into memory — fine for
+        low-thousands; streaming via ``yield_per`` + ``StreamingResponse`` is a
+        noted future optimization.
+        """
+        query = db.query(Order).options(selectinload(Order.items), selectinload(Order.user))
+        query = self._apply_scope_and_filters(
+            query, user=user, status=status, date_from=date_from, date_to=date_to
+        )
+        return query.order_by(Order.created_at.desc(), Order.id.desc()).all()
 
 
 order = CRUDOrder(Order)

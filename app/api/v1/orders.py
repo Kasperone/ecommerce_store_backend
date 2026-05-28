@@ -1,3 +1,4 @@
+from datetime import date
 from math import ceil
 from typing import Literal
 
@@ -22,7 +23,7 @@ from app.schemas.order import (
     OrderWithUser,
 )
 from app.services import invoice as invoice_service
-from app.services import order_email, search_index
+from app.services import order_email, order_export, search_index
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
@@ -31,6 +32,24 @@ router = APIRouter()
 def _touched_product_ids(order) -> list[int]:
     """Product ids on an order's line items (for search re-sync; bulk-sync dedupes)."""
     return [item.product_id for item in order.items if item.product_id is not None]
+
+
+def _export_filename(
+    status: OrderStatus | None, date_from: date | None, date_to: date | None
+) -> str:
+    """Build a CSV filename reflecting the active filters.
+
+    ``orders`` base, suffixed with the status and/or the date range; falls back
+    to ``orders-{today}.csv`` when nothing is filtered.
+    """
+    parts = ["orders"]
+    if status is not None:
+        parts.append(OrderStatus(status).value)
+    if date_from is not None or date_to is not None:
+        parts.append(f"{date_from or 'start'}_{date_to or 'end'}")
+    if len(parts) == 1:
+        parts.append(date.today().isoformat())
+    return "-".join(parts) + ".csv"
 
 
 @router.post("/", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
@@ -77,17 +96,30 @@ async def list_orders(
     order_status: OrderStatus | None = Query(
         None, alias="status", description="Filter by order status"
     ),
+    date_from: date | None = Query(None, description="Orders created on/after this date (UTC)"),
+    date_to: date | None = Query(
+        None, description="Orders created on/before this date (UTC, inclusive)"
+    ),
 ):
     """
     List orders, scoped to the caller.
 
-    Customers see only their own orders; admins see all. Optional status filter.
+    Customers see only their own orders; admins see all. Optional status filter
+    and ``created_at`` date range (``date_to`` inclusive, UTC calendar days).
     """
     skip = (page - 1) * page_size
     orders = crud_order.get_multi_scoped(
-        db, user=current_user, status=order_status, skip=skip, limit=page_size
+        db,
+        user=current_user,
+        status=order_status,
+        date_from=date_from,
+        date_to=date_to,
+        skip=skip,
+        limit=page_size,
     )
-    total = crud_order.count_scoped(db, user=current_user, status=order_status)
+    total = crud_order.count_scoped(
+        db, user=current_user, status=order_status, date_from=date_from, date_to=date_to
+    )
     pages = ceil(total / page_size) if total > 0 else 1
 
     return {
@@ -97,6 +129,48 @@ async def list_orders(
         "page_size": page_size,
         "pages": pages,
     }
+
+
+@router.get(
+    "/export",
+    responses={200: {"content": {"text/csv": {}}, "description": "Orders CSV export"}},
+)
+async def export_orders(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    order_status: OrderStatus | None = Query(
+        None, alias="status", description="Filter by order status"
+    ),
+    date_from: date | None = Query(None, description="Orders created on/after this date (UTC)"),
+    date_to: date | None = Query(
+        None, description="Orders created on/before this date (UTC, inclusive)"
+    ),
+):
+    """
+    Download orders as a CSV file (admin only).
+
+    Inherits the on-screen filters (status + ``created_at`` date range). One row
+    per order with line items packed into the ``items`` column; RFC 4180, UTF-8
+    with BOM. Generated on demand from the order snapshot — no persistence and no
+    audit row (read-only GET, like the invoice download).
+
+    NOTE: declared *before* ``GET /{order_id}`` so FastAPI does not try to parse
+    the literal ``"export"`` as an integer ``order_id`` (which would 422).
+    """
+    orders = crud_order.get_for_export(
+        db,
+        user=current_admin,
+        status=order_status,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    csv_bytes = order_export.build_orders_csv(orders)
+    filename = _export_filename(order_status, date_from, date_to)
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/{order_id}", response_model=OrderWithUser)
