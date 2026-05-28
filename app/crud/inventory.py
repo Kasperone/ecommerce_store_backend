@@ -54,22 +54,57 @@ class CRUDInventory:
         )
         if level is not None:
             return level
-        if is_default:
-            other = (
-                db.query(func.coalesce(func.sum(StockLevel.quantity), 0))
-                .filter(
-                    StockLevel.product_id == product.id,
-                    StockLevel.warehouse_id != warehouse_id,
-                )
-                .scalar()
-            )
-            seed = product.stock - (other or 0)
-        else:
-            seed = 0
+        seed = (
+            self._default_unallocated(db, product=product, default_id=warehouse_id)
+            if is_default
+            else 0
+        )
         level = StockLevel(product_id=product.id, warehouse_id=warehouse_id, quantity=seed)
         db.add(level)
         db.flush()
         return level
+
+    def _default_unallocated(self, db: Session, *, product: Product, default_id: int) -> int:
+        """The product's stock not yet placed in a non-default warehouse.
+
+        ``product.stock`` (total) minus the sum of every non-default level. This
+        is what the default warehouse implicitly holds before its level is
+        materialised — the seed for a new default level and the read for
+        ``get_level_quantity``.
+        """
+        other = (
+            db.query(func.coalesce(func.sum(StockLevel.quantity), 0))
+            .filter(
+                StockLevel.product_id == product.id,
+                StockLevel.warehouse_id != default_id,
+            )
+            .scalar()
+        )
+        return product.stock - (other or 0)
+
+    def get_level_quantity(self, db: Session, *, product: Product, warehouse_id: int) -> int:
+        """Current quantity in a (product, warehouse) level WITHOUT materialising it.
+
+        Read-only twin of ``_get_or_create_level``'s seed: a not-yet-materialised
+        default level reports the product's unallocated stock; a missing
+        non-default level reports 0. Used by the order availability check (orders
+        fulfil from the default warehouse, so the check is against that level, not
+        the product total).
+        """
+        level = (
+            db.query(StockLevel)
+            .filter(
+                StockLevel.product_id == product.id,
+                StockLevel.warehouse_id == warehouse_id,
+            )
+            .first()
+        )
+        if level is not None:
+            return level.quantity
+        default = crud_warehouse.get_default(db)
+        if default is not None and warehouse_id == default.id:
+            return self._default_unallocated(db, product=product, default_id=warehouse_id)
+        return 0
 
     def apply_delta(
         self,

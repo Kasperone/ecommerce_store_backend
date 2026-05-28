@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from app.crud import order as crud_order
+from app.crud import warehouse as crud_warehouse
 from app.crud.order import (
     InsufficientStockError,
     ProductUnavailableError,
@@ -61,13 +62,17 @@ def test_create_computes_totals_and_decrements_stock(db_session, user_factory, p
     db_session.refresh(product)
     assert product.stock == 8
 
-    # A single ORDER_PLACED inventory movement was written for the line.
+    # A single ORDER_PLACED inventory movement was written for the line,
+    # attributed to the default warehouse (where orders are fulfilled from).
+    default_warehouse = crud_warehouse.get_default(db_session)
+    assert default_warehouse is not None
     movements = db_session.query(InventoryMovement).filter_by(product_id=product.id).all()
     assert len(movements) == 1
     assert movements[0].delta == -2
     assert movements[0].resulting_stock == 8
     assert movements[0].reason == "order_placed"
     assert movements[0].order_id == order.id
+    assert movements[0].warehouse_id == default_warehouse.id
 
     # Line item snapshots product fields.
     assert len(order.items) == 1

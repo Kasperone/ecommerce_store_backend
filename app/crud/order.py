@@ -20,6 +20,7 @@ from sqlalchemy.orm import Query, Session, selectinload
 from app.crud.base import CRUDBase
 from app.crud.inventory import inventory as crud_inventory
 from app.crud.invoice import invoice as crud_invoice
+from app.crud.warehouse import warehouse as crud_warehouse
 from app.models.inventory_movement import InventoryMovementReason
 from app.models.order import Order, OrderItem, OrderStatus
 from app.models.product import Product
@@ -117,18 +118,30 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         product_ids = [line.product_id for line in obj_in.items]
         products = {p.id: p for p in db.query(Product).filter(Product.id.in_(product_ids)).all()}
 
+        # Orders fulfil from the default warehouse, so availability is checked
+        # against that warehouse's level (not the product total, which may include
+        # stock held in other warehouses).
+        default_warehouse = crud_warehouse.get_default(db)
+        if default_warehouse is None:
+            raise RuntimeError("No default warehouse configured; run migrations")
+
         items: list[OrderItem] = []
         subtotal = 0.0
         # Validate against a local running remainder so duplicate lines for the
-        # same product are checked against the not-yet-committed total. The real
-        # decrement + ledger write happens after the flush (apply_delta needs
-        # order.id) — see the second loop below.
+        # same product are checked against the not-yet-committed default-warehouse
+        # level. The real decrement + ledger write happens after the flush
+        # (apply_delta needs order.id) — see the second loop below.
         remaining: dict[int, int] = {}
         for line in obj_in.items:
             product = products.get(line.product_id)
             if product is None or not product.is_active:
                 raise ProductUnavailableError(line.product_id)
-            available = remaining.get(product.id, product.stock)
+            available = remaining.get(
+                product.id,
+                crud_inventory.get_level_quantity(
+                    db, product=product, warehouse_id=default_warehouse.id
+                ),
+            )
             if available < line.quantity:
                 raise InsufficientStockError(product.id, product.name, line.quantity, available)
             remaining[product.id] = available - line.quantity
@@ -174,6 +187,7 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
                 product=products[line.product_id],
                 delta=-line.quantity,
                 reason=InventoryMovementReason.ORDER_PLACED,
+                warehouse_id=default_warehouse.id,
                 actor_user_id=user_id,
                 order_id=order.id,
             )
@@ -191,8 +205,10 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         Writes one ORDER_CANCELLED inventory movement per line via
         ``crud_inventory.apply_delta``; ``actor_user_id`` attributes the movement
         to the cancelling user (None when called outside a request, e.g. tests).
-        Caller is responsible for the cancellable-status check and the commit.
+        Stock is restored to the default warehouse (where orders are fulfilled
+        from). Caller is responsible for the cancellable-status check and the commit.
         """
+        default_warehouse = crud_warehouse.get_default(db)
         for item in order.items:
             product = db.get(Product, item.product_id)
             if product is not None:
@@ -201,6 +217,7 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
                     product=product,
                     delta=item.quantity,
                     reason=InventoryMovementReason.ORDER_CANCELLED,
+                    warehouse_id=default_warehouse.id if default_warehouse else None,
                     actor_user_id=actor_user_id,
                     order_id=order.id,
                 )
