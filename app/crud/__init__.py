@@ -2,6 +2,7 @@ from app.crud.audit_event import audit_event
 from app.crud.category import category
 from app.crud.customer_note import customer_note
 from app.crud.inventory import inventory
+from app.crud.invoice import invoice
 from app.crud.order import order
 from app.crud.product import product
 from app.crud.product_image import product_image
@@ -19,6 +20,7 @@ __all__ = [
     "category",
     "order",
     "inventory",
+    "invoice",
     "audit_event",
     "refresh_token",
     "review",

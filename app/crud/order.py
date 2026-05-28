@@ -19,6 +19,7 @@ from sqlalchemy.orm import Query, Session, selectinload
 
 from app.crud.base import CRUDBase
 from app.crud.inventory import inventory as crud_inventory
+from app.crud.invoice import invoice as crud_invoice
 from app.models.inventory_movement import InventoryMovementReason
 from app.models.order import Order, OrderItem, OrderStatus
 from app.models.product import Product
@@ -239,6 +240,8 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
 
         No-op when the order isn't pending, so duplicate/late notifications are
         safe. Records the provider's payment id + method (``"payu"`` / ``"stripe"``).
+        Issues the sequential faktura number in the same transaction as the flip
+        (gap-free — the number and the paid state commit or roll back together).
         Caller owns the commit.
         """
         if OrderStatus(order.status) != OrderStatus.PENDING:
@@ -247,6 +250,7 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         order.payment_method = payment_method
         order.payment_intent_id = payment_intent_id
         db.add(order)
+        crud_invoice.issue_for_order(db, order=order)
         return order
 
     def get_by_order_number(self, db: Session, *, order_number: str) -> Order | None:

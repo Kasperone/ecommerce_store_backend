@@ -8,8 +8,10 @@ lookup are monkeypatched.
 from __future__ import annotations
 
 import datetime as dt
+from typing import cast
 
 import pytest
+from sqlalchemy.orm import Session
 
 from app.models.order import Order, OrderItem, OrderStatus
 from app.models.user import User
@@ -51,6 +53,22 @@ class _DummySession:
         pass
 
 
+# The composition tests stub the renderer, so the session is never touched —
+# cast a dummy to satisfy the typed ``send_order_event(db: Session, ...)`` param.
+_DB = cast(Session, _DummySession())
+
+
+@pytest.fixture(autouse=True)
+def _stub_render(monkeypatch):
+    """Stub the DB-backed invoice renderer for these composition tests.
+
+    ``send_order_event`` now resolves faktura-vs-proforma via the DB; the
+    faktura/proforma rendering itself is covered by the invoice + integration
+    tests, so here we only assert that *a* PDF is attached when the spec says so.
+    """
+    monkeypatch.setattr(order_email, "render_invoice_pdf", lambda *a, **k: b"%PDF-stub")
+
+
 # --- event_for_status -------------------------------------------------------
 
 
@@ -71,7 +89,7 @@ def test_event_for_status_none_for_others(order_status):
 
 
 def test_confirmation_attaches_invoice(captured_emails):
-    order_email.send_order_event(_make_order(), "confirmation")
+    order_email.send_order_event(_DB, _make_order(), "confirmation")
     assert len(captured_emails) == 1
     entry = captured_emails[0]
     assert entry["kind"] == "order_email"
@@ -81,19 +99,19 @@ def test_confirmation_attaches_invoice(captured_emails):
 
 
 def test_paid_attaches_invoice(captured_emails):
-    order_email.send_order_event(_make_order(), "paid")
+    order_email.send_order_event(_DB, _make_order(), "paid")
     assert captured_emails[0]["invoice_pdf"][:4] == b"%PDF"
 
 
 @pytest.mark.parametrize("event", ["shipped", "delivered", "cancelled"])
 def test_status_events_have_no_attachment(captured_emails, event):
-    order_email.send_order_event(_make_order(), event)
+    order_email.send_order_event(_DB, _make_order(), event)
     assert len(captured_emails) == 1
     assert captured_emails[0]["invoice_pdf"] is None
 
 
 def test_unknown_event_sends_nothing(captured_emails):
-    order_email.send_order_event(_make_order(), "bogus")
+    order_email.send_order_event(_DB, _make_order(), "bogus")
     assert captured_emails == []
 
 
@@ -103,7 +121,7 @@ def test_send_failure_is_swallowed(captured_emails, monkeypatch):
 
     monkeypatch.setattr(order_email.email, "send_order_email", _boom)
     # Best-effort: a failed send must not bubble out of send_order_event.
-    order_email.send_order_event(_make_order(), "shipped")
+    order_email.send_order_event(_DB, _make_order(), "shipped")
 
 
 # --- background entry -------------------------------------------------------

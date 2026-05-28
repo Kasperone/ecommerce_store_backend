@@ -1,9 +1,15 @@
 """Order invoice PDF generation (ReportLab).
 
-Stateless: an invoice is rendered on demand from the immutable Order/OrderItem
-snapshot. There is no persistence and no sequential registry — the document
-reference is derived 1:1 from ``order_number`` (see ``derive_invoice_number``).
-A legally-compliant sequential-numbering faktura registry is a future upgrade.
+Two document kinds share one renderer. A **faktura** is a numbered, legally-issued
+invoice: its sequential gap-free number + issue date live in the ``invoices``
+registry, assigned on the order's ``pending → paid`` transition (see
+``app/crud/invoice.py``). A **proforma** is the pre-payment document (order
+confirmation / pending download); it bears the order-derived reference
+(``derive_invoice_number``) and is **not** part of the legal series.
+
+``build_invoice_pdf`` is pure — the caller passes the resolved number + date +
+kind. ``render_invoice_pdf`` is the DB-aware orchestrator that looks up the
+registry and picks faktura vs proforma.
 
 Prices are treated as VAT-inclusive (gross), the EU/PL B2C convention, so the
 invoice decomposes net/VAT/gross at ``StoreIdentity.vat_rate``. A rate of 0
@@ -28,6 +34,9 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.pdfmetrics import registerFontFamily
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from sqlalchemy.orm import Session
+
+from app.crud import invoice as crud_invoice
 
 if TYPE_CHECKING:
     from app.core.config import Settings
@@ -115,7 +124,9 @@ def derive_invoice_number(order: Order) -> str:
 _LABELS: dict[str, dict[str, str]] = {
     "en": {
         "invoice": "INVOICE",
+        "proforma": "PROFORMA INVOICE",
         "invoice_no": "Invoice no.",
+        "proforma_no": "Proforma no.",
         "issue_date": "Issue date",
         "order_no": "Order no.",
         "order_date": "Order date",
@@ -139,7 +150,9 @@ _LABELS: dict[str, dict[str, str]] = {
     },
     "pl": {
         "invoice": "FAKTURA",
+        "proforma": "FAKTURA PROFORMA",
         "invoice_no": "Nr faktury",
+        "proforma_no": "Nr proformy",
         "issue_date": "Data wystawienia",
         "order_no": "Nr zamówienia",
         "order_date": "Data zamówienia",
@@ -169,14 +182,29 @@ _RULE = colors.HexColor("#e5e7eb")
 _HEAD_BG = colors.HexColor("#f3f4f6")
 
 
-def build_invoice_pdf(order: Order, *, store: StoreIdentity, lang: str = "en") -> bytes:
+def build_invoice_pdf(
+    order: Order,
+    *,
+    store: StoreIdentity,
+    invoice_number: str,
+    issued_at: dt.date,
+    is_proforma: bool = False,
+    lang: str = "en",
+) -> bytes:
     """Render a one-page order invoice PDF and return its bytes.
 
-    Reads only ``order`` (with eager-loaded ``items`` + ``user``) and ``store`` —
-    no DB access — so it is unit-testable in isolation.
+    Reads only its arguments — ``order`` (eager-loaded ``items`` + ``user``),
+    ``store``, and the resolved ``invoice_number``/``issued_at`` — with no DB
+    access, so it is unit-testable in isolation. The caller resolves whether this
+    is a numbered faktura or a ``is_proforma`` document (see ``render_invoice_pdf``):
+    a proforma uses the proforma title + reference and is not part of the legal
+    series. ``issued_at`` is the stable issue date (a faktura's is stamped once at
+    allocation; a proforma's is the render day).
     """
     _ensure_fonts_registered()
     labels = _LABELS.get(lang, _LABELS["en"])
+    title_label = labels["proforma"] if is_proforma else labels["invoice"]
+    number_label = labels["proforma_no"] if is_proforma else labels["invoice_no"]
     currency = order.currency
 
     def money(amount: float) -> str:
@@ -190,7 +218,7 @@ def build_invoice_pdf(order: Order, *, store: StoreIdentity, lang: str = "en") -
         rightMargin=18 * mm,
         topMargin=18 * mm,
         bottomMargin=18 * mm,
-        title=f"{labels['invoice']} {derive_invoice_number(order)}",
+        title=f"{title_label} {invoice_number}",
     )
 
     sample = getSampleStyleSheet()
@@ -206,14 +234,14 @@ def build_invoice_pdf(order: Order, *, store: StoreIdentity, lang: str = "en") -
     order_date = order.created_at.date().isoformat() if order.created_at else ""
     meta = "<br/>".join(
         [
-            f"<b>{labels['invoice_no']}:</b> {_esc(derive_invoice_number(order))}",
-            f"<b>{labels['issue_date']}:</b> {dt.date.today().isoformat()}",
+            f"<b>{number_label}:</b> {_esc(invoice_number)}",
+            f"<b>{labels['issue_date']}:</b> {issued_at.isoformat()}",
             f"<b>{labels['order_no']}:</b> {_esc(order.order_number)}",
             f"<b>{labels['order_date']}:</b> {order_date}",
         ]
     )
     header = Table(
-        [[Paragraph(_esc(labels["invoice"]), title_style), Paragraph(meta, right)]],
+        [[Paragraph(_esc(title_label), title_style), Paragraph(meta, right)]],
         colWidths=[doc.width * 0.55, doc.width * 0.45],
     )
     header.setStyle(
@@ -372,3 +400,33 @@ def build_invoice_pdf(order: Order, *, store: StoreIdentity, lang: str = "en") -
         ]
     )
     return buf.getvalue()
+
+
+def render_invoice_pdf(
+    db: Session, order: Order, *, store: StoreIdentity, lang: str = "en"
+) -> bytes:
+    """Render the right document for an order: a numbered faktura, else a proforma.
+
+    Looks up the ``invoices`` registry — an order gains a faktura on its
+    ``pending → paid`` transition — and feeds the resolved number + stable issue
+    date into the pure ``build_invoice_pdf``. Orders without a registry row
+    (pending, cancelled) render a proforma bearing the order-derived reference.
+    """
+    issued = crud_invoice.get_by_order_id(db, order.id)
+    if issued is not None:
+        return build_invoice_pdf(
+            order,
+            store=store,
+            invoice_number=issued.invoice_number,
+            issued_at=issued.issued_at.date(),
+            is_proforma=False,
+            lang=lang,
+        )
+    return build_invoice_pdf(
+        order,
+        store=store,
+        invoice_number=derive_invoice_number(order),
+        issued_at=dt.date.today(),
+        is_proforma=True,
+        lang=lang,
+    )

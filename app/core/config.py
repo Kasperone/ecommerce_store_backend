@@ -85,6 +85,13 @@ class Settings(BaseSettings):
     # 0 → no VAT block (plain receipt). Applied uniformly across currencies in
     # v1 — per-currency VAT is a future refinement.
     INVOICE_VAT_RATE: int = 23
+    # Sequential faktura numbering. The number is rendered from a Python str.format
+    # template with the placeholders {prefix} {year} {month} {seq} — e.g. {seq:05d}
+    # zero-pads. Custom/hand-written templates are supported (validated at startup).
+    # The sequence resets each calendar year (the counter is keyed by year), so
+    # {month} is display-only — a monthly reset would be a future enhancement.
+    INVOICE_NUMBER_PREFIX: str = "FV"
+    INVOICE_NUMBER_FORMAT: str = "{prefix}/{year}/{seq:05d}"
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="allow")
 
@@ -97,6 +104,21 @@ class Settings(BaseSettings):
                 f"(got {len(value.encode('utf-8'))}). Generate with "
                 f"`python -c 'import secrets; print(secrets.token_urlsafe(48))'`."
             )
+        return value
+
+    @field_validator("INVOICE_NUMBER_FORMAT")
+    @classmethod
+    def _validate_invoice_number_format(cls, value: str) -> str:
+        # Fail loud at startup on a malformed template (unknown placeholder or bad
+        # format spec) rather than producing garbage invoice numbers at issue time.
+        try:
+            value.format(prefix="X", year=2026, month=1, seq=1)
+        except (KeyError, IndexError, ValueError) as exc:
+            raise ValueError(
+                "INVOICE_NUMBER_FORMAT is invalid. Use a str.format template with "
+                "the placeholders {prefix} {year} {month} {seq} (e.g. "
+                f'"{{prefix}}/{{year}}/{{seq:05d}}"). Error: {exc}'
+            ) from exc
         return value
 
     @field_validator("R2_SECRET_ACCESS_KEY")
