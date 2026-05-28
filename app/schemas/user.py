@@ -1,7 +1,13 @@
+from typing import Literal
+
 from pydantic import EmailStr, Field, field_validator
 
 from app.models.user import UserRole
 from app.schemas.base import BaseSchema, TimestampSchema
+
+# Languages we localize transactional emails into. Restricting at the schema
+# boundary keeps a clean OpenAPI enum and rejects anything else with a 422.
+Locale = Literal["en", "pl"]
 
 
 class UserBase(BaseSchema):
@@ -11,6 +17,8 @@ class UserBase(BaseSchema):
     first_name: str
     last_name: str
     phone: str | None = None
+    # Preferred language for transactional emails; optional at registration.
+    locale: Locale = "en"
 
 
 class UserCreate(UserBase):
@@ -51,6 +59,7 @@ class UserUpdate(BaseSchema):
     first_name: str | None = None
     last_name: str | None = None
     phone: str | None = None
+    locale: Locale | None = None
 
     # Optional shipping address
     shipping_street: str | None = None

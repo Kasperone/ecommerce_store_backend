@@ -13,6 +13,7 @@ from typing import cast
 import pytest
 from sqlalchemy.orm import Session
 
+from app.core import email
 from app.models.order import Order, OrderItem, OrderStatus
 from app.models.user import User
 from app.services import order_email
@@ -122,6 +123,43 @@ def test_send_failure_is_swallowed(captured_emails, monkeypatch):
     monkeypatch.setattr(order_email.email, "send_order_email", _boom)
     # Best-effort: a failed send must not bubble out of send_order_event.
     order_email.send_order_event(_DB, _make_order(), "shipped")
+
+
+# --- localization -----------------------------------------------------------
+
+
+def test_polish_user_gets_polish_subject_and_lang(captured_emails):
+    order = _make_order()
+    order.user.locale = "pl"
+    order_email.send_order_event(_DB, order, "confirmation")
+    entry = captured_emails[0]
+    assert "potwierdzone" in entry["subject"]  # PL "confirmed"
+    assert entry["lang"] == "pl"
+
+
+def test_unknown_locale_falls_back_to_english(captured_emails):
+    order = _make_order()
+    order.user.locale = "de"  # unsupported → EN copy
+    order_email.send_order_event(_DB, order, "shipped")
+    assert "shipped" in captured_emails[0]["subject"]
+
+
+def test_render_order_email_body_english_labels():
+    html, text = email.render_order_email_body(
+        order=_make_order(), heading="Hi", intro_html="<p>x</p>", lang="en"
+    )
+    for label in ("Order", "Subtotal", "Shipping", "Total", "Shipping address"):
+        assert label in html
+    assert "Total:" in text
+
+
+def test_render_order_email_body_polish_labels():
+    html, text = email.render_order_email_body(
+        order=_make_order(), heading="Cześć", intro_html="<p>x</p>", lang="pl"
+    )
+    for label in ("Zamówienie", "Suma częściowa", "Dostawa", "Razem", "Adres dostawy"):
+        assert label in html
+    assert "Razem:" in text
 
 
 # --- background entry -------------------------------------------------------
