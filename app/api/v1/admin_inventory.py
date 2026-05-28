@@ -7,9 +7,10 @@ adjust here plus the retrofitted order place/cancel paths — lands on the same
 ``inventory_movements`` ledger surfaced by ``GET /movements``.
 """
 
+from datetime import date
 from math import ceil
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_admin, get_db
@@ -30,10 +31,23 @@ from app.schemas.inventory import (
     TransferRequest,
     TransferResponse,
 )
-from app.services import search_index
+from app.services import inventory_export, search_index
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+
+def _export_filename(inventory_status: str | None, search: str | None) -> str:
+    """``inventory`` base, suffixed with the active status / a search marker; falls
+    back to ``inventory-{today}.csv`` when nothing is filtered."""
+    parts = ["inventory"]
+    if inventory_status is not None:
+        parts.append(inventory_status)
+    if search:
+        parts.append("search")
+    if len(parts) == 1:
+        parts.append(date.today().isoformat())
+    return "-".join(parts) + ".csv"
 
 
 def _movement_item(
@@ -93,6 +107,57 @@ async def list_inventory(
         "page_size": page_size,
         "pages": pages,
     }
+
+
+@router.get(
+    "/export",
+    responses={200: {"content": {"text/csv": {}}, "description": "Inventory CSV export"}},
+)
+async def export_inventory(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    inventory_status: InventoryStatus | None = Query(None, alias="status"),
+    search: str | None = Query(None, max_length=100),
+):
+    """Download the stock list as CSV (admin), inheriting the status/search filters.
+
+    One row per product; per-warehouse levels packed into the ``warehouses`` column
+    (default first, synthesised from unallocated stock where a level isn't
+    materialised, so the packed levels sum to the ``stock`` total). RFC 4180, UTF-8
+    with BOM. Generated on demand — no persistence, no audit row (read-only GET).
+    """
+    products = crud_inventory.get_for_export(db, status=inventory_status, search=search)
+    default = crud_warehouse.get_default(db)
+    levels_map = crud_inventory.levels_by_product(db, product_ids=[p.id for p in products])
+
+    rows: list[inventory_export.InventoryExportRow] = []
+    for product in products:
+        levels = list(levels_map.get(product.id, []))
+        # Synthesise the default entry from unallocated stock when not materialised
+        # (mirrors crud_inventory.levels_for_product, but batched — no extra query).
+        if default is not None and not any(wh.id == default.id for wh, _ in levels):
+            materialised = sum(qty for _, qty in levels)
+            levels.append((default, product.stock - materialised))
+        levels.sort(key=lambda pair: (not pair[0].is_default, pair[0].code))
+        rows.append(
+            inventory_export.InventoryExportRow(
+                product_id=product.id,
+                name=product.name,
+                sku=product.sku,
+                stock=product.stock,
+                low_stock_threshold=product.low_stock_threshold,
+                status=crud_inventory.status_for(product),
+                warehouses=[(wh.code, qty) for wh, qty in levels],
+            )
+        )
+
+    csv_bytes = inventory_export.build_inventory_csv(rows)
+    filename = _export_filename(inventory_status, search)
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/products/{product_id}/levels", response_model=list[StockLevelItem])

@@ -223,6 +223,37 @@ class CRUDInventory:
     ) -> int:
         return self._admin_filtered_query(db, status=status, search=search).count()
 
+    def get_for_export(
+        self, db: Session, *, status: str | None = None, search: str | None = None
+    ) -> list[Product]:
+        """Every product matching the status/search filters (no pagination) for CSV
+        export — so the export mirrors the on-screen stock list."""
+        return (
+            self._admin_filtered_query(db, status=status, search=search)
+            .order_by(Product.name.asc(), Product.id.asc())
+            .all()
+        )
+
+    def levels_by_product(
+        self, db: Session, *, product_ids: list[int]
+    ) -> dict[int, list[tuple[Warehouse, int]]]:
+        """Materialised per-warehouse levels for many products in one query
+        (``{product_id: [(warehouse, quantity), ...]}``). Avoids the per-product
+        N+1 of ``levels_for_product`` for the CSV; the caller synthesises the
+        default entry where it isn't materialised."""
+        result: dict[int, list[tuple[Warehouse, int]]] = {pid: [] for pid in product_ids}
+        if not product_ids:
+            return result
+        rows = (
+            db.query(StockLevel, Warehouse)
+            .join(Warehouse, StockLevel.warehouse_id == Warehouse.id)
+            .filter(StockLevel.product_id.in_(product_ids))
+            .all()
+        )
+        for lvl, wh in rows:
+            result[lvl.product_id].append((wh, lvl.quantity))
+        return result
+
     # ------------------------------------------------------------------
     # Movement log
     # ------------------------------------------------------------------

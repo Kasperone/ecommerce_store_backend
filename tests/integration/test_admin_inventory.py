@@ -97,6 +97,55 @@ async def test_list_with_status_and_search(client, user_factory, product_factory
 
 
 # ---------------------------------------------------------------------------
+# CSV export
+# ---------------------------------------------------------------------------
+
+
+async def test_export_requires_admin(client, user_factory):
+    customer = user_factory(email="exp-cust@example.com", role=UserRole.CUSTOMER)
+    assert (await client.get("/api/v1/admin/inventory/export")).status_code == 401
+    assert (
+        await client.get("/api/v1/admin/inventory/export", headers=_headers(customer))
+    ).status_code == 403
+
+
+async def test_export_returns_csv_with_warehouses(client, user_factory, product_factory):
+    import csv
+    import io
+
+    admin = user_factory(email="exp-admin@example.com", role=UserRole.ADMIN)
+    product_factory(stock=10, name="Exportable", sku="EXP-1")
+
+    resp = await client.get("/api/v1/admin/inventory/export", headers=_headers(admin))
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/csv")
+    assert "attachment; filename=" in resp.headers["content-disposition"]
+    rows = list(csv.DictReader(io.StringIO(resp.content.decode("utf-8-sig"))))
+    by_name = {r["name"]: r for r in rows}
+    assert "Exportable" in by_name
+    assert by_name["Exportable"]["stock"] == "10"
+    # default warehouse synthesised into the packed column even with no level row.
+    assert "MAIN: 10" in by_name["Exportable"]["warehouses"]
+
+
+async def test_export_inherits_status_filter(client, user_factory, product_factory):
+    import csv
+    import io
+
+    admin = user_factory(email="exp-filter@example.com", role=UserRole.ADMIN)
+    product_factory(stock=0, name="ZeroStock")
+    product_factory(stock=50, name="PlentyStock")
+
+    resp = await client.get(
+        "/api/v1/admin/inventory/export?status=out_of_stock", headers=_headers(admin)
+    )
+    assert resp.status_code == 200
+    names = {r["name"] for r in csv.DictReader(io.StringIO(resp.content.decode("utf-8-sig")))}
+    assert "ZeroStock" in names
+    assert "PlentyStock" not in names
+
+
+# ---------------------------------------------------------------------------
 # manual adjust
 # ---------------------------------------------------------------------------
 
