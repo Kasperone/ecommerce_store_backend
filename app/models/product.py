@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from app.models.order import OrderItem
     from app.models.product_image import ProductImage
     from app.models.review import Review
+    from app.models.warehouse import StockLevel
 
 
 class Product(BaseModel):
@@ -66,6 +67,11 @@ class Product(BaseModel):
     )
     movements: Mapped[list["InventoryMovement"]] = relationship(
         "InventoryMovement",
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
+    stock_levels: Mapped[list["StockLevel"]] = relationship(
+        "StockLevel",
         back_populates="product",
         cascade="all, delete-orphan",
     )
