@@ -45,6 +45,8 @@ class DecodedToken:
     type: TokenType
     issued_at: datetime
     expires_at: datetime
+    # Set only on impersonation access tokens: the admin acting as ``subject``.
+    impersonator_id: int | None = None
 
 
 def _utcnow() -> datetime:
@@ -78,11 +80,27 @@ def _build_token(
 
 
 def create_access_token(
-    subject: str | Any, expires_delta: timedelta | None = None
+    subject: str | Any,
+    expires_delta: timedelta | None = None,
+    *,
+    impersonator_id: int | None = None,
 ) -> tuple[str, str, datetime]:
-    """Issue a short-lived access token. Returns ``(token, jti, expires_at)``."""
+    """Issue a short-lived access token. Returns ``(token, jti, expires_at)``.
+
+    When ``impersonator_id`` is set the token additionally carries an
+    ``impersonator_id`` claim — the admin acting *as* ``subject``. Such a token
+    resolves (via ``get_current_user``) to ``subject`` (the customer) but is
+    recognisable as an impersonation token by the write-guard middleware, which
+    blocks every non-safe HTTP method on it (view-only impersonation).
+    """
     delta = expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    return _build_token(subject=subject, token_type="access", expires_delta=delta)  # noqa: S106 -- token type label, not a credential
+    extra = {"impersonator_id": impersonator_id} if impersonator_id is not None else None
+    return _build_token(
+        subject=subject,
+        token_type="access",  # noqa: S106 -- token type label, not a credential
+        expires_delta=delta,
+        extra=extra,
+    )
 
 
 def create_refresh_token(
@@ -120,12 +138,15 @@ def decode_token(token: str, *, expected_type: TokenType) -> DecodedToken:
     exp = payload.get("exp")
     if not sub or not jti or iat is None or exp is None:
         raise JWTError("token is missing required claims")
+    raw_impersonator = payload.get("impersonator_id")
+    impersonator_id = int(raw_impersonator) if raw_impersonator is not None else None
     return DecodedToken(
         subject=str(sub),
         jti=str(jti),
         type=expected_type,
         issued_at=datetime.fromtimestamp(int(iat), tz=UTC),
         expires_at=datetime.fromtimestamp(int(exp), tz=UTC),
+        impersonator_id=impersonator_id,
     )
 
 

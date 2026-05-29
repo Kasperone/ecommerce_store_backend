@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 14
+    # Admin "view as customer" tokens: short-lived, no refresh (bounded blast radius).
+    IMPERSONATION_TOKEN_EXPIRE_MINUTES: int = 30
     JWT_ISSUER: str = "ecommerce-store"
     JWT_AUDIENCE: str = "ecommerce-store-clients"
 

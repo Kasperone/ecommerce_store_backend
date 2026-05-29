@@ -5,6 +5,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from app.core.config import settings
+from app.core.impersonation import ImpersonationWriteGuardMiddleware
 from app.core.rate_limit import limiter
 from app.core.security_headers import SecurityHeadersMiddleware, build_csp
 
@@ -13,6 +14,11 @@ app = FastAPI(
     version=settings.APP_VERSION,
     description="E-commerce API built with FastAPI",
 )
+
+# Impersonation write-guard. Registered first so it ends up the INNERMOST
+# middleware — its 403 still flows back out through CORS, so the browser can
+# read the body (a guard outside CORS would surface as an opaque CORS error).
+app.add_middleware(ImpersonationWriteGuardMiddleware)
 
 # Rate limiting (slowapi)
 app.state.limiter = limiter
