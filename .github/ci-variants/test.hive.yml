@@ -1,0 +1,154 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Manual trigger — lets us rebuild the GHCR `:main` image on demand (e.g. after
+  # an Actions outage/quota stall left `:main` stale relative to the merged code).
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-typecheck:
+    name: Lint + type-check (Ruff + Pyright)
+    # Self-hosted runner on hive (free; runs even while GitHub-hosted minutes
+    # are capped). Native job (NOT containerised) — it must match `test`, which
+    # is native so it can reach Postgres (hive's Docker has icc:false, so a
+    # container job can't reach a `services:` DB; mixing container + native jobs
+    # also corrupts the shared _work via root-owned files). setup-python has no
+    # Debian-13 build, so a uv-provided python3.12 sits on the runner PATH.
+    # Rollback: restore `runs-on: ubuntu-latest` + the setup-python step.
+    runs-on: [self-hosted, hive]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up venv + install deps
+        run: |
+          python3.12 -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Ruff format check
+        run: ruff format --check .
+
+      - name: Pyright type-check
+        run: pyright
+
+  test:
+    name: Test (pytest + Postgres 16)
+    needs: lint-and-typecheck
+    # Native job on hive (see lint-and-typecheck). hive's Docker runs icc:false,
+    # so a container job can't reach a `services:` Postgres; a native job reaches
+    # it via the published host port (localhost:5499).
+    runs-on: [self-hosted, hive]
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ecommerce_test
+        ports:
+          # Published to a host port the native job reaches at localhost:5499.
+          # hive's :5432 and :5433 are taken by other projects.
+          - 5499:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      ENVIRONMENT: development
+      DEBUG: "False"
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5499/ecommerce_test
+      SECRET_KEY: ci-secret-not-for-prod--not-for-prod--padding
+      JWT_SECRET_KEY: ci-jwt-secret-not-for-prod--not-for-prod--padding
+      RESEND_API_KEY: ""
+      EMAIL_FROM: ci@example.com
+      EMAIL_FROM_NAME: CI
+      FRONTEND_URL: http://localhost:3000
+      RATE_LIMIT_STORAGE_URL: memory://
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up venv + install deps
+        run: |
+          python3.12 -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      - name: Run migrations
+        run: alembic upgrade head
+
+      - name: Run tests
+        run: pytest -v
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: backend-coverage
+          path: coverage.xml
+          if-no-files-found: warn
+
+  build-and-push:
+    name: Build and push image to GHCR
+    needs: test
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    # Native job — uses the host Docker + buildx on hive. type=gha cache still
+    # works (Actions cache service, not minutes). Gated to main/dispatch, so it
+    # validates post-merge. Rollback: restore `runs-on: ubuntu-latest`.
+    runs-on: [self-hosted, hive]
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=ecommerce_store_backend
+            org.opencontainers.image.description=FastAPI backend image consumed by frontend E2E and (eventually) production deploy.
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
