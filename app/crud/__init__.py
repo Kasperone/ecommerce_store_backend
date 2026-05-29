@@ -1,6 +1,7 @@
 from app.crud.audit_event import audit_event
 from app.crud.category import category
 from app.crud.customer_note import customer_note
+from app.crud.dashboard import dashboard
 from app.crud.inventory import inventory
 from app.crud.invoice import invoice
 from app.crud.order import order
@@ -16,6 +17,7 @@ from app.crud.warehouse import warehouse
 __all__ = [
     "user",
     "customer_note",
+    "dashboard",
     "product",
     "product_image",
     "category",

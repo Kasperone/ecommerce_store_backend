@@ -68,6 +68,7 @@ async def health():
 from app.api.v1 import (  # noqa: E402
     admin_audit,
     admin_customers,
+    admin_dashboard,
     admin_inventory,
     admin_reviews,
     admin_tags,
@@ -90,6 +91,9 @@ app.include_router(payments.router, prefix="/api/v1/payments", tags=["Payments"]
 app.include_router(search.router, prefix="/api/v1/search", tags=["Search"])
 app.include_router(
     admin_customers.router, prefix="/api/v1/admin/customers", tags=["Admin Customers"]
+)
+app.include_router(
+    admin_dashboard.router, prefix="/api/v1/admin/dashboard", tags=["Admin Dashboard"]
 )
 app.include_router(
     admin_inventory.router, prefix="/api/v1/admin/inventory", tags=["Admin Inventory"]
