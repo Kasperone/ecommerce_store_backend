@@ -67,3 +67,27 @@ class CustomerListResponse(BaseSchema):
     page: int
     page_size: int
     pages: int
+
+
+class ImpersonatedCustomer(BaseSchema):
+    """Minimal customer identity returned when an admin starts impersonation —
+    enough for the frontend's 'Viewing as …' banner."""
+
+    id: int
+    email: str
+    first_name: str
+    last_name: str
+
+
+class ImpersonationResponse(BaseSchema):
+    """Result of `POST /admin/customers/{id}/impersonate`.
+
+    ``access_token`` is a short-lived, no-refresh access token whose ``sub`` is the
+    customer and which carries an ``impersonator_id`` claim (the acting admin). The
+    write-guard middleware makes it view-only.
+    """
+
+    access_token: str
+    token_type: str = "bearer"
+    expires_at: datetime
+    customer: ImpersonatedCustomer
