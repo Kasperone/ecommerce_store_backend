@@ -133,3 +133,36 @@ async def test_impersonate_records_audit_event(client, db_session, user_factory)
     )
     assert len(events) == 1
     assert events[0].payload["after"]["impersonator_id"] == admin.id
+
+
+async def test_impersonate_disabled_returns_503(client, user_factory, monkeypatch):
+    """The IMPERSONATION_ENABLED kill-switch 503s the endpoint without a deploy."""
+    monkeypatch.setattr("app.core.config.settings.IMPERSONATION_ENABLED", False)
+    admin = user_factory(email="imp-off@example.com", role=UserRole.ADMIN)
+    customer = user_factory(email="off-cust@example.com")
+    resp = await client.post(
+        f"/api/v1/admin/customers/{customer.id}/impersonate", headers=_headers(admin)
+    )
+    assert resp.status_code == 503
+
+
+@pytest.mark.rate_limit
+async def test_impersonate_is_rate_limited(client, user_factory, reset_limiter):
+    """20/hour cap: the 21st impersonation attempt from one client is throttled.
+
+    (Shares the impersonate limiter bucket with the other tests in this file —
+    they total well under 20, and ``reset_limiter`` clears the store at the start
+    of this test, so the count here begins at zero.)
+    """
+    admin = user_factory(email="imp-rl@example.com", role=UserRole.ADMIN)
+    customer = user_factory(email="rl-cust@example.com")
+    headers = _headers(admin)
+    for _ in range(20):
+        ok = await client.post(
+            f"/api/v1/admin/customers/{customer.id}/impersonate", headers=headers
+        )
+        assert ok.status_code == 200
+    throttled = await client.post(
+        f"/api/v1/admin/customers/{customer.id}/impersonate", headers=headers
+    )
+    assert throttled.status_code == 429
