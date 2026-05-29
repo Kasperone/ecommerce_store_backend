@@ -7,13 +7,16 @@ scope (own future plans).
 """
 
 import logging
+from datetime import timedelta
 from math import ceil
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core import email as email_service
+from app.core.config import settings
 from app.core.dependencies import get_current_admin, get_db
+from app.core.security import create_access_token
 from app.crud import customer_note as crud_customer_note
 from app.crud import tag as crud_tag
 from app.crud import user as crud_user
@@ -26,6 +29,8 @@ from app.schemas.customer import (
     CustomerListItem,
     CustomerListResponse,
     CustomerOrderMetrics,
+    ImpersonatedCustomer,
+    ImpersonationResponse,
 )
 from app.schemas.customer_note import (
     CustomerNoteCreate,
@@ -219,6 +224,65 @@ async def send_customer_password_reset(
     audit.record_update(resource_type="customer", obj=user)
     db.commit()
     return {"message": PASSWORD_RESET_TRIGGERED_MESSAGE}
+
+
+@router.post("/{customer_id}/impersonate", response_model=ImpersonationResponse)
+async def impersonate_customer(
+    customer_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
+):
+    """Start a **view-only** impersonation session for a customer (admin).
+
+    Issues a short-lived, no-refresh access token whose ``sub`` is the customer
+    and which carries an ``impersonator_id`` claim. The write-guard middleware
+    rejects every non-safe HTTP method on that token, so the admin can only *see*
+    what the customer sees — never act for them. Refused for another admin (no
+    impersonating peers) or an inactive account. Audited as ``impersonate``.
+    """
+    user = crud_user.get(db, id=customer_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
+    if user.role == UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot impersonate another admin",
+        )
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot impersonate an inactive customer",
+        )
+
+    token, _, expires_at = create_access_token(
+        subject=str(user.id),
+        expires_delta=timedelta(minutes=settings.IMPERSONATION_TOKEN_EXPIRE_MINUTES),
+        impersonator_id=current_admin.id,
+    )
+    audit.record_event(
+        action="impersonate",
+        resource_type="customer",
+        resource_id=user.id,
+        payload={
+            "after": {
+                "impersonator_id": current_admin.id,
+                "impersonator_email": current_admin.email,
+                "customer_email": user.email,
+            }
+        },
+    )
+    db.commit()
+    return ImpersonationResponse(
+        access_token=token,
+        expires_at=expires_at,
+        customer=ImpersonatedCustomer(
+            id=user.id,
+            email=user.email,
+            first_name=user.first_name,
+            last_name=user.last_name,
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
