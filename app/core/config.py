@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 14
     # Admin "view as customer" tokens: short-lived, no refresh (bounded blast radius).
     IMPERSONATION_TOKEN_EXPIRE_MINUTES: int = 30
+    # Kill-switch: set false to disable impersonation in an environment without a
+    # deploy (the endpoint 503s). On by default.
+    IMPERSONATION_ENABLED: bool = True
     JWT_ISSUER: str = "ecommerce-store"
     JWT_AUDIENCE: str = "ecommerce-store-clients"
 

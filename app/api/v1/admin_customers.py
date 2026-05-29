@@ -10,12 +10,13 @@ import logging
 from datetime import timedelta
 from math import ceil
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.core import email as email_service
 from app.core.config import settings
 from app.core.dependencies import get_current_admin, get_db
+from app.core.rate_limit import limiter
 from app.core.security import create_access_token
 from app.crud import customer_note as crud_customer_note
 from app.crud import tag as crud_tag
@@ -227,7 +228,9 @@ async def send_customer_password_reset(
 
 
 @router.post("/{customer_id}/impersonate", response_model=ImpersonationResponse)
+@limiter.limit("20/hour")
 async def impersonate_customer(
+    request: Request,
     customer_id: int,
     db: Session = Depends(get_db),
     current_admin: User = Depends(get_current_admin),
@@ -240,7 +243,15 @@ async def impersonate_customer(
     rejects every non-safe HTTP method on that token, so the admin can only *see*
     what the customer sees — never act for them. Refused for another admin (no
     impersonating peers) or an inactive account. Audited as ``impersonate``.
+
+    Rate-limited (20/hour) and gated by the ``IMPERSONATION_ENABLED`` kill-switch
+    so the capability can be throttled / disabled per environment.
     """
+    if not settings.IMPERSONATION_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Customer impersonation is disabled",
+        )
     user = crud_user.get(db, id=customer_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
