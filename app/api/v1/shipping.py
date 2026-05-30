@@ -23,6 +23,7 @@ from app.schemas.shipping import (
     ShippingQuoteResponse,
     _classify_pricing,
 )
+from app.services.dimensional_weight import billable_weight_kg
 
 router = APIRouter()
 
@@ -49,10 +50,23 @@ async def quote_shipping(
         0,
         ge=0,
         description=(
-            "Cart total weight in kg. When non-zero, weight-tiered rates resolve "
-            "against this value (free-above → weight-tiers → subtotal-tiers → "
-            "flat). Default 0 keeps storefronts that don't yet thread cart weight "
-            "working — they get subtotal-only resolution."
+            "Cart total *actual* weight in kg. When non-zero, weight-tiered rates "
+            "resolve against ``max(weight_kg, volumetric_kg)`` — see "
+            "``cart_volume_cm3`` for the volumetric branch. Default 0 keeps "
+            "storefronts that don't yet thread cart weight working."
+        ),
+    ),
+    cart_volume_cm3: float = Query(
+        0,
+        ge=0,
+        description=(
+            "Cart total volume in cm³ (frontend pre-sums per-line "
+            "``length_cm × width_cm × height_cm × qty``; any line missing a "
+            "dimension contributes 0). When the resolved zone has a "
+            "``dim_divisor``, ``volumetric_kg = cart_volume_cm3 / dim_divisor`` "
+            "and the resolver bills ``max(weight_kg, volumetric_kg)``. Default 0 "
+            "+ zones with NULL ``dim_divisor`` are the legacy path (actual "
+            "weight only) — backwards-compatible."
         ),
     ),
     db: Session = Depends(get_db),
@@ -60,31 +74,42 @@ async def quote_shipping(
     """Return the available shipping methods + resolved prices for a checkout.
 
     Each method's ``amount`` reflects the *resolved* shipping price for the
-    provided subtotal and (optional) cart weight — free-above triggered,
-    weight-tier band picked, subtotal-tier band picked, or the flat fallback.
-    The storefront renders it directly without re-running the resolver.
+    provided subtotal, actual cart weight, and (optional) cart volume —
+    free-above triggered, weight-tier band picked (against the billable
+    weight = ``max(actual, volumetric)``), subtotal-tier band picked, or the
+    flat fallback. The storefront renders it directly without re-running
+    the resolver. The divisor lookup + the ``max`` math live server-side
+    (per the dimensional-weight handoff D6) so the FE→BE contract stays a
+    single ``cart_volume_cm3`` scalar — the frontend never sees the divisor.
     """
     pairs = crud_shipping_rate.resolve_for_country(db, country_code=country, currency=currency)
-    methods = [
-        ShippingQuoteMethod(
-            id=method.id,
-            name=method.name,
-            code=method.code,
-            description=method.description,
-            sort_order=method.sort_order,
-            amount=round(
-                crud_shipping_rate.apply_shipping_rate(rate, subtotal, weight_kg=weight_kg),
-                2,
-            ),
-            currency=currency,
-            is_free=(rate.free_above_subtotal is not None and subtotal >= rate.free_above_subtotal),
-            pricing_kind=_classify_pricing(
-                rate.amount, rate.free_above_subtotal, rate.tiers, rate.weight_tiers
-            ),
-            free_above_subtotal=rate.free_above_subtotal,
+    methods: list[ShippingQuoteMethod] = []
+    for method, rate in pairs:
+        # The divisor lives on the rate's zone (every rate has a zone via
+        # the FK relationship). When NULL, ``billable_weight_kg`` skips the
+        # volumetric branch and returns the actual weight unchanged.
+        billable_kg = billable_weight_kg(weight_kg, cart_volume_cm3, rate.zone.dim_divisor)
+        methods.append(
+            ShippingQuoteMethod(
+                id=method.id,
+                name=method.name,
+                code=method.code,
+                description=method.description,
+                sort_order=method.sort_order,
+                amount=round(
+                    crud_shipping_rate.apply_shipping_rate(rate, subtotal, weight_kg=billable_kg),
+                    2,
+                ),
+                currency=currency,
+                is_free=(
+                    rate.free_above_subtotal is not None and subtotal >= rate.free_above_subtotal
+                ),
+                pricing_kind=_classify_pricing(
+                    rate.amount, rate.free_above_subtotal, rate.tiers, rate.weight_tiers
+                ),
+                free_above_subtotal=rate.free_above_subtotal,
+            )
         )
-        for method, rate in pairs
-    ]
     return ShippingQuoteResponse(
         country_code=country,
         currency=currency,

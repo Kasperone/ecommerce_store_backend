@@ -102,6 +102,12 @@ class ShippingZoneBase(BaseSchema):
     description: str | None = None
     is_active: bool = True
     sort_order: int = 0
+    # Volumetric weight divisor (cm³/kg) for this zone. PL/EU ground ≈ 5000,
+    # international air ≈ 6000. NULL = no volumetric pricing for the zone
+    # (resolver bills actual weight only). ``gt=0`` mirrors the
+    # ck_shipping_zones_dim_divisor_positive CHECK so a bad value 422s before
+    # SQL.
+    dim_divisor: float | None = Field(default=None, gt=0)
 
 
 class ShippingZoneCreate(ShippingZoneBase):
@@ -122,6 +128,7 @@ class ShippingZoneUpdate(BaseSchema):
     is_active: bool | None = None
     sort_order: int | None = None
     country_codes: list[ISO2Country] | None = None
+    dim_divisor: float | None = Field(default=None, gt=0)
 
     @field_validator("country_codes")
     @classmethod
@@ -140,6 +147,7 @@ class ShippingZoneListItem(TimestampSchema):
     sort_order: int
     country_count: int
     rate_count: int
+    dim_divisor: float | None
 
 
 class ShippingZoneListResponse(BaseSchema):
@@ -156,6 +164,7 @@ class ShippingZoneDetail(TimestampSchema):
     is_active: bool
     sort_order: int
     country_codes: list[str]
+    dim_divisor: float | None
 
 
 # ---------------------------------------------------------------------------

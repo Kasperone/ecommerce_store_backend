@@ -32,6 +32,7 @@ from app.models.order import Order, OrderItem, OrderStatus
 from app.models.product import Product
 from app.models.user import User, UserRole
 from app.schemas.order import OrderCreate, OrderUpdate
+from app.services.dimensional_weight import billable_weight_kg, line_volume_cm3
 
 # Forward-only status workflow for the admin PATCH endpoint. Terminal and
 # stock-affecting transitions (cancelled, refunded) are NOT in this map —
@@ -173,6 +174,15 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         # out the route on miss. Cart weight is summed from product.weight_kg
         # (NULL contributes 0 — legacy products with no weight skip the
         # weight-tier branch cleanly).
+        #
+        # Volumetric (dimensional) weight layers in here: if the resolved
+        # zone has a ``dim_divisor``, the resolver's ``weight_kg`` input is
+        # the **billable** weight = ``max(actual, volumetric)``. Per-line
+        # volume = ``l × w × h × qty`` (any missing dim → 0, so legacy
+        # un-dimensioned products contribute nothing); divisor comes from
+        # the zone; max-with-actual happens here so ``apply_shipping_rate``
+        # stays pure with one ``weight_kg`` input (see
+        # ``app/services/dimensional_weight.py``).
         method_rate = crud_shipping_rate.resolve_one(
             db,
             country_code=obj_in.shipping_country,
@@ -189,8 +199,18 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         total_weight = sum(
             (products[line.product_id].weight_kg or 0.0) * line.quantity for line in obj_in.items
         )
+        total_volume_cm3 = sum(
+            line_volume_cm3(
+                products[line.product_id].length_cm,
+                products[line.product_id].width_cm,
+                products[line.product_id].height_cm,
+                line.quantity,
+            )
+            for line in obj_in.items
+        )
+        billable_kg = billable_weight_kg(total_weight, total_volume_cm3, ship_rate.zone.dim_divisor)
         shipping_amount = round(
-            crud_shipping_rate.apply_shipping_rate(ship_rate, subtotal, weight_kg=total_weight),
+            crud_shipping_rate.apply_shipping_rate(ship_rate, subtotal, weight_kg=billable_kg),
             2,
         )
         total = round(subtotal + shipping_amount, 2)

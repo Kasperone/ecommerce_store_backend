@@ -61,6 +61,7 @@ def _zone_detail(zone: ShippingZone) -> ShippingZoneDetail:
         is_active=zone.is_active,
         sort_order=zone.sort_order,
         country_codes=crud_shipping_zone.country_codes_for(zone),
+        dim_divisor=zone.dim_divisor,
     )
 
 
@@ -120,6 +121,7 @@ async def list_zones(
             sort_order=z.sort_order,
             country_count=country_counts.get(z.id, 0),
             rate_count=rate_counts.get(z.id, 0),
+            dim_divisor=z.dim_divisor,
         )
         for z in zones
     ]
