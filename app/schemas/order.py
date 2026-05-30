@@ -2,6 +2,7 @@ from pydantic import Field
 
 from app.models.order import OrderStatus
 from app.schemas.base import BaseSchema, TimestampSchema
+from app.schemas.refund import RefundResponse
 from app.schemas.user import UserResponse
 
 
@@ -85,6 +86,11 @@ class OrderResponse(OrderBase, TimestampSchema):
 
     # Items
     items: list[OrderItemResponse] = Field(default_factory=list)
+
+    # Refunds — additive; existing clients ignore. Populated by ``get_scoped``'s
+    # eager-load. The admin surface uses this directly; the customer surface
+    # re-shapes client-side to drop ``note`` (admin notes are internal).
+    refunds: list[RefundResponse] = Field(default_factory=list)
 
 
 class OrderWithUser(OrderResponse):

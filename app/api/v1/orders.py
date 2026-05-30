@@ -9,10 +9,15 @@ from app.core.config import settings
 from app.core.dependencies import get_current_active_user, get_current_admin, get_db
 from app.crud import invoice as crud_invoice
 from app.crud import order as crud_order
+from app.crud import refund as crud_refund
 from app.crud.order import (
     InsufficientStockError,
     ProductUnavailableError,
     status_transition_error,
+)
+from app.crud.refund import (
+    OrderNotRefundableError,
+    PartialRefundUnsupportedError,
 )
 from app.crud.shipping import ShippingRateUnavailableError
 from app.models.order import OrderStatus
@@ -24,6 +29,7 @@ from app.schemas.order import (
     OrderUpdate,
     OrderWithUser,
 )
+from app.schemas.refund import RefundCreate, RefundResponse
 from app.services import invoice as invoice_service
 from app.services import order_email, order_export, search_index
 from app.services.audit import AuditWriter, get_audit_writer
@@ -321,3 +327,83 @@ async def cancel_order(
     # Cancellation email (best-effort, off the hot path).
     background_tasks.add_task(order_email.send_order_event_in_background, order.id, "cancelled")
     return order
+
+
+@router.post(
+    "/{order_id}/refunds",
+    response_model=RefundResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def issue_refund(
+    order_id: int,
+    refund_in: RefundCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
+):
+    """
+    Issue a refund against a paid/processing/shipped/delivered order (admin only).
+
+    v1 ships full refunds only — ``refund_in.amount`` must equal ``order.total``;
+    a partial refund 400s with the "not yet supported" message. ``restock=True``
+    writes one ``order_refunded`` inventory movement per line via the
+    ``apply_delta`` choke point (same per-line pattern as cancel). Always issues
+    a faktura korygująca **if** the order has a faktura (orders that went
+    ``pending → paid``); the KOR is gap-free + scoped to this transaction.
+
+    Forward-only status workflow rules continue to apply: the admin PATCH
+    endpoint rejects an explicit ``status=refunded`` and points the caller here.
+    """
+    order = crud_order.get_scoped(db, order_id=order_id, user=current_admin)
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+
+    try:
+        refund = crud_refund.create_for_order(
+            db,
+            order=order,
+            amount=refund_in.amount,
+            reason=refund_in.reason,
+            note=refund_in.note,
+            restock=refund_in.restock,
+            actor_user_id=current_admin.id,
+        )
+    except OrderNotRefundableError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except PartialRefundUnsupportedError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    audit.record_create(resource_type="refund", obj=refund)
+    db.commit()
+    # Re-load with the eager options so the response carries the KOR + actor
+    # without a fresh round-trip (db.refresh doesn't load relationships).
+    refund = crud_refund.get(db, refund_id=refund.id) or refund
+    # Stock potentially restored → refresh the in_stock facet (best-effort).
+    if refund_in.restock:
+        background_tasks.add_task(
+            search_index.sync_products_in_background, _touched_product_ids(order)
+        )
+    # Refund-confirmation email with the KOR attached (best-effort, off the hot path).
+    background_tasks.add_task(order_email.send_order_event_in_background, order.id, "refunded")
+    return refund
+
+
+@router.get("/{order_id}/refunds", response_model=list[RefundResponse])
+async def list_order_refunds(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    List refunds for an order, scoped to the caller (customer / admin).
+
+    Customers see only their own orders' refunds; admins see any. A non-existent
+    or not-owned order returns 404 (existence is not leaked). The customer
+    surface is expected to drop ``note`` client-side — that field is internal,
+    but the schema exposes it because the admin uses the same endpoint shape.
+    """
+    order = crud_order.get_scoped(db, order_id=order_id, user=current_user)
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+    return crud_refund.list_for_order(db, order_id=order.id)

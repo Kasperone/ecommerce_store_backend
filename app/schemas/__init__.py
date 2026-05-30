@@ -34,6 +34,12 @@ from app.schemas.product import (
     ProductUpdate,
     ProductWithCategory,
 )
+from app.schemas.refund import (
+    CorrectiveInvoiceResponse,
+    RefundCreate,
+    RefundReasonLiteral,
+    RefundResponse,
+)
 from app.schemas.user import (
     UserBase,
     UserCreate,
@@ -78,6 +84,11 @@ __all__ = [
     "OrderWithUser",
     "OrderListItem",
     "OrderListResponse",
+    # Refund
+    "RefundCreate",
+    "RefundResponse",
+    "RefundReasonLiteral",
+    "CorrectiveInvoiceResponse",
     # Auth
     "Token",
     "TokenData",
