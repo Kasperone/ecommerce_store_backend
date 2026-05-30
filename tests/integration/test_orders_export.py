@@ -25,14 +25,17 @@ def _headers(user) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _order_body(product_id: int, quantity: int = 1, currency: str = "USD") -> dict:
+def _order_body(
+    product_id: int, *, shipping_method_id: int, quantity: int = 1, currency: str = "USD"
+) -> dict:
     return {
         "items": [{"product_id": product_id, "quantity": quantity}],
         "currency": currency,
         "shipping_address": "1 Test St",
         "shipping_city": "Testville",
         "shipping_postal_code": "00-001",
-        "shipping_country": "Poland",
+        "shipping_country": "PL",
+        "shipping_method_id": shipping_method_id,
     }
 
 
@@ -62,12 +65,16 @@ async def test_export_forbidden_for_customer(client, user_factory):
     assert resp.status_code == 403
 
 
-async def test_export_returns_parseable_csv_for_admin(client, user_factory, product_factory):
+async def test_export_returns_parseable_csv_for_admin(
+    client, user_factory, product_factory, test_shipping_method_id
+):
     admin = user_factory(email="exp-admin@example.com", role=UserRole.ADMIN)
     customer = user_factory(email="exp-buyer@example.com")
     product = product_factory(stock=10, price_usd=25.0)
     await client.post(
-        "/api/v1/orders/", json=_order_body(product.id, 2), headers=_headers(customer)
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=2, shipping_method_id=test_shipping_method_id),
+        headers=_headers(customer),
     )
 
     resp = await client.get("/api/v1/orders/export", headers=_headers(admin))
@@ -89,15 +96,21 @@ async def test_export_does_not_collide_with_detail_route(client, user_factory):
     assert resp.status_code == 403
 
 
-async def test_export_status_filter_narrows(client, user_factory, product_factory):
+async def test_export_status_filter_narrows(
+    client, user_factory, product_factory, test_shipping_method_id
+):
     admin = user_factory(email="exp-statusadmin@example.com", role=UserRole.ADMIN)
     customer = user_factory(email="exp-statuscust@example.com")
     product = product_factory(stock=20, price_usd=10.0)
     created = await client.post(
-        "/api/v1/orders/", json=_order_body(product.id, 1), headers=_headers(customer)
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=1, shipping_method_id=test_shipping_method_id),
+        headers=_headers(customer),
     )
     await client.post(
-        "/api/v1/orders/", json=_order_body(product.id, 1), headers=_headers(customer)
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=1, shipping_method_id=test_shipping_method_id),
+        headers=_headers(customer),
     )
     # Cancel one so the two orders sit in different statuses.
     await client.post(f"/api/v1/orders/{created.json()['id']}/cancel", headers=_headers(customer))
@@ -110,12 +123,16 @@ async def test_export_status_filter_narrows(client, user_factory, product_factor
     assert "orders-cancelled" in cancelled.headers["content-disposition"]
 
 
-async def test_export_date_range_narrows(client, user_factory, product_factory):
+async def test_export_date_range_narrows(
+    client, user_factory, product_factory, test_shipping_method_id
+):
     admin = user_factory(email="exp-dateadmin@example.com", role=UserRole.ADMIN)
     customer = user_factory(email="exp-datecust@example.com")
     product = product_factory(stock=10, price_usd=10.0)
     await client.post(
-        "/api/v1/orders/", json=_order_body(product.id, 1), headers=_headers(customer)
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=1, shipping_method_id=test_shipping_method_id),
+        headers=_headers(customer),
     )
 
     # A future-only window excludes today's order (header-only body).
@@ -138,12 +155,16 @@ async def test_export_date_range_narrows(client, user_factory, product_factory):
 # ---------------------------------------------------------------------------
 
 
-async def test_list_date_from_filters(client, user_factory, product_factory):
+async def test_list_date_from_filters(
+    client, user_factory, product_factory, test_shipping_method_id
+):
     admin = user_factory(email="list-dateadmin@example.com", role=UserRole.ADMIN)
     customer = user_factory(email="list-datecust@example.com")
     product = product_factory(stock=10, price_usd=10.0)
     await client.post(
-        "/api/v1/orders/", json=_order_body(product.id, 1), headers=_headers(customer)
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=1, shipping_method_id=test_shipping_method_id),
+        headers=_headers(customer),
     )
 
     future = await client.get(

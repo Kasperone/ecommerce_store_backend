@@ -31,14 +31,17 @@ def _default_wh_id(db) -> int:
     return wh.id
 
 
-def _order_body(product_id: int, quantity: int = 1, currency: str = "USD") -> dict:
+def _order_body(
+    product_id: int, *, shipping_method_id: int, quantity: int = 1, currency: str = "USD"
+) -> dict:
     return {
         "items": [{"product_id": product_id, "quantity": quantity}],
         "currency": currency,
         "shipping_address": "1 Test St",
         "shipping_city": "Testville",
         "shipping_postal_code": "00-001",
-        "shipping_country": "Poland",
+        "shipping_country": "PL",
+        "shipping_method_id": shipping_method_id,
     }
 
 
@@ -467,13 +470,17 @@ async def test_transfer_unknown_warehouse_404(
 # ---------------------------------------------------------------------------
 
 
-async def test_order_place_and_cancel_land_on_ledger(client, user_factory, product_factory):
+async def test_order_place_and_cancel_land_on_ledger(
+    client, user_factory, product_factory, test_shipping_method_id
+):
     admin = user_factory(email="ledger-admin@example.com", role=UserRole.ADMIN)
     customer = user_factory(email="ledger-cust@example.com")
     product = product_factory(stock=10, price_usd=10.0, name="Ledgered")
 
     created = await client.post(
-        "/api/v1/orders/", json=_order_body(product.id, 3), headers=_headers(customer)
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=3, shipping_method_id=test_shipping_method_id),
+        headers=_headers(customer),
     )
     assert created.status_code == 201
     order_id = created.json()["id"]

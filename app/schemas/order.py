@@ -46,6 +46,10 @@ class OrderCreate(OrderBase):
 
     items: list[OrderItemCreate] = Field(..., min_length=1)
     currency: str = Field(default="USD", pattern="^(USD|PLN|EUR)$")
+    # The shipping method the customer picked from the storefront selector.
+    # Required — the order route 422s when no rate exists for the chosen
+    # method / country / currency triple (ShippingRateUnavailableError).
+    shipping_method_id: int
 
 
 class OrderUpdate(BaseSchema):
@@ -74,6 +78,10 @@ class OrderResponse(OrderBase, TimestampSchema):
     # Payment
     payment_method: str | None
     payment_intent_id: str | None
+
+    # Shipping method snapshot (null on pre-shipping legacy orders)
+    shipping_method_id: int | None = None
+    shipping_method_name: str | None = None
 
     # Items
     items: list[OrderItemResponse] = Field(default_factory=list)

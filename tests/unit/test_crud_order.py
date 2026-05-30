@@ -23,15 +23,26 @@ from app.schemas.order import OrderCreate, OrderItemCreate
 pytestmark = pytest.mark.integration
 
 
-def _order_in(items: list[tuple[int, int]], currency: str = "USD") -> OrderCreate:
-    """Build an OrderCreate from ``(product_id, quantity)`` tuples."""
+def _order_in(
+    items: list[tuple[int, int]],
+    *,
+    shipping_method_id: int,
+    currency: str = "USD",
+) -> OrderCreate:
+    """Build an OrderCreate from ``(product_id, quantity)`` tuples.
+
+    ``shipping_method_id`` is required (the validator now demands it); pass
+    the ``test_shipping_method_id`` session fixture from the caller. Country
+    is ISO-2 ``"PL"`` so the seeded Test Zone resolves a free rate.
+    """
     return OrderCreate(
         items=[OrderItemCreate(product_id=pid, quantity=qty) for pid, qty in items],
         currency=currency,
         shipping_address="1 Test St",
         shipping_city="Testville",
         shipping_postal_code="00-001",
-        shipping_country="Poland",
+        shipping_country="PL",
+        shipping_method_id=shipping_method_id,
     )
 
 
@@ -40,12 +51,16 @@ def _order_in(items: list[tuple[int, int]], currency: str = "USD") -> OrderCreat
 # ---------------------------------------------------------------------------
 
 
-def test_create_computes_totals_and_decrements_stock(db_session, user_factory, product_factory):
+def test_create_computes_totals_and_decrements_stock(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
     user = user_factory()
     product = product_factory(stock=10, price_usd=20.0, price_pln=80.0)
 
     order = crud_order.create_with_items(
-        db_session, user_id=user.id, obj_in=_order_in([(product.id, 2)])
+        db_session,
+        user_id=user.id,
+        obj_in=_order_in([(product.id, 2)], shipping_method_id=test_shipping_method_id),
     )
 
     assert order.id is not None
@@ -85,12 +100,18 @@ def test_create_computes_totals_and_decrements_stock(db_session, user_factory, p
     assert line.total_price == 40.0
 
 
-def test_create_prices_in_requested_currency(db_session, user_factory, product_factory):
+def test_create_prices_in_requested_currency(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
     user = user_factory()
     product = product_factory(stock=5, price_usd=20.0, price_pln=80.0, price_eur=18.0)
 
     order = crud_order.create_with_items(
-        db_session, user_id=user.id, obj_in=_order_in([(product.id, 1)], currency="PLN")
+        db_session,
+        user_id=user.id,
+        obj_in=_order_in(
+            [(product.id, 1)], shipping_method_id=test_shipping_method_id, currency="PLN"
+        ),
     )
 
     assert order.currency == "PLN"
@@ -98,13 +119,17 @@ def test_create_prices_in_requested_currency(db_session, user_factory, product_f
     assert order.total == 80.0
 
 
-def test_create_multi_line_sums_subtotal(db_session, user_factory, product_factory):
+def test_create_multi_line_sums_subtotal(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
     user = user_factory()
     p1 = product_factory(stock=10, price_usd=10.0)
     p2 = product_factory(stock=10, price_usd=5.5)
 
     order = crud_order.create_with_items(
-        db_session, user_id=user.id, obj_in=_order_in([(p1.id, 2), (p2.id, 4)])
+        db_session,
+        user_id=user.id,
+        obj_in=_order_in([(p1.id, 2), (p2.id, 4)], shipping_method_id=test_shipping_method_id),
     )
 
     assert order.subtotal == 42.0  # 20 + 22
@@ -112,13 +137,17 @@ def test_create_multi_line_sums_subtotal(db_session, user_factory, product_facto
     assert {line.product_id for line in order.items} == {p1.id, p2.id}
 
 
-def test_create_rejects_insufficient_stock(db_session, user_factory, product_factory):
+def test_create_rejects_insufficient_stock(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
     user = user_factory()
     product = product_factory(stock=1, price_usd=20.0)
 
     with pytest.raises(InsufficientStockError) as exc:
         crud_order.create_with_items(
-            db_session, user_id=user.id, obj_in=_order_in([(product.id, 3)])
+            db_session,
+            user_id=user.id,
+            obj_in=_order_in([(product.id, 3)], shipping_method_id=test_shipping_method_id),
         )
     assert exc.value.requested == 3
     assert exc.value.available == 1
@@ -127,12 +156,16 @@ def test_create_rejects_insufficient_stock(db_session, user_factory, product_fac
     assert product.stock == 1
 
 
-def test_create_allows_backorder_beyond_stock(db_session, user_factory, product_factory):
+def test_create_allows_backorder_beyond_stock(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
     user = user_factory()
     product = product_factory(stock=2, allow_backorder=True, price_usd=10.0)
 
     order = crud_order.create_with_items(
-        db_session, user_id=user.id, obj_in=_order_in([(product.id, 5)])
+        db_session,
+        user_id=user.id,
+        obj_in=_order_in([(product.id, 5)], shipping_method_id=test_shipping_method_id),
     )
     db_session.refresh(product)
 
@@ -142,41 +175,59 @@ def test_create_allows_backorder_beyond_stock(db_session, user_factory, product_
     assert movements[0].resulting_stock == -3
 
 
-def test_create_rejects_inactive_product(db_session, user_factory, product_factory):
+def test_create_rejects_inactive_product(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
     user = user_factory()
     product = product_factory(stock=10, price_usd=20.0, is_active=False)
 
     with pytest.raises(ProductUnavailableError):
         crud_order.create_with_items(
-            db_session, user_id=user.id, obj_in=_order_in([(product.id, 1)])
+            db_session,
+            user_id=user.id,
+            obj_in=_order_in([(product.id, 1)], shipping_method_id=test_shipping_method_id),
         )
 
 
-def test_create_rejects_missing_product(db_session, user_factory):
+def test_create_rejects_missing_product(db_session, user_factory, test_shipping_method_id):
     user = user_factory()
 
     with pytest.raises(ProductUnavailableError):
-        crud_order.create_with_items(db_session, user_id=user.id, obj_in=_order_in([(999_999, 1)]))
+        crud_order.create_with_items(
+            db_session,
+            user_id=user.id,
+            obj_in=_order_in([(999_999, 1)], shipping_method_id=test_shipping_method_id),
+        )
 
 
-def test_create_duplicate_lines_check_running_stock(db_session, user_factory, product_factory):
+def test_create_duplicate_lines_check_running_stock(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
     user = user_factory()
     product = product_factory(stock=3, price_usd=10.0)
 
     # Two lines of 2 each = 4 > stock 3; the second line sees the decremented 1.
     with pytest.raises(InsufficientStockError):
         crud_order.create_with_items(
-            db_session, user_id=user.id, obj_in=_order_in([(product.id, 2), (product.id, 2)])
+            db_session,
+            user_id=user.id,
+            obj_in=_order_in(
+                [(product.id, 2), (product.id, 2)], shipping_method_id=test_shipping_method_id
+            ),
         )
 
 
-def test_create_multi_line_writes_one_movement_per_line(db_session, user_factory, product_factory):
+def test_create_multi_line_writes_one_movement_per_line(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
     user = user_factory()
     p1 = product_factory(stock=10, price_usd=10.0)
     p2 = product_factory(stock=5, price_usd=5.0)
 
     order = crud_order.create_with_items(
-        db_session, user_id=user.id, obj_in=_order_in([(p1.id, 2), (p2.id, 3)])
+        db_session,
+        user_id=user.id,
+        obj_in=_order_in([(p1.id, 2), (p2.id, 3)], shipping_method_id=test_shipping_method_id),
     )
 
     movements = (
@@ -192,7 +243,7 @@ def test_create_multi_line_writes_one_movement_per_line(db_session, user_factory
 
 
 def test_create_duplicate_lines_that_fit_write_cumulative_movements(
-    db_session, user_factory, product_factory
+    db_session, user_factory, product_factory, test_shipping_method_id
 ):
     user = user_factory()
     product = product_factory(stock=10, price_usd=10.0)
@@ -200,7 +251,11 @@ def test_create_duplicate_lines_that_fit_write_cumulative_movements(
     # Two lines of the same product (2 + 3 = 5 <= stock 10): one movement each,
     # with resulting_stock stepping down cumulatively (8 then 5).
     order = crud_order.create_with_items(
-        db_session, user_id=user.id, obj_in=_order_in([(product.id, 2), (product.id, 3)])
+        db_session,
+        user_id=user.id,
+        obj_in=_order_in(
+            [(product.id, 2), (product.id, 3)], shipping_method_id=test_shipping_method_id
+        ),
     )
 
     db_session.refresh(product)
@@ -221,11 +276,13 @@ def test_create_duplicate_lines_that_fit_write_cumulative_movements(
 # ---------------------------------------------------------------------------
 
 
-def test_cancel_restores_stock(db_session, user_factory, product_factory):
+def test_cancel_restores_stock(db_session, user_factory, product_factory, test_shipping_method_id):
     user = user_factory()
     product = product_factory(stock=10, price_usd=20.0)
     order = crud_order.create_with_items(
-        db_session, user_id=user.id, obj_in=_order_in([(product.id, 3)])
+        db_session,
+        user_id=user.id,
+        obj_in=_order_in([(product.id, 3)], shipping_method_id=test_shipping_method_id),
     )
     db_session.refresh(product)
     assert product.stock == 7
@@ -249,11 +306,13 @@ def test_cancel_restores_stock(db_session, user_factory, product_factory):
     assert movements[-1].resulting_stock == 10
 
 
-def test_is_cancellable(db_session, user_factory, product_factory):
+def test_is_cancellable(db_session, user_factory, product_factory, test_shipping_method_id):
     user = user_factory()
     product = product_factory(stock=10, price_usd=20.0)
     order = crud_order.create_with_items(
-        db_session, user_id=user.id, obj_in=_order_in([(product.id, 1)])
+        db_session,
+        user_id=user.id,
+        obj_in=_order_in([(product.id, 1)], shipping_method_id=test_shipping_method_id),
     )
     assert crud_order.is_cancellable(order) is True
     order.status = OrderStatus.DELIVERED
@@ -304,39 +363,55 @@ def test_transition_to_cancelled_or_refunded_points_to_cancel_endpoint(target):
 # ---------------------------------------------------------------------------
 
 
-def test_get_scoped_customer_sees_only_own(db_session, user_factory, product_factory):
+def test_get_scoped_customer_sees_only_own(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
     owner = user_factory(email="owner@orders.test")
     other = user_factory(email="other@orders.test")
     product = product_factory(stock=10, price_usd=20.0)
     order = crud_order.create_with_items(
-        db_session, user_id=owner.id, obj_in=_order_in([(product.id, 1)])
+        db_session,
+        user_id=owner.id,
+        obj_in=_order_in([(product.id, 1)], shipping_method_id=test_shipping_method_id),
     )
 
     assert crud_order.get_scoped(db_session, order_id=order.id, user=owner) is not None
     assert crud_order.get_scoped(db_session, order_id=order.id, user=other) is None
 
 
-def test_get_scoped_admin_sees_any(db_session, user_factory, product_factory):
+def test_get_scoped_admin_sees_any(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
     owner = user_factory(email="owner2@orders.test")
     admin = user_factory(email="admin2@orders.test", role=UserRole.ADMIN)
     product = product_factory(stock=10, price_usd=20.0)
     order = crud_order.create_with_items(
-        db_session, user_id=owner.id, obj_in=_order_in([(product.id, 1)])
+        db_session,
+        user_id=owner.id,
+        obj_in=_order_in([(product.id, 1)], shipping_method_id=test_shipping_method_id),
     )
 
     assert crud_order.get_scoped(db_session, order_id=order.id, user=admin) is not None
 
 
-def test_multi_scoped_and_count_filter(db_session, user_factory, product_factory):
+def test_multi_scoped_and_count_filter(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
     owner = user_factory(email="owner3@orders.test")
     other = user_factory(email="other3@orders.test")
     admin = user_factory(email="admin3@orders.test", role=UserRole.ADMIN)
     product = product_factory(stock=50, price_usd=10.0)
 
     o1 = crud_order.create_with_items(
-        db_session, user_id=owner.id, obj_in=_order_in([(product.id, 1)])
+        db_session,
+        user_id=owner.id,
+        obj_in=_order_in([(product.id, 1)], shipping_method_id=test_shipping_method_id),
     )
-    crud_order.create_with_items(db_session, user_id=other.id, obj_in=_order_in([(product.id, 1)]))
+    crud_order.create_with_items(
+        db_session,
+        user_id=other.id,
+        obj_in=_order_in([(product.id, 1)], shipping_method_id=test_shipping_method_id),
+    )
 
     # Customer sees only own.
     assert crud_order.count_scoped(db_session, user=owner) == 1

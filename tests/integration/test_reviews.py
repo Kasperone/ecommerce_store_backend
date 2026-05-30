@@ -35,14 +35,15 @@ def _approve(db: Session, *, product_id: int, user_id: int) -> None:
     db.commit()
 
 
-def _order_body(product_id: int) -> dict:
+def _order_body(product_id: int, *, shipping_method_id: int) -> dict:
     return {
         "items": [{"product_id": product_id, "quantity": 1}],
         "currency": "USD",
         "shipping_address": "1 Test St",
         "shipping_city": "Testville",
         "shipping_postal_code": "00-001",
-        "shipping_country": "Poland",
+        "shipping_country": "PL",
+        "shipping_method_id": shipping_method_id,
     }
 
 
@@ -130,11 +131,15 @@ async def test_create_validation_422(client, user_factory, product_factory):
     assert short_body.status_code == 422
 
 
-async def test_create_sets_verified_purchase_after_order(client, user_factory, product_factory):
+async def test_create_sets_verified_purchase_after_order(
+    client, user_factory, product_factory, test_shipping_method_id
+):
     user = user_factory()
     product = product_factory(stock=10, price_usd=25.0)
     order = await client.post(
-        "/api/v1/orders/", json=_order_body(product.id), headers=_headers(user)
+        "/api/v1/orders/",
+        json=_order_body(product.id, shipping_method_id=test_shipping_method_id),
+        headers=_headers(user),
     )
     assert order.status_code == 201
 

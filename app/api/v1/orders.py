@@ -14,6 +14,7 @@ from app.crud.order import (
     ProductUnavailableError,
     status_transition_error,
 )
+from app.crud.shipping import ShippingRateUnavailableError
 from app.models.order import OrderStatus
 from app.models.user import User, UserRole
 from app.schemas.order import (
@@ -74,6 +75,11 @@ async def create_order(
             detail=f"Product {exc.product_id} is unavailable",
         ) from exc
     except InsufficientStockError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    except ShippingRateUnavailableError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),

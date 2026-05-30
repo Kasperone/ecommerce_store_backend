@@ -34,37 +34,42 @@ def _headers(user) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _order_body(product_id: int, quantity: int = 1) -> dict:
+def _order_body(product_id: int, *, shipping_method_id: int, quantity: int = 1) -> dict:
     return {
         "items": [{"product_id": product_id, "quantity": quantity}],
         "currency": "USD",
         "shipping_address": "1 Test St",
         "shipping_city": "Town",
         "shipping_postal_code": "00-001",
-        "shipping_country": "USA",
+        "shipping_country": "US",
+        "shipping_method_id": shipping_method_id,
     }
 
 
 async def test_create_schedules_confirmation(
-    client, user_factory, product_factory, scheduled_emails
+    client, user_factory, product_factory, scheduled_emails, test_shipping_method_id
 ):
     user = user_factory()
     product = product_factory(stock=5, price_usd=20.0)
     resp = await client.post(
-        "/api/v1/orders/", json=_order_body(product.id), headers=_headers(user)
+        "/api/v1/orders/",
+        json=_order_body(product.id, shipping_method_id=test_shipping_method_id),
+        headers=_headers(user),
     )
     assert resp.status_code == 201
     assert (resp.json()["id"], "confirmation") in scheduled_emails
 
 
 async def test_admin_status_change_schedules_event(
-    client, user_factory, product_factory, scheduled_emails
+    client, user_factory, product_factory, scheduled_emails, test_shipping_method_id
 ):
     customer = user_factory(email="evt-cust@example.com")
     admin = user_factory(email="evt-admin@example.com", role=UserRole.ADMIN)
     product = product_factory(stock=5, price_usd=20.0)
     created = await client.post(
-        "/api/v1/orders/", json=_order_body(product.id), headers=_headers(customer)
+        "/api/v1/orders/",
+        json=_order_body(product.id, shipping_method_id=test_shipping_method_id),
+        headers=_headers(customer),
     )
     order_id = created.json()["id"]
     scheduled_emails.clear()  # drop the confirmation scheduled by create
@@ -77,13 +82,15 @@ async def test_admin_status_change_schedules_event(
 
 
 async def test_admin_notes_only_schedules_nothing(
-    client, user_factory, product_factory, scheduled_emails
+    client, user_factory, product_factory, scheduled_emails, test_shipping_method_id
 ):
     customer = user_factory(email="notes-cust@example.com")
     admin = user_factory(email="notes-admin@example.com", role=UserRole.ADMIN)
     product = product_factory(stock=5, price_usd=20.0)
     created = await client.post(
-        "/api/v1/orders/", json=_order_body(product.id), headers=_headers(customer)
+        "/api/v1/orders/",
+        json=_order_body(product.id, shipping_method_id=test_shipping_method_id),
+        headers=_headers(customer),
     )
     order_id = created.json()["id"]
     scheduled_emails.clear()
@@ -96,11 +103,15 @@ async def test_admin_notes_only_schedules_nothing(
     assert scheduled_emails == []
 
 
-async def test_cancel_schedules_cancelled(client, user_factory, product_factory, scheduled_emails):
+async def test_cancel_schedules_cancelled(
+    client, user_factory, product_factory, scheduled_emails, test_shipping_method_id
+):
     user = user_factory(email="cancel-cust@example.com")
     product = product_factory(stock=5, price_usd=20.0)
     created = await client.post(
-        "/api/v1/orders/", json=_order_body(product.id), headers=_headers(user)
+        "/api/v1/orders/",
+        json=_order_body(product.id, shipping_method_id=test_shipping_method_id),
+        headers=_headers(user),
     )
     order_id = created.json()["id"]
     scheduled_emails.clear()

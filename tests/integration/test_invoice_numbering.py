@@ -22,20 +22,23 @@ def _headers(user) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _order_body(product_id: int, quantity: int = 1) -> dict:
+def _order_body(product_id: int, *, shipping_method_id: int, quantity: int = 1) -> dict:
     return {
         "items": [{"product_id": product_id, "quantity": quantity}],
         "currency": "USD",
         "shipping_address": "1 Test St",
         "shipping_city": "Testville",
         "shipping_postal_code": "00-001",
-        "shipping_country": "Poland",
+        "shipping_country": "PL",
+        "shipping_method_id": shipping_method_id,
     }
 
 
-async def _create_order(client, user, product) -> int:
+async def _create_order(client, user, product, *, shipping_method_id: int) -> int:
     resp = await client.post(
-        "/api/v1/orders/", json=_order_body(product.id), headers=_headers(user)
+        "/api/v1/orders/",
+        json=_order_body(product.id, shipping_method_id=shipping_method_id),
+        headers=_headers(user),
     )
     assert resp.status_code == 201
     return resp.json()["id"]
@@ -49,11 +52,15 @@ async def _mark_paid(client, admin, order_id: int) -> None:
     assert resp.json()["status"] == "paid"
 
 
-async def test_paid_order_download_is_numbered_faktura(client, user_factory, product_factory):
+async def test_paid_order_download_is_numbered_faktura(
+    client, user_factory, product_factory, test_shipping_method_id
+):
     owner = user_factory(email="fakt-owner@example.com")
     admin = user_factory(email="fakt-admin@example.com", role=UserRole.ADMIN)
     product = product_factory(stock=10, price_usd=25.0)
-    order_id = await _create_order(client, owner, product)
+    order_id = await _create_order(
+        client, owner, product, shipping_method_id=test_shipping_method_id
+    )
 
     await _mark_paid(client, admin, order_id)
 
@@ -71,15 +78,21 @@ async def test_paid_order_download_is_numbered_faktura(client, user_factory, pro
     assert again.headers["content-disposition"] == disposition
 
 
-async def test_sequential_numbers_across_paid_orders(client, user_factory, product_factory):
+async def test_sequential_numbers_across_paid_orders(
+    client, user_factory, product_factory, test_shipping_method_id
+):
     owner = user_factory(email="seq-owner@example.com")
     admin = user_factory(email="seq-admin@example.com", role=UserRole.ADMIN)
     product = product_factory(stock=10, price_usd=25.0)
     year = dt.datetime.now(dt.UTC).year
 
-    first_id = await _create_order(client, owner, product)
+    first_id = await _create_order(
+        client, owner, product, shipping_method_id=test_shipping_method_id
+    )
     await _mark_paid(client, admin, first_id)
-    second_id = await _create_order(client, owner, product)
+    second_id = await _create_order(
+        client, owner, product, shipping_method_id=test_shipping_method_id
+    )
     await _mark_paid(client, admin, second_id)
 
     first = await client.get(f"/api/v1/orders/{first_id}/invoice", headers=_headers(owner))
@@ -90,12 +103,14 @@ async def test_sequential_numbers_across_paid_orders(client, user_factory, produ
 
 
 async def test_pending_order_is_proforma_then_faktura_after_paid(
-    client, user_factory, product_factory
+    client, user_factory, product_factory, test_shipping_method_id
 ):
     owner = user_factory(email="trans-owner@example.com")
     admin = user_factory(email="trans-admin@example.com", role=UserRole.ADMIN)
     product = product_factory(stock=10, price_usd=25.0)
-    order_id = await _create_order(client, owner, product)
+    order_id = await _create_order(
+        client, owner, product, shipping_method_id=test_shipping_method_id
+    )
 
     before = await client.get(f"/api/v1/orders/{order_id}/invoice", headers=_headers(owner))
     assert "proforma-PF-" in before.headers["content-disposition"]

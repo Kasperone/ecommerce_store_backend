@@ -20,6 +20,12 @@ from sqlalchemy.orm import Query, Session, selectinload
 from app.crud.base import CRUDBase
 from app.crud.inventory import inventory as crud_inventory
 from app.crud.invoice import invoice as crud_invoice
+from app.crud.shipping import (
+    ShippingRateUnavailableError,
+)
+from app.crud.shipping import (
+    rate as crud_shipping_rate,
+)
 from app.crud.warehouse import warehouse as crud_warehouse
 from app.models.inventory_movement import InventoryMovementReason
 from app.models.order import Order, OrderItem, OrderStatus
@@ -160,19 +166,41 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             )
 
         subtotal = round(subtotal, 2)
+
+        # Shipping resolution: validate the chosen method has a rate for the
+        # caller's country+currency, then compute the amount via the central
+        # resolver (free-above → tiers → flat). 422s out the route on miss.
+        method_rate = crud_shipping_rate.resolve_one(
+            db,
+            country_code=obj_in.shipping_country,
+            currency=currency,
+            method_id=obj_in.shipping_method_id,
+        )
+        if method_rate is None:
+            raise ShippingRateUnavailableError(
+                country_code=obj_in.shipping_country,
+                currency=currency,
+                method_id=obj_in.shipping_method_id,
+            )
+        ship_method, ship_rate = method_rate
+        shipping_amount = round(crud_shipping_rate.apply_shipping_rate(ship_rate, subtotal), 2)
+        total = round(subtotal + shipping_amount, 2)
+
         order = Order(
             user_id=user_id,
             order_number=self._generate_order_number(db),
             status=OrderStatus.PENDING,
             subtotal=subtotal,
             tax=0.0,
-            shipping=0.0,
-            total=subtotal,
+            shipping=shipping_amount,
+            total=total,
             currency=currency,
             shipping_address=obj_in.shipping_address,
             shipping_city=obj_in.shipping_city,
             shipping_postal_code=obj_in.shipping_postal_code,
             shipping_country=obj_in.shipping_country,
+            shipping_method_id=ship_method.id,
+            shipping_method_name=ship_method.name,
             notes=obj_in.notes,
             items=items,
         )
