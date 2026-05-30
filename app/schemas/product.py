@@ -58,7 +58,15 @@ class ProductBase(BaseSchema):
     price_pln: Annotated[float | None, Field(gt=0)] = None
     price_eur: Annotated[float | None, Field(gt=0)] = None
 
-    stock: Annotated[int, Field(ge=0)] = 0
+    # Stock can go negative at runtime when ``allow_backorder=True`` and an
+    # order is placed for more units than are on hand (see
+    # ``crud_inventory.apply_delta`` with ``allow_negative=True``). The
+    # response/base shape must surface that real value without crashing
+    # serialisation; the ``ge=0`` floor on initial create lives on
+    # ``ProductCreate`` below. ``ProductUpdate`` intentionally does not
+    # expose ``stock`` — post-create mutations go through the inventory
+    # endpoints (adjust / restock), which own the negative-stock rule.
+    stock: int = 0
     # Null = no threshold → never flagged "low stock". Editable here and from the
     # admin inventory adjust dialog.
     low_stock_threshold: Annotated[int | None, Field(ge=0)] = None
@@ -77,6 +85,11 @@ class ProductBase(BaseSchema):
 
 class ProductCreate(ProductBase):
     """Schema for creating a product"""
+
+    # Initial stock at create time can't be negative. Orders are the only
+    # legitimate driver of negative stock and they go through
+    # ``crud_inventory.apply_delta``, never through this schema.
+    stock: Annotated[int, Field(ge=0)] = 0
 
     @model_validator(mode="after")
     def _at_least_one_currency(self) -> "ProductCreate":
