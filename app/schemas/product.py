@@ -77,6 +77,14 @@ class ProductBase(BaseSchema):
     # no weight contributes nothing to the cart's total weight); admins backfill
     # at their pace. Drives weight-tier band matching at checkout.
     weight_kg: Annotated[float | None, Field(ge=0)] = None
+    # Physical dimensions in centimetres — all three nullable; legacy products
+    # carry NULL. Convention is "all three set or none" — the order-create
+    # resolver treats "any one NULL" as "no volumetric contribution" so a
+    # half-populated row stays harmless. Drives volumetric-weight pricing
+    # alongside ``ShippingZone.dim_divisor``.
+    length_cm: Annotated[float | None, Field(ge=0)] = None
+    width_cm: Annotated[float | None, Field(ge=0)] = None
+    height_cm: Annotated[float | None, Field(ge=0)] = None
     is_active: bool = True
     is_featured: bool = False
 
@@ -121,6 +129,9 @@ class ProductUpdate(BaseSchema):
     low_stock_threshold: Annotated[int | None, Field(ge=0)] = None
     allow_backorder: bool | None = None
     weight_kg: Annotated[float | None, Field(ge=0)] = None
+    length_cm: Annotated[float | None, Field(ge=0)] = None
+    width_cm: Annotated[float | None, Field(ge=0)] = None
+    height_cm: Annotated[float | None, Field(ge=0)] = None
     is_active: bool | None = None
     is_featured: bool | None = None
 

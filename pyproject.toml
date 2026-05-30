@@ -120,6 +120,15 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "RUF", "ASYNC", "S"]
 # Shipping seed catalog comments + docstring use "×" (U+00D7) as the
 # zone×method×currency separator — same harmless human-readable convention.
 "app/scripts/seed_shipping.py" = ["RUF002", "RUF003"]
+# Dimensional-weight docstrings + tests use "×" (U+00D7) as the
+# length × width × height multiplication separator — same convention.
+"app/api/v1/shipping.py" = ["RUF001"]
+"app/crud/order.py" = ["RUF003"]
+"app/models/product.py" = ["RUF003"]
+"app/services/dimensional_weight.py" = ["RUF002"]
+"tests/unit/test_dimensional_weight.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/integration/test_orders_dimensional.py" = ["RUF002", "RUF003"]
+"tests/integration/test_shipping_quote.py" = ["RUF002", "RUF003"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]

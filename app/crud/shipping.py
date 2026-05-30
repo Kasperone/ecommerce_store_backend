@@ -160,6 +160,7 @@ class CRUDShippingZone(CRUDBase[ShippingZone, ShippingZoneCreate, ShippingZoneUp
             description=obj_in.description,
             is_active=obj_in.is_active,
             sort_order=obj_in.sort_order,
+            dim_divisor=obj_in.dim_divisor,
         )
         db.add(zone)
         db.flush()
@@ -174,10 +175,13 @@ class CRUDShippingZone(CRUDBase[ShippingZone, ShippingZoneCreate, ShippingZoneUp
 
         Mirrors the orders ``apply_admin_update`` pattern: only touches
         fields present in ``model_fields_set`` so a partial PATCH that
-        omits ``country_codes`` keeps the existing assignment.
+        omits ``country_codes`` keeps the existing assignment. ``dim_divisor``
+        accepts explicit ``None`` to clear (turn off volumetric pricing for
+        the zone) — that's the difference between "absent from input" (skip)
+        and "explicitly null" (clear) that ``exclude_unset=True`` preserves.
         """
         data = obj_in.model_dump(exclude_unset=True)
-        for field in ("name", "description", "is_active", "sort_order"):
+        for field in ("name", "description", "is_active", "sort_order", "dim_divisor"):
             if field in data:
                 setattr(zone, field, data[field])
         if "country_codes" in data and data["country_codes"] is not None:
@@ -330,7 +334,8 @@ class CRUDShippingRate(CRUDBase[ShippingRate, ShippingRateCreate, ShippingRateUp
         Joins ``shipping_zone_countries`` → ``shipping_zones`` → ``shipping_rates``
         → ``shipping_methods`` in one query; filters to active methods + active
         zones; orders by ``method.sort_order, method.name`` for a stable selector
-        layout.
+        layout. Eager-loads ``rate.zone`` so callers reading ``rate.zone.dim_divisor``
+        (the quote endpoint's volumetric branch) don't trigger an N+1.
         """
         rows = (
             db.query(ShippingMethod, ShippingRate)
@@ -340,6 +345,7 @@ class CRUDShippingRate(CRUDBase[ShippingRate, ShippingRateCreate, ShippingRateUp
                 ShippingZoneCountry,
                 ShippingZoneCountry.zone_id == ShippingZone.id,
             )
+            .options(joinedload(ShippingRate.zone))
             .filter(
                 ShippingZoneCountry.country_code == country_code.upper(),
                 ShippingRate.currency == currency.upper(),
@@ -363,6 +369,8 @@ class CRUDShippingRate(CRUDBase[ShippingRate, ShippingRateCreate, ShippingRateUp
 
         Returns ``None`` if the method isn't available for the country+currency
         (the order route maps this to a 422 via ``ShippingRateUnavailableError``).
+        Eager-loads ``rate.zone`` so ``crud_order.create_with_items`` reading
+        ``rate.zone.dim_divisor`` doesn't trigger a lazy fetch.
         """
         row = (
             db.query(ShippingMethod, ShippingRate)
@@ -372,6 +380,7 @@ class CRUDShippingRate(CRUDBase[ShippingRate, ShippingRateCreate, ShippingRateUp
                 ShippingZoneCountry,
                 ShippingZoneCountry.zone_id == ShippingZone.id,
             )
+            .options(joinedload(ShippingRate.zone))
             .filter(
                 ShippingMethod.id == method_id,
                 ShippingZoneCountry.country_code == country_code.upper(),

@@ -60,18 +60,31 @@ ZONES: list[dict[str, Any]] = [
         "description": "Domestic shipping within Poland",
         "country_codes": ["PL"],
         "sort_order": 10,
+        # PL ground couriers (DPD/InPost/Pocztex) use the EU-standard 5000 cm³/kg
+        # divisor — this seeds the divisor on a fresh install so a bulky-light
+        # package gets priced by its volumetric weight out of the box. Existing
+        # zones on a rerun keep their admin-set value (the get-or-create path
+        # doesn't overwrite).
+        "dim_divisor": 5000,
     },
     {
         "name": "European Union",
         "description": "EU member states (selected active markets)",
         "country_codes": EU_COUNTRIES,
         "sort_order": 20,
+        # EU left NULL — admin opts in explicitly when shipping bulky items
+        # cross-border. The seed avoids the "rates jumped silently after deploy"
+        # risk on existing EU rate matrices.
+        "dim_divisor": None,
     },
     {
         "name": "Rest of the World",
         "description": "Countries outside PL and the EU bundle above",
         "country_codes": [],  # admin adds GB/US/CA/etc. via the zone editor
         "sort_order": 30,
+        # RoW also left NULL — international air carriers usually use 6000;
+        # admin sets the right value when they assign countries.
+        "dim_divisor": None,
     },
 ]
 
@@ -147,6 +160,7 @@ def _get_or_create_zone(db: Session, *, spec: dict[str, Any]) -> ShippingZone:
         description=spec.get("description"),
         is_active=True,
         sort_order=spec.get("sort_order", 0),
+        dim_divisor=spec.get("dim_divisor"),
     )
     db.add(zone)
     db.flush()
