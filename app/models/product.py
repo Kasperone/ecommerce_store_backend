@@ -26,6 +26,10 @@ class Product(BaseModel):
             "price_usd IS NOT NULL OR price_pln IS NOT NULL OR price_eur IS NOT NULL",
             name="ck_products_at_least_one_price",
         ),
+        CheckConstraint(
+            "weight_kg IS NULL OR weight_kg >= 0",
+            name="ck_products_weight_kg_nonneg",
+        ),
     )
 
     # Basic info
@@ -45,6 +49,13 @@ class Product(BaseModel):
     price_usd: Mapped[float | None] = mapped_column(Float)
     price_pln: Mapped[float | None] = mapped_column(Float)
     price_eur: Mapped[float | None] = mapped_column(Float)
+
+    # Physical weight in kilograms (nullable — legacy products start at NULL;
+    # the order-create resolver treats NULL as 0 so a missing weight contributes
+    # nothing to the cart's total. Admins backfill at their pace; the
+    # ck_products_weight_kg_nonneg CHECK enforces non-negativity in the DB.
+    # Drives ShippingRate.weight_tiers band matching.
+    weight_kg: Mapped[float | None] = mapped_column(Float)
 
     # Inventory
     stock: Mapped[int] = mapped_column(Integer, default=0)

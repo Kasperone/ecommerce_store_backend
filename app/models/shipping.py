@@ -31,9 +31,14 @@ Resolver precedence (``crud_shipping_rate.apply_shipping_rate``):
 global "free over X" trumps tier discounts because it's the cleanest
 customer-facing promise.
 
-Weight-based tiers (``ShippingRate.weight_tiers``) are a future follow-up
-once ``Product.weight_kg`` exists; the JSONB column is intentionally
-nullable + non-breaking so v2 can layer it in additively.
+Weight-based tiers (``ShippingRate.weight_tiers``) layer on top of
+``Product.weight_kg`` (added 2026-05-30). When set, the resolver picks
+the cheapest band whose ``max_weight_kg`` covers the cart's total weight;
+weight resolution slots between ``free_above_subtotal`` and the subtotal
+``tiers`` so an admin who configures both gets weight-driven pricing as
+the primary signal (PL-market couriers price by weight first). When the
+cart's total weight exceeds every band, resolution falls through to the
+subtotal-tier / flat branches.
 """
 
 from __future__ import annotations
@@ -179,6 +184,12 @@ class ShippingRate(BaseModel):
     # Stored sorted ascending by min_subtotal (the CRUD canonicalises on insert/update).
     # Pydantic enforces each band's non-negativity + uniqueness of min_subtotal.
     tiers: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    # Weight tiers shape:
+    #   [{"max_weight_kg": 1.0, "amount": 9.99}, {"max_weight_kg": 5.0, "amount": 19.99}]
+    # Stored sorted ascending by max_weight_kg (the CRUD canonicalises on insert/update).
+    # Resolver picks the cheapest band whose max_weight_kg >= cart_weight.
+    # When cart_weight > the largest band, falls through to subtotal-tiers / flat.
+    weight_tiers: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
 
     zone: Mapped[ShippingZone] = relationship("ShippingZone", back_populates="rates")
     method: Mapped[ShippingMethod] = relationship("ShippingMethod", back_populates="rates")

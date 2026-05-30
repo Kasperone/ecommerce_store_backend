@@ -2,9 +2,9 @@
 
 The single arithmetic entry point is ``CRUDShippingRate.apply_shipping_rate``:
 the order-create path, the public quote endpoint, and admin previews all call
-it so the resolver never drifts. Resolver precedence is free-above-trigger →
-subtotal-tier → flat amount (see ``app/models/shipping.py`` module docstring
-for the rationale).
+it so the resolver never drifts. Resolver precedence is
+free-above-trigger → weight-tier → subtotal-tier → flat amount (see
+``app/models/shipping.py`` module docstring for the rationale).
 
 CRUD methods never commit — the caller (route handler) owns the transaction
 boundary, same convention as the rest of the CRUD layer (``CRUDBase``,
@@ -31,6 +31,7 @@ from app.schemas.shipping import (
     ShippingRateCreate,
     ShippingRateTier,
     ShippingRateUpdate,
+    ShippingRateWeightTier,
     ShippingZoneCreate,
     ShippingZoneUpdate,
 )
@@ -285,6 +286,7 @@ class CRUDShippingRate(CRUDBase[ShippingRate, ShippingRateCreate, ShippingRateUp
             amount=obj_in.amount,
             free_above_subtotal=obj_in.free_above_subtotal,
             tiers=self._serialise_tiers(obj_in.tiers),
+            weight_tiers=self._serialise_weight_tiers(obj_in.weight_tiers),
         )
         db.add(rate)
         db.flush()
@@ -300,6 +302,8 @@ class CRUDShippingRate(CRUDBase[ShippingRate, ShippingRateCreate, ShippingRateUp
                 setattr(rate, field, data[field])
         if "tiers" in data:
             rate.tiers = self._serialise_tiers(obj_in.tiers)
+        if "weight_tiers" in data:
+            rate.weight_tiers = self._serialise_weight_tiers(obj_in.weight_tiers)
         db.add(rate)
         return rate
 
@@ -387,20 +391,39 @@ class CRUDShippingRate(CRUDBase[ShippingRate, ShippingRateCreate, ShippingRateUp
         return (method, rate)
 
     @staticmethod
-    def apply_shipping_rate(rate: ShippingRate, subtotal: float) -> float:
-        """Pure resolver: free-above → tiers → flat amount.
+    def apply_shipping_rate(
+        rate: ShippingRate, subtotal: float, *, weight_kg: float = 0.0
+    ) -> float:
+        """Pure resolver: free-above → weight-tiers → subtotal-tiers → flat amount.
 
         - Free-above wins first (the cleanest "free over X" customer promise).
-        - Tiers next: the band with the largest ``min_subtotal <= subtotal``.
+        - Weight-tiers next: cheapest band whose ``max_weight_kg >= weight_kg``.
+          Weight is the primary physical signal — a 20 kg box costs more than
+          a 0.5 kg phone case regardless of cart value (matches how PL-market
+          couriers price). Skipped when ``weight_kg <= 0`` (legacy products
+          with NULL weight contribute 0).
+        - Subtotal-tiers next: band with the largest ``min_subtotal <= subtotal``.
         - Amount last (the always-set fallback / flat case).
 
-        ``rate.tiers`` is the JSONB column; when set it's a list of dicts
-        ``[{"min_subtotal": ..., "amount": ...}, ...]`` already sorted ascending
-        (the CRUD canonicalises on insert/update). When unset/empty the tiered
-        branch is skipped without sorting.
+        Both tier columns are JSONB lists of dicts already sorted ascending
+        (the CRUD canonicalises on insert/update). When unset/empty the
+        corresponding branch is skipped without sorting.
+
+        ``weight_kg`` is keyword-only so existing call sites that don't yet
+        thread cart weight (admin previews, unit tests with subtotal-only
+        rates) keep working with the default of 0.
         """
         if rate.free_above_subtotal is not None and subtotal >= rate.free_above_subtotal:
             return 0.0
+        weight_tiers = rate.weight_tiers
+        if weight_tiers and weight_kg > 0:
+            # Smallest band whose max_weight_kg >= weight_kg covers the cart
+            # at the cheapest price. Bands are sorted ascending so the first
+            # match wins. Weight exceeding every band → fall through to the
+            # subtotal-tiers / flat branches.
+            for band in weight_tiers:
+                if float(band["max_weight_kg"]) >= weight_kg:
+                    return float(band["amount"])
         tiers = rate.tiers
         if tiers:
             chosen_amount: float | None = None
@@ -431,6 +454,23 @@ class CRUDShippingRate(CRUDBase[ShippingRate, ShippingRateCreate, ShippingRateUp
         return [
             {"min_subtotal": t.min_subtotal, "amount": t.amount}
             for t in sorted(tiers, key=lambda b: b.min_subtotal)
+        ]
+
+    @staticmethod
+    def _serialise_weight_tiers(
+        tiers: list[ShippingRateWeightTier] | None,
+    ) -> list[dict[str, Any]] | None:
+        """Canonicalise weight-tiers for JSONB storage: sorted ascending, plain dicts.
+
+        Mirrors ``_serialise_tiers``; the resolver assumes ascending order so
+        the first ``max_weight_kg >= cart_weight`` match wins (the cheapest
+        covering band).
+        """
+        if not tiers:
+            return None
+        return [
+            {"max_weight_kg": t.max_weight_kg, "amount": t.amount}
+            for t in sorted(tiers, key=lambda b: b.max_weight_kg)
         ]
 
     # --- list-row helpers ---

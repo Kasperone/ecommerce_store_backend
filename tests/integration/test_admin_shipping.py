@@ -349,3 +349,80 @@ async def test_rate_create_tiers_dup_min_subtotal_422(client, user_factory):
         headers=_headers(admin),
     )
     assert resp.status_code == 422
+
+
+async def test_rate_create_with_weight_tiers_persisted_sorted(client, user_factory):
+    """Weight tiers round-trip via the admin POST + persist sorted ascending."""
+    admin = user_factory(email="ship-rate-weight@example.com", role=UserRole.ADMIN)
+    z, m = await _seed_zone_and_method(
+        client, admin, zone_name="Weight Zone", country="LT", method_code="weight-method"
+    )
+    resp = await client.post(
+        "/api/v1/admin/shipping/rates",
+        json={
+            "zone_id": z,
+            "method_id": m,
+            "currency": "EUR",
+            "amount": 99.99,
+            # Posted out of order — the CRUD sorts on persist.
+            "weight_tiers": [
+                {"max_weight_kg": 30, "amount": 49.99},
+                {"max_weight_kg": 1, "amount": 9.99},
+                {"max_weight_kg": 5, "amount": 19.99},
+            ],
+        },
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert [b["max_weight_kg"] for b in body["weight_tiers"]] == [1, 5, 30]
+    assert [b["amount"] for b in body["weight_tiers"]] == [9.99, 19.99, 49.99]
+
+
+async def test_rate_create_weight_tiers_dup_max_weight_kg_422(client, user_factory):
+    """Duplicate max_weight_kg makes 'smallest covering band' non-deterministic."""
+    admin = user_factory(email="ship-rate-weight-dup@example.com", role=UserRole.ADMIN)
+    z, m = await _seed_zone_and_method(
+        client, admin, zone_name="W Dup Zone", country="SI", method_code="w-dup-method"
+    )
+    resp = await client.post(
+        "/api/v1/admin/shipping/rates",
+        json={
+            "zone_id": z,
+            "method_id": m,
+            "currency": "EUR",
+            "amount": 19.99,
+            "weight_tiers": [
+                {"max_weight_kg": 1, "amount": 9.99},
+                {"max_weight_kg": 1, "amount": 8.99},
+            ],
+        },
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 422
+
+
+async def test_rate_list_classifies_weight_tiered(client, user_factory):
+    """The list-item pricing_kind tag flags weight-tiered rates."""
+    admin = user_factory(email="ship-rate-weight-list@example.com", role=UserRole.ADMIN)
+    z, m = await _seed_zone_and_method(
+        client, admin, zone_name="W List Zone", country="SK", method_code="w-list-method"
+    )
+    await client.post(
+        "/api/v1/admin/shipping/rates",
+        json={
+            "zone_id": z,
+            "method_id": m,
+            "currency": "EUR",
+            "amount": 99.99,
+            "weight_tiers": [{"max_weight_kg": 1, "amount": 9.99}],
+        },
+        headers=_headers(admin),
+    )
+    list_resp = await client.get(
+        f"/api/v1/admin/shipping/rates?zone_id={z}&method_id={m}", headers=_headers(admin)
+    )
+    items = list_resp.json()["items"]
+    assert len(items) == 1
+    assert items[0]["pricing_kind"] == "weight_tiered"
+    assert items[0]["weight_tiers"] is not None

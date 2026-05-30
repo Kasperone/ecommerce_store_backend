@@ -22,6 +22,7 @@ from app.schemas.shipping import (
     ShippingMethodCreate,
     ShippingRateCreate,
     ShippingRateTier,
+    ShippingRateWeightTier,
     ShippingZoneCreate,
 )
 
@@ -158,3 +159,83 @@ async def test_quote_no_auth_required(client):
     """Anonymous customers fetch quotes — no token sent."""
     resp = await client.get("/api/v1/shipping/quote?country=PL&currency=USD&subtotal=0")
     assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Quote — weight_kg query param + resolved weight-tier band
+# ---------------------------------------------------------------------------
+
+
+async def test_quote_resolves_weight_tier_band(client, db_session):
+    """Resolved amount matches the weight band the cart falls into."""
+    z = crud_shipping_zone.create_with_countries(
+        db_session,
+        obj_in=ShippingZoneCreate(name="WeightedZ", country_codes=["CZ"]),
+    )
+    db_session.commit()
+    m = crud_shipping_method.create(
+        db_session,
+        obj_in=ShippingMethodCreate(name="Weighted Std", code="wt-std"),
+    )
+    db_session.commit()
+    crud_shipping_rate.create(
+        db_session,
+        obj_in=ShippingRateCreate(
+            zone_id=z.id,
+            method_id=m.id,
+            currency="EUR",
+            amount=99.99,
+            weight_tiers=[
+                ShippingRateWeightTier(max_weight_kg=1, amount=9.99),
+                ShippingRateWeightTier(max_weight_kg=5, amount=19.99),
+                ShippingRateWeightTier(max_weight_kg=30, amount=49.99),
+            ],
+        ),
+    )
+    db_session.commit()
+
+    # 2 kg cart → band 2 → 19.99 EUR.
+    resp = await client.get(
+        "/api/v1/shipping/quote?country=CZ&currency=EUR&subtotal=50&weight_kg=2"
+    )
+    assert resp.status_code == 200
+    wt = next(x for x in resp.json()["methods"] if x["code"] == "wt-std")
+    assert wt["amount"] == 19.99
+    assert wt["pricing_kind"] == "weight_tiered"
+
+
+async def test_quote_weight_kg_defaults_to_zero(client, db_session):
+    """Omitting weight_kg → weight branch skipped → flat amount."""
+    z = crud_shipping_zone.create_with_countries(
+        db_session, obj_in=ShippingZoneCreate(name="DefaultZ", country_codes=["RO"])
+    )
+    db_session.commit()
+    m = crud_shipping_method.create(
+        db_session, obj_in=ShippingMethodCreate(name="Default Std", code="d-std")
+    )
+    db_session.commit()
+    crud_shipping_rate.create(
+        db_session,
+        obj_in=ShippingRateCreate(
+            zone_id=z.id,
+            method_id=m.id,
+            currency="EUR",
+            amount=49.99,
+            weight_tiers=[ShippingRateWeightTier(max_weight_kg=1, amount=9.99)],
+        ),
+    )
+    db_session.commit()
+
+    # No weight_kg param → defaults to 0 → flat fallback.
+    resp = await client.get("/api/v1/shipping/quote?country=RO&currency=EUR&subtotal=50")
+    wt = next(x for x in resp.json()["methods"] if x["code"] == "d-std")
+    assert wt["amount"] == 49.99
+    # Pricing kind still flags the weight-tiered shape regardless of resolution.
+    assert wt["pricing_kind"] == "weight_tiered"
+
+
+async def test_quote_422_on_negative_weight(client):
+    resp = await client.get(
+        "/api/v1/shipping/quote?country=PL&currency=USD&subtotal=10&weight_kg=-1"
+    )
+    assert resp.status_code == 422
