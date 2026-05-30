@@ -89,8 +89,10 @@ def status_transition_error(current: OrderStatus, target: OrderStatus) -> str | 
     target = OrderStatus(target)
     if current == target:
         return None
-    if target in (OrderStatus.CANCELLED, OrderStatus.REFUNDED):
-        return "Use the cancel endpoint to cancel an order; refunds are not yet supported"
+    if target == OrderStatus.CANCELLED:
+        return "Use the cancel endpoint to cancel an order"
+    if target == OrderStatus.REFUNDED:
+        return "Use POST /api/v1/orders/{id}/refunds to issue a refund"
     if target not in _STATUS_TRANSITIONS.get(current, set()):
         return f"Cannot transition order from '{current.value}' to '{target.value}'"
     return None
@@ -346,10 +348,21 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
 
         Customers see only their own; admins see any. Returns None for both
         not-found and not-owned so the route can 404 without leaking existence.
+        Eager-loads ``refunds`` (+ actor + KOR) so the response carries the full
+        admin/customer view in one query — see ``app/crud/refund.py``.
         """
+        # Import inside the method: ``crud_order`` is imported by
+        # ``crud_refund`` for ``REFUNDABLE_STATUSES`` (via the route layer) —
+        # a module-level import here would close the cycle.
+        from app.crud.refund import order_refunds_load_options
+
         query = (
             db.query(Order)
-            .options(selectinload(Order.items), selectinload(Order.user))
+            .options(
+                selectinload(Order.items),
+                selectinload(Order.user),
+                *order_refunds_load_options(),
+            )
             .filter(Order.id == order_id)
         )
         if user.role != UserRole.ADMIN:

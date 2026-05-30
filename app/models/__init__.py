@@ -1,6 +1,7 @@
 from app.models.admin_audit_event import AdminAuditEvent
 from app.models.base import Base
 from app.models.category import Category
+from app.models.corrective_invoice import CorrectiveInvoice, CorrectiveInvoiceCounter
 from app.models.customer_note import CustomerNote
 from app.models.inventory_movement import InventoryMovement, InventoryMovementReason
 from app.models.invoice import Invoice, InvoiceCounter
@@ -8,6 +9,7 @@ from app.models.order import Order, OrderItem
 from app.models.product import Product
 from app.models.product_image import ProductImage
 from app.models.refresh_token import RefreshToken
+from app.models.refund import REFUND_REASON_VALUES, Refund, RefundReason
 from app.models.review import Review, ReviewStatus
 from app.models.review_vote import ReviewVote
 from app.models.shipping import (
@@ -26,6 +28,8 @@ __all__ = [
     "Base",
     "User",
     "Category",
+    "CorrectiveInvoice",
+    "CorrectiveInvoiceCounter",
     "CustomerNote",
     "Product",
     "ProductImage",
@@ -35,6 +39,9 @@ __all__ = [
     "InventoryMovementReason",
     "Invoice",
     "InvoiceCounter",
+    "Refund",
+    "RefundReason",
+    "REFUND_REASON_VALUES",
     "Review",
     "ReviewStatus",
     "ReviewVote",

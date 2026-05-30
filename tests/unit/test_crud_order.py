@@ -351,11 +351,20 @@ def test_transition_rejected(current, target):
     assert status_transition_error(current, target) is not None
 
 
-@pytest.mark.parametrize("target", [OrderStatus.CANCELLED, OrderStatus.REFUNDED])
-def test_transition_to_cancelled_or_refunded_points_to_cancel_endpoint(target):
-    msg = status_transition_error(OrderStatus.PENDING, target)
+def test_transition_to_cancelled_points_to_cancel_endpoint():
+    msg = status_transition_error(OrderStatus.PENDING, OrderStatus.CANCELLED)
     assert msg is not None
     assert "cancel endpoint" in msg
+
+
+def test_transition_to_refunded_points_to_refund_endpoint():
+    """The PATCH path keeps rejecting refunded — the admin must use POST .../refunds
+    (mirrors the cancel-endpoint pattern). Updated 2026-05-30 when the dedicated
+    refund endpoint shipped."""
+    msg = status_transition_error(OrderStatus.PAID, OrderStatus.REFUNDED)
+    assert msg is not None
+    assert "refunds" in msg
+    assert "POST" in msg
 
 
 # ---------------------------------------------------------------------------

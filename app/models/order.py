@@ -9,6 +9,7 @@ from app.models.base import BaseModel
 
 if TYPE_CHECKING:
     from app.models.product import Product
+    from app.models.refund import Refund
     from app.models.shipping import ShippingMethod
     from app.models.user import User
 
@@ -71,6 +72,13 @@ class Order(BaseModel):
         "OrderItem", back_populates="order", cascade="all, delete-orphan"
     )
     shipping_method: Mapped["ShippingMethod | None"] = relationship("ShippingMethod")
+    # Refunds against this order. Cascade is deliberately NOT delete-orphan: a
+    # refund is a legal/financial record and the ``ON DELETE RESTRICT`` on
+    # ``refunds.order_id`` would block the order delete anyway (orders are never
+    # hard-deleted in practice — cancel is a status change).
+    refunds: Mapped[list["Refund"]] = relationship(
+        "Refund", back_populates="order", order_by="Refund.created_at"
+    )
 
     def __repr__(self):
         return f"<Order {self.order_number}>"

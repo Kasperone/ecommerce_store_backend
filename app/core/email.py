@@ -682,23 +682,40 @@ def send_order_email(
     intro_html: str,
     order: "Order",
     invoice_pdf: bytes | None = None,
+    corrective_invoice_pdf: bytes | None = None,
+    corrective_invoice_number: str | None = None,
     lang: str = "en",
 ) -> dict:
-    """Send a transactional order email (confirmation / status change).
+    """Send a transactional order email (confirmation / status change / refunded).
 
     Body built by ``render_order_email_body`` (localized to ``lang``). When
     ``invoice_pdf`` is supplied it rides along as an ``invoice-<order_number>.pdf``
-    attachment. ``order`` must be a loaded instance (``items`` not lazy).
+    attachment; the optional ``corrective_invoice_pdf`` (faktura korygująca, sent
+    on the ``refunded`` event) is attached as a second file named after
+    ``corrective_invoice_number`` so the customer + accountant can tell the two
+    apart at a glance. ``order`` must be a loaded instance (``items`` not lazy).
     """
     html_content, text_content = render_order_email_body(
         order=order, heading=heading, intro_html=intro_html, lang=lang
     )
 
-    attachments = None
-    if invoice_pdf is not None:
-        attachments = [
-            {"filename": f"invoice-{order.order_number}.pdf", "content": list(invoice_pdf)}
-        ]
+    attachments: list[dict] | None = None
+    if invoice_pdf is not None or corrective_invoice_pdf is not None:
+        attachments = []
+        if invoice_pdf is not None:
+            attachments.append(
+                {"filename": f"invoice-{order.order_number}.pdf", "content": list(invoice_pdf)}
+            )
+        if corrective_invoice_pdf is not None:
+            # KOR numbers carry "/"; sanitise for the filename (mirror the
+            # invoice-download route's behaviour).
+            ref = (corrective_invoice_number or "kor").replace("/", "-")
+            attachments.append(
+                {
+                    "filename": f"corrective-invoice-{ref}.pdf",
+                    "content": list(corrective_invoice_pdf),
+                }
+            )
 
     return send_email(
         email_to=email_to,
