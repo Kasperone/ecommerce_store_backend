@@ -64,6 +64,11 @@ class ProductBase(BaseSchema):
     low_stock_threshold: Annotated[int | None, Field(ge=0)] = None
     # When True, orders may exceed available stock ("on backorder").
     allow_backorder: bool = False
+    # Physical weight in kilograms; nullable so legacy products don't block
+    # admin creates. The order-create resolver treats NULL as 0 (a product with
+    # no weight contributes nothing to the cart's total weight); admins backfill
+    # at their pace. Drives weight-tier band matching at checkout.
+    weight_kg: Annotated[float | None, Field(ge=0)] = None
     is_active: bool = True
     is_featured: bool = False
 
@@ -102,6 +107,7 @@ class ProductUpdate(BaseSchema):
     # create time; change it afterwards via /api/v1/admin/inventory.
     low_stock_threshold: Annotated[int | None, Field(ge=0)] = None
     allow_backorder: bool | None = None
+    weight_kg: Annotated[float | None, Field(ge=0)] = None
     is_active: bool | None = None
     is_featured: bool | None = None
 

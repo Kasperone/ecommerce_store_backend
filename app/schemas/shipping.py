@@ -17,8 +17,11 @@ ISO2Country = Annotated[str, StringConstraints(pattern=r"^[A-Z]{2}$", min_length
 ShippingCurrency = Literal["USD", "PLN", "EUR"]
 
 # Pricing-shape classifier returned on list/quote rows so the FE can badge or
-# annotate without re-deriving from the row's nullable columns.
-PricingKind = Literal["flat", "free_above", "tiered"]
+# annotate without re-deriving from the row's nullable columns. ``weight_tiered``
+# takes precedence over ``tiered`` (subtotal) because weight is the primary
+# signal in the resolver — a rate with both weight and subtotal tiers is
+# classified by its weight shape.
+PricingKind = Literal["flat", "free_above", "tiered", "weight_tiered"]
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +42,22 @@ class ShippingRateTier(BaseSchema):
     amount: float = Field(..., ge=0)
 
 
+class ShippingRateWeightTier(BaseSchema):
+    """One band in a weight-priced shipping rate.
+
+    The resolver picks the cheapest band whose ``max_weight_kg`` covers the
+    cart's total weight (smallest ``max_weight_kg`` such that
+    ``max_weight_kg >= cart_weight``). Bands are stored sorted ascending by
+    ``max_weight_kg``; the CRUD canonicalises before persistence.
+
+    Why ``max_weight_kg`` (not ``min_weight_kg``): courier price-lists are
+    universally "up to X kg = $Y," so the schema mirrors how admins think.
+    """
+
+    max_weight_kg: float = Field(..., gt=0)
+    amount: float = Field(..., ge=0)
+
+
 def _validate_tiers(tiers: list[ShippingRateTier] | None) -> list[ShippingRateTier] | None:
     """Reject duplicate ``min_subtotal`` values in a tier list.
 
@@ -52,6 +71,24 @@ def _validate_tiers(tiers: list[ShippingRateTier] | None) -> list[ShippingRateTi
     thresholds = [t.min_subtotal for t in tiers]
     if len(set(thresholds)) != len(thresholds):
         raise ValueError("Tier bands must have unique min_subtotal values")
+    return tiers
+
+
+def _validate_weight_tiers(
+    tiers: list[ShippingRateWeightTier] | None,
+) -> list[ShippingRateWeightTier] | None:
+    """Reject duplicate ``max_weight_kg`` values in a weight-tier list.
+
+    Two bands sharing the same ``max_weight_kg`` would make the resolver's
+    "smallest covering band" choice non-deterministic. Empty lists are
+    normalised to ``None`` so the resolver's ``if weight_tiers`` short-circuit
+    is clean.
+    """
+    if tiers is None or not tiers:
+        return None
+    thresholds = [t.max_weight_kg for t in tiers]
+    if len(set(thresholds)) != len(thresholds):
+        raise ValueError("Weight-tier bands must have unique max_weight_kg values")
     return tiers
 
 
@@ -172,10 +209,12 @@ class ShippingRateBase(BaseSchema):
     amount: float = Field(..., ge=0)
     free_above_subtotal: float | None = Field(default=None, ge=0)
     tiers: list[ShippingRateTier] | None = None
+    weight_tiers: list[ShippingRateWeightTier] | None = None
 
     @model_validator(mode="after")
     def _normalise_tiers(self) -> ShippingRateBase:
         self.tiers = _validate_tiers(self.tiers)
+        self.weight_tiers = _validate_weight_tiers(self.weight_tiers)
         return self
 
 
@@ -189,11 +228,14 @@ class ShippingRateUpdate(BaseSchema):
     amount: float | None = Field(default=None, ge=0)
     free_above_subtotal: float | None = Field(default=None, ge=0)
     tiers: list[ShippingRateTier] | None = None
+    weight_tiers: list[ShippingRateWeightTier] | None = None
 
     @model_validator(mode="after")
     def _normalise_tiers(self) -> ShippingRateUpdate:
         if "tiers" in self.model_fields_set:
             self.tiers = _validate_tiers(self.tiers)
+        if "weight_tiers" in self.model_fields_set:
+            self.weight_tiers = _validate_weight_tiers(self.weight_tiers)
         return self
 
 
@@ -201,8 +243,15 @@ def _classify_pricing(
     amount: float,
     free_above_subtotal: float | None,
     tiers: list[ShippingRateTier] | list[dict] | None,
+    weight_tiers: list[ShippingRateWeightTier] | list[dict] | None = None,
 ) -> PricingKind:
-    """Return a single tag for the rate's pricing shape (used by list + quote rows)."""
+    """Return a single tag for the rate's pricing shape (used by list + quote rows).
+
+    ``weight_tiered`` wins over ``tiered`` (subtotal) because weight is the
+    primary signal in the resolver precedence (see ``apply_shipping_rate``).
+    """
+    if weight_tiers:
+        return "weight_tiered"
     if tiers:
         return "tiered"
     if free_above_subtotal is not None:
@@ -219,6 +268,7 @@ class ShippingRateListItem(TimestampSchema):
     amount: float
     free_above_subtotal: float | None
     tiers: list[ShippingRateTier] | None
+    weight_tiers: list[ShippingRateWeightTier] | None
     pricing_kind: PricingKind
 
 
@@ -237,6 +287,7 @@ class ShippingRateResponse(TimestampSchema):
     amount: float
     free_above_subtotal: float | None
     tiers: list[ShippingRateTier] | None
+    weight_tiers: list[ShippingRateWeightTier] | None
 
 
 # ---------------------------------------------------------------------------

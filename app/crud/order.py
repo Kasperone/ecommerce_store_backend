@@ -169,7 +169,10 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
 
         # Shipping resolution: validate the chosen method has a rate for the
         # caller's country+currency, then compute the amount via the central
-        # resolver (free-above → tiers → flat). 422s out the route on miss.
+        # resolver (free-above → weight-tiers → subtotal-tiers → flat). 422s
+        # out the route on miss. Cart weight is summed from product.weight_kg
+        # (NULL contributes 0 — legacy products with no weight skip the
+        # weight-tier branch cleanly).
         method_rate = crud_shipping_rate.resolve_one(
             db,
             country_code=obj_in.shipping_country,
@@ -183,7 +186,13 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
                 method_id=obj_in.shipping_method_id,
             )
         ship_method, ship_rate = method_rate
-        shipping_amount = round(crud_shipping_rate.apply_shipping_rate(ship_rate, subtotal), 2)
+        total_weight = sum(
+            (products[line.product_id].weight_kg or 0.0) * line.quantity for line in obj_in.items
+        )
+        shipping_amount = round(
+            crud_shipping_rate.apply_shipping_rate(ship_rate, subtotal, weight_kg=total_weight),
+            2,
+        )
         total = round(subtotal + shipping_amount, 2)
 
         order = Order(

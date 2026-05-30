@@ -113,6 +113,118 @@ async def test_create_order_requires_auth(client, product_factory, test_shipping
 
 
 # ---------------------------------------------------------------------------
+# POST /  (create — weight-tier resolution via crud_order.create_with_items)
+# ---------------------------------------------------------------------------
+
+
+def _enable_weight_tiers_on_seeded_rate(
+    db_session: Session,
+    *,
+    method_id: int,
+    currency: str = "USD",
+    bands: list[dict[str, float]] | None = None,
+) -> None:
+    """Stamp weight_tiers onto the seeded ``Test Shipping`` rate for one test.
+
+    The savepoint rollback at teardown reverts this so other tests see the
+    seeded $0 / no-tiers shape. Default bands match the resolver test matrix.
+    """
+    from app.models.shipping import ShippingRate
+
+    if bands is None:
+        bands = [
+            {"max_weight_kg": 1.0, "amount": 9.99},
+            {"max_weight_kg": 5.0, "amount": 19.99},
+            {"max_weight_kg": 30.0, "amount": 49.99},
+        ]
+    rate = (
+        db_session.query(ShippingRate)
+        .filter(ShippingRate.method_id == method_id, ShippingRate.currency == currency)
+        .first()
+    )
+    assert rate is not None, "Seeded Test Shipping rate missing"
+    rate.amount = 99.99
+    rate.weight_tiers = bands
+    db_session.commit()
+
+
+async def test_create_order_resolves_weight_tier_band(
+    client, user_factory, product_factory, db_session, test_shipping_method_id
+):
+    """Cart weight = 2 * 1.5 kg = 3 kg → band 2 (max_weight_kg=5) → $19.99."""
+    _enable_weight_tiers_on_seeded_rate(db_session, method_id=test_shipping_method_id)
+    user = user_factory()
+    product = product_factory(stock=10, price_usd=25.0, weight_kg=1.5)
+
+    resp = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=2, shipping_method_id=test_shipping_method_id),
+        headers=_headers(user),
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["subtotal"] == 50.0
+    assert body["shipping"] == 19.99
+    assert body["total"] == 69.99
+
+
+async def test_create_order_null_weight_falls_through_to_flat(
+    client, user_factory, product_factory, db_session, test_shipping_method_id
+):
+    """D2: legacy product with NULL weight contributes 0 → weight branch skipped.
+
+    The seeded rate has weight_tiers but no subtotal tiers, so the cart falls
+    through to ``rate.amount`` (the flat $99.99 fallback set by the helper).
+    """
+    _enable_weight_tiers_on_seeded_rate(db_session, method_id=test_shipping_method_id)
+    user = user_factory()
+    product = product_factory(stock=10, price_usd=25.0, weight_kg=None)
+
+    resp = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=1, shipping_method_id=test_shipping_method_id),
+        headers=_headers(user),
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["shipping"] == 99.99
+
+
+async def test_create_order_mixed_weight_lines_sums_to_band(
+    client, user_factory, product_factory, db_session, test_shipping_method_id
+):
+    """Mixed cart: NULL weight contributes 0, weighted lines sum normally.
+
+    1x null-weight + 3x 0.2 kg = 0.6 kg -> band 1 (max_weight_kg=1.0) -> $9.99.
+    """
+    _enable_weight_tiers_on_seeded_rate(db_session, method_id=test_shipping_method_id)
+    user = user_factory()
+    legacy = product_factory(stock=10, price_usd=10.0, weight_kg=None)
+    small = product_factory(stock=10, price_usd=5.0, weight_kg=0.2)
+
+    resp = await client.post(
+        "/api/v1/orders/",
+        json={
+            "items": [
+                {"product_id": legacy.id, "quantity": 1},
+                {"product_id": small.id, "quantity": 3},
+            ],
+            "currency": "USD",
+            "shipping_address": "1 Test St",
+            "shipping_city": "Testville",
+            "shipping_postal_code": "00-001",
+            "shipping_country": "PL",
+            "shipping_method_id": test_shipping_method_id,
+        },
+        headers=_headers(user),
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["subtotal"] == 25.0  # 10 + 3 * 5
+    assert body["shipping"] == 9.99
+
+
+# ---------------------------------------------------------------------------
 # GET /  (scoped list)
 # ---------------------------------------------------------------------------
 
