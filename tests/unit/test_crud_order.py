@@ -317,6 +317,10 @@ def test_is_cancellable(db_session, user_factory, product_factory, test_shipping
     assert crud_order.is_cancellable(order) is True
     order.status = OrderStatus.DELIVERED
     assert crud_order.is_cancellable(order) is False
+    # D4: once any refund has issued, cancel is not allowed — the only forward
+    # path is another refund (which may flip the status to REFUNDED).
+    order.status = OrderStatus.PARTIALLY_REFUNDED
+    assert crud_order.is_cancellable(order) is False
 
 
 # ---------------------------------------------------------------------------
@@ -362,6 +366,15 @@ def test_transition_to_refunded_points_to_refund_endpoint():
     (mirrors the cancel-endpoint pattern). Updated 2026-05-30 when the dedicated
     refund endpoint shipped."""
     msg = status_transition_error(OrderStatus.PAID, OrderStatus.REFUNDED)
+    assert msg is not None
+    assert "refunds" in msg
+    assert "POST" in msg
+
+
+def test_transition_to_partially_refunded_points_to_refund_endpoint():
+    """v2: PATCH ``status=partially_refunded`` is rejected with the same hint
+    as REFUNDED — the dedicated refund endpoint owns both refund-status flips."""
+    msg = status_transition_error(OrderStatus.PAID, OrderStatus.PARTIALLY_REFUNDED)
     assert msg is not None
     assert "refunds" in msg
     assert "POST" in msg

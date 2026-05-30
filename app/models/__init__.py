@@ -11,6 +11,7 @@ from app.models.product import Product
 from app.models.product_image import ProductImage
 from app.models.refresh_token import RefreshToken
 from app.models.refund import REFUND_REASON_VALUES, Refund, RefundReason
+from app.models.refund_item import RefundItem
 from app.models.review import Review, ReviewStatus
 from app.models.review_vote import ReviewVote
 from app.models.shipping import (
@@ -43,6 +44,7 @@ __all__ = [
     "Invoice",
     "InvoiceCounter",
     "Refund",
+    "RefundItem",
     "RefundReason",
     "REFUND_REASON_VALUES",
     "Review",
