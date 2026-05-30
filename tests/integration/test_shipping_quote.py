@@ -239,3 +239,128 @@ async def test_quote_422_on_negative_weight(client):
         "/api/v1/shipping/quote?country=PL&currency=USD&subtotal=10&weight_kg=-1"
     )
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Quote — cart_volume_cm3 query param + zone dim_divisor (volumetric branch)
+# ---------------------------------------------------------------------------
+
+
+async def test_quote_resolves_volumetric_when_zone_has_divisor(client, db_session):
+    """A bulky-light cart with a zone divisor → resolver bills the volumetric band.
+
+    Cart: 0.5 kg actual, 108_000 cm³ (60 × 60 × 30 box).
+    Zone: dim_divisor=5000 → volumetric = 21.6 kg → 25 kg band.
+    """
+    z = crud_shipping_zone.create_with_countries(
+        db_session,
+        obj_in=ShippingZoneCreate(name="DimDiv Quote Z", country_codes=["NL"], dim_divisor=5000),
+    )
+    db_session.commit()
+    m = crud_shipping_method.create(
+        db_session, obj_in=ShippingMethodCreate(name="DimDiv Std", code="dd-std")
+    )
+    db_session.commit()
+    crud_shipping_rate.create(
+        db_session,
+        obj_in=ShippingRateCreate(
+            zone_id=z.id,
+            method_id=m.id,
+            currency="EUR",
+            amount=99.99,
+            weight_tiers=[
+                ShippingRateWeightTier(max_weight_kg=1, amount=5.0),
+                ShippingRateWeightTier(max_weight_kg=25, amount=25.0),
+            ],
+        ),
+    )
+    db_session.commit()
+
+    resp = await client.get(
+        "/api/v1/shipping/quote"
+        "?country=NL&currency=EUR&subtotal=50&weight_kg=0.5&cart_volume_cm3=108000"
+    )
+    assert resp.status_code == 200
+    wt = next(x for x in resp.json()["methods"] if x["code"] == "dd-std")
+    # 108_000 / 5000 = 21.6 kg → 25 kg band → 25.0.
+    assert wt["amount"] == 25.0
+
+
+async def test_quote_volume_ignored_when_divisor_null(client, db_session):
+    """A zone with NULL divisor keeps actual-weight pricing even if volume is sent.
+
+    Same cart shape as above but no divisor on the zone → 0.5 kg actual wins
+    → 1 kg band → $5.
+    """
+    z = crud_shipping_zone.create_with_countries(
+        db_session,
+        obj_in=ShippingZoneCreate(name="NoDimDiv Z", country_codes=["BE"]),
+    )
+    db_session.commit()
+    m = crud_shipping_method.create(
+        db_session, obj_in=ShippingMethodCreate(name="NoDimDiv Std", code="ndd-std")
+    )
+    db_session.commit()
+    crud_shipping_rate.create(
+        db_session,
+        obj_in=ShippingRateCreate(
+            zone_id=z.id,
+            method_id=m.id,
+            currency="EUR",
+            amount=99.99,
+            weight_tiers=[
+                ShippingRateWeightTier(max_weight_kg=1, amount=5.0),
+                ShippingRateWeightTier(max_weight_kg=25, amount=25.0),
+            ],
+        ),
+    )
+    db_session.commit()
+
+    resp = await client.get(
+        "/api/v1/shipping/quote"
+        "?country=BE&currency=EUR&subtotal=50&weight_kg=0.5&cart_volume_cm3=108000"
+    )
+    assert resp.status_code == 200
+    wt = next(x for x in resp.json()["methods"] if x["code"] == "ndd-std")
+    # NULL divisor → volumetric branch skipped → 0.5 kg actual wins → $5.
+    assert wt["amount"] == 5.0
+
+
+async def test_quote_cart_volume_cm3_defaults_to_zero(client, db_session):
+    """Omitting cart_volume_cm3 → volumetric branch skipped → actual weight wins."""
+    z = crud_shipping_zone.create_with_countries(
+        db_session,
+        obj_in=ShippingZoneCreate(name="DimDiv Default Z", country_codes=["AT"], dim_divisor=5000),
+    )
+    db_session.commit()
+    m = crud_shipping_method.create(
+        db_session, obj_in=ShippingMethodCreate(name="DimDiv Default Std", code="ddd-std")
+    )
+    db_session.commit()
+    crud_shipping_rate.create(
+        db_session,
+        obj_in=ShippingRateCreate(
+            zone_id=z.id,
+            method_id=m.id,
+            currency="EUR",
+            amount=99.99,
+            weight_tiers=[
+                ShippingRateWeightTier(max_weight_kg=1, amount=5.0),
+            ],
+        ),
+    )
+    db_session.commit()
+
+    # No cart_volume_cm3 → 0.5 kg actual → 1 kg band → $5.
+    resp = await client.get(
+        "/api/v1/shipping/quote?country=AT&currency=EUR&subtotal=50&weight_kg=0.5"
+    )
+    wt = next(x for x in resp.json()["methods"] if x["code"] == "ddd-std")
+    assert wt["amount"] == 5.0
+
+
+async def test_quote_422_on_negative_volume(client):
+    resp = await client.get(
+        "/api/v1/shipping/quote" "?country=PL&currency=USD&subtotal=10&cart_volume_cm3=-1"
+    )
+    assert resp.status_code == 422

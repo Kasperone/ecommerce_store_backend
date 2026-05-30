@@ -30,6 +30,18 @@ class Product(BaseModel):
             "weight_kg IS NULL OR weight_kg >= 0",
             name="ck_products_weight_kg_nonneg",
         ),
+        CheckConstraint(
+            "length_cm IS NULL OR length_cm >= 0",
+            name="ck_products_length_cm_nonneg",
+        ),
+        CheckConstraint(
+            "width_cm IS NULL OR width_cm >= 0",
+            name="ck_products_width_cm_nonneg",
+        ),
+        CheckConstraint(
+            "height_cm IS NULL OR height_cm >= 0",
+            name="ck_products_height_cm_nonneg",
+        ),
     )
 
     # Basic info
@@ -56,6 +68,18 @@ class Product(BaseModel):
     # ck_products_weight_kg_nonneg CHECK enforces non-negativity in the DB.
     # Drives ShippingRate.weight_tiers band matching.
     weight_kg: Mapped[float | None] = mapped_column(Float)
+
+    # Physical dimensions in centimetres (nullable — legacy products start at
+    # NULL; the order-create resolver treats "any dim NULL" as "no volumetric
+    # contribution" so a missing dimension contributes 0 to the cart's total
+    # volume). All three nullable + treated as a unit by the convention "all
+    # three set or none." Drives the volumetric-weight branch (volumetric_kg =
+    # (l × w × h × qty) / zone.dim_divisor) — the resolver picks the billable
+    # weight as max(actual_kg, volumetric_kg). The ck_products_{l,w,h}_cm_nonneg
+    # CHECKs enforce non-negativity in the DB.
+    length_cm: Mapped[float | None] = mapped_column(Float)
+    width_cm: Mapped[float | None] = mapped_column(Float)
+    height_cm: Mapped[float | None] = mapped_column(Float)
 
     # Inventory
     stock: Mapped[int] = mapped_column(Integer, default=0)

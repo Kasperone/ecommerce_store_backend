@@ -68,11 +68,24 @@ class ShippingZone(BaseModel):
     """A named geographic group of countries that share rate scaffolding."""
 
     __tablename__ = "shipping_zones"
+    __table_args__ = (
+        CheckConstraint(
+            "dim_divisor IS NULL OR dim_divisor > 0",
+            name="ck_shipping_zones_dim_divisor_positive",
+        ),
+    )
 
     name: Mapped[str] = mapped_column(String(80), unique=True, index=True)
     description: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Volumetric weight divisor in cm³/kg. Carrier standards vary by region:
+    # PL/EU ground couriers typically use 5000, international air uses 6000,
+    # express services sometimes 4000. NULL = no volumetric-weight pricing for
+    # this zone (the resolver skips the volumetric branch and bills actual
+    # weight only — backwards-compatible default). Admin opts in zone-by-zone.
+    # ck_shipping_zones_dim_divisor_positive enforces > 0 when present.
+    dim_divisor: Mapped[float | None] = mapped_column(Float)
 
     countries: Mapped[list[ShippingZoneCountry]] = relationship(
         "ShippingZoneCountry",
