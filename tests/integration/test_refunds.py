@@ -1,0 +1,372 @@
+"""Integration tests for the refund routes.
+
+Covers:
+- ``POST /api/v1/orders/{id}/refunds`` (admin-gated) — 201 happy path with
+  the response embedding the actor email + KOR summary; 400 on partial /
+  not-refundable; 403 for a non-admin; 404 for missing order.
+- ``GET /api/v1/orders/{id}/refunds`` — scoped (customer sees own, admin sees
+  any, cross-customer = 404).
+- ``GET /api/v1/orders/{id}`` carries the new ``refunds`` array after a refund.
+- Audit row is recorded (``resource_type="refund"`` ``action="create"``).
+- Email background task is scheduled with ``event="refunded"`` and the KOR
+  PDF is attached.
+
+The refund plan: ``ecommerce_store/.claude/notes/plans/orders/pending/
+2026-05-30-refunds-workflow-handoff.md``.
+"""
+
+from __future__ import annotations
+
+import pytest
+from sqlalchemy.orm import Session
+
+from app.core.security import create_access_token
+from app.models.admin_audit_event import AdminAuditEvent
+from app.models.inventory_movement import InventoryMovement
+from app.models.user import UserRole
+from app.services import order_email
+
+pytestmark = pytest.mark.integration
+
+
+@pytest.fixture
+def scheduled_emails(monkeypatch) -> list[tuple[int, str]]:
+    """Capture ``(order_id, event)`` the routes schedule.
+
+    Mirrors the fixture in ``tests/integration/test_order_emails.py``: the real
+    ``send_order_event_in_background`` opens its own DB session that can't see
+    the test's savepoint-isolated rows, so we stub it to a list-recording fake.
+    The email *composition* (invoice + KOR attachment) is covered in
+    ``tests/unit/test_order_email.py``.
+    """
+    calls: list[tuple[int, str]] = []
+    monkeypatch.setattr(
+        order_email,
+        "send_order_event_in_background",
+        lambda order_id, event: calls.append((order_id, event)),
+    )
+    return calls
+
+
+def _headers(user) -> dict:
+    token, _, _ = create_access_token(subject=str(user.id))
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _order_body(product_id: int, *, shipping_method_id: int, quantity: int = 1) -> dict:
+    return {
+        "items": [{"product_id": product_id, "quantity": quantity}],
+        "currency": "USD",
+        "shipping_address": "1 Test St",
+        "shipping_city": "Testville",
+        "shipping_postal_code": "00-001",
+        "shipping_country": "PL",
+        "shipping_method_id": shipping_method_id,
+    }
+
+
+async def _place_and_pay_order(
+    client, admin, customer, product, *, shipping_method_id: int, quantity: int = 1
+) -> dict:
+    """Create a pending order as the customer, flip it paid via admin PATCH.
+
+    Returns the paid order's JSON body (incl. ``id`` + ``total`` + ``order_number``).
+    The admin PATCH path triggers ``crud_invoice.issue_for_order`` so the order
+    has a faktura — which is the precondition for a KOR being issued on refund.
+    """
+    placed = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(product.id, shipping_method_id=shipping_method_id, quantity=quantity),
+        headers=_headers(customer),
+    )
+    assert placed.status_code == 201, placed.text
+    order_id = placed.json()["id"]
+    paid = await client.patch(
+        f"/api/v1/orders/{order_id}",
+        json={"status": "paid", "payment_method": "stripe"},
+        headers=_headers(admin),
+    )
+    assert paid.status_code == 200, paid.text
+    return paid.json()
+
+
+# ----------------------------------------------------------------------
+# POST /refunds — happy path + audit + email + restock
+# ----------------------------------------------------------------------
+
+
+async def test_admin_issue_refund_happy_path(
+    client,
+    user_factory,
+    product_factory,
+    db_session: Session,
+    scheduled_emails,
+    test_shipping_method_id,
+):
+    customer = user_factory(email="refund-cust@example.com")
+    admin = user_factory(email="refund-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10, price_usd=12.50)
+    paid = await _place_and_pay_order(
+        client, admin, customer, product, shipping_method_id=test_shipping_method_id, quantity=2
+    )
+    # Drop the (paid, …) events the place/pay flow scheduled — we only want
+    # to assert on what the refund POST scheduled.
+    scheduled_emails.clear()
+
+    resp = await client.post(
+        f"/api/v1/orders/{paid['id']}/refunds",
+        json={
+            "amount": paid["total"],
+            "reason": "customer_request",
+            "note": "Refunded per customer request.",
+            "restock": True,
+        },
+        headers=_headers(admin),
+    )
+
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["order_id"] == paid["id"]
+    assert body["amount"] == pytest.approx(paid["total"])
+    assert body["currency"] == "USD"
+    assert body["reason"] == "customer_request"
+    assert body["note"] == "Refunded per customer request."
+    assert body["restock"] is True
+    assert body["actor_email"] == "refund-admin@example.com"
+    assert body["corrective_invoice"] is not None
+    assert body["corrective_invoice"]["kor_number"].startswith(("KOR/", "KOR-"))
+
+    # Order status flipped on the GET (refunds carried in the detail response).
+    detail = await client.get(f"/api/v1/orders/{paid['id']}", headers=_headers(admin))
+    assert detail.status_code == 200
+    detail_body = detail.json()
+    assert detail_body["status"] == "refunded"
+    assert len(detail_body["refunds"]) == 1
+    assert detail_body["refunds"][0]["actor_email"] == "refund-admin@example.com"
+
+    # Audit row recorded as a "create" on resource_type "refund".
+    audit = (
+        db_session.query(AdminAuditEvent)
+        .filter(
+            AdminAuditEvent.resource_type == "refund",
+            AdminAuditEvent.action == "create",
+        )
+        .count()
+    )
+    assert audit == 1
+
+    # Restock wrote one order_refunded movement per line (here: one line).
+    movements = (
+        db_session.query(InventoryMovement)
+        .filter(InventoryMovement.product_id == product.id)
+        .filter(InventoryMovement.reason == "order_refunded")
+        .all()
+    )
+    assert len(movements) == 1
+    assert movements[0].delta == 2
+
+    # The route scheduled the refunded email (composition + KOR attachment is
+    # covered by the unit tests in tests/unit/test_order_email.py).
+    assert (paid["id"], "refunded") in scheduled_emails
+
+
+async def test_admin_issue_refund_restock_false_skips_movements(
+    client, user_factory, product_factory, db_session: Session, test_shipping_method_id
+):
+    customer = user_factory(email="norestock-cust@example.com")
+    admin = user_factory(email="norestock-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10, price_usd=10.0)
+    paid = await _place_and_pay_order(
+        client, admin, customer, product, shipping_method_id=test_shipping_method_id
+    )
+
+    resp = await client.post(
+        f"/api/v1/orders/{paid['id']}/refunds",
+        json={
+            "amount": paid["total"],
+            "reason": "lost_in_transit",
+            "restock": False,
+        },
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 201
+
+    refund_movements = (
+        db_session.query(InventoryMovement)
+        .filter(InventoryMovement.product_id == product.id)
+        .filter(InventoryMovement.reason == "order_refunded")
+        .all()
+    )
+    assert refund_movements == []
+
+
+# ----------------------------------------------------------------------
+# POST /refunds — error paths
+# ----------------------------------------------------------------------
+
+
+async def test_admin_issue_partial_refund_400(
+    client, user_factory, product_factory, test_shipping_method_id
+):
+    customer = user_factory(email="partial-cust@example.com")
+    admin = user_factory(email="partial-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10, price_usd=10.0)
+    paid = await _place_and_pay_order(
+        client, admin, customer, product, shipping_method_id=test_shipping_method_id
+    )
+
+    resp = await client.post(
+        f"/api/v1/orders/{paid['id']}/refunds",
+        json={"amount": paid["total"] / 2, "reason": "customer_request", "restock": False},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 400
+    assert "Partial refunds" in resp.json()["detail"]
+
+
+async def test_admin_issue_refund_on_pending_400(
+    client, user_factory, product_factory, test_shipping_method_id
+):
+    """An order that hasn't transitioned to paid yet can't be refunded — D3 guard."""
+    customer = user_factory(email="pending-cust@example.com")
+    admin = user_factory(email="pending-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10, price_usd=10.0)
+    placed = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(product.id, shipping_method_id=test_shipping_method_id),
+        headers=_headers(customer),
+    )
+    order_id = placed.json()["id"]
+
+    resp = await client.post(
+        f"/api/v1/orders/{order_id}/refunds",
+        json={"amount": placed.json()["total"], "reason": "other", "restock": False},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 400
+    assert "pending" in resp.json()["detail"]
+
+
+async def test_admin_issue_refund_404_on_missing(client, user_factory):
+    admin = user_factory(email="missing-admin@example.com", role=UserRole.ADMIN)
+    resp = await client.post(
+        "/api/v1/orders/999999/refunds",
+        json={"amount": 10.0, "reason": "other", "restock": False},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 404
+
+
+async def test_customer_cannot_issue_refund_403(
+    client, user_factory, product_factory, test_shipping_method_id
+):
+    customer = user_factory(email="cust-only@example.com")
+    admin = user_factory(email="for-paid@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10, price_usd=10.0)
+    paid = await _place_and_pay_order(
+        client, admin, customer, product, shipping_method_id=test_shipping_method_id
+    )
+
+    resp = await client.post(
+        f"/api/v1/orders/{paid['id']}/refunds",
+        json={"amount": paid["total"], "reason": "other", "restock": False},
+        headers=_headers(customer),
+    )
+    assert resp.status_code == 403
+
+
+# ----------------------------------------------------------------------
+# GET /refunds — scoped reads
+# ----------------------------------------------------------------------
+
+
+async def test_customer_can_list_own_order_refunds(
+    client, user_factory, product_factory, test_shipping_method_id
+):
+    customer = user_factory(email="ownlist-cust@example.com")
+    admin = user_factory(email="ownlist-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10, price_usd=10.0)
+    paid = await _place_and_pay_order(
+        client, admin, customer, product, shipping_method_id=test_shipping_method_id
+    )
+    issued = await client.post(
+        f"/api/v1/orders/{paid['id']}/refunds",
+        json={"amount": paid["total"], "reason": "customer_request", "restock": False},
+        headers=_headers(admin),
+    )
+    assert issued.status_code == 201
+
+    resp = await client.get(f"/api/v1/orders/{paid['id']}/refunds", headers=_headers(customer))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["order_id"] == paid["id"]
+    # The customer-side surface intentionally drops note client-side; the
+    # endpoint still exposes it (admin uses the same shape).
+
+
+async def test_other_customer_gets_404_on_refunds(
+    client, user_factory, product_factory, test_shipping_method_id
+):
+    cust_a = user_factory(email="cust-a@example.com")
+    cust_b = user_factory(email="cust-b@example.com")
+    admin = user_factory(email="cross-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10, price_usd=10.0)
+    paid = await _place_and_pay_order(
+        client, admin, cust_a, product, shipping_method_id=test_shipping_method_id
+    )
+    await client.post(
+        f"/api/v1/orders/{paid['id']}/refunds",
+        json={"amount": paid["total"], "reason": "other", "restock": False},
+        headers=_headers(admin),
+    )
+
+    resp = await client.get(f"/api/v1/orders/{paid['id']}/refunds", headers=_headers(cust_b))
+    assert resp.status_code == 404
+
+
+async def test_admin_lists_any_order_refunds(
+    client, user_factory, product_factory, test_shipping_method_id
+):
+    customer = user_factory(email="any-cust@example.com")
+    admin = user_factory(email="any-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10, price_usd=10.0)
+    paid = await _place_and_pay_order(
+        client, admin, customer, product, shipping_method_id=test_shipping_method_id
+    )
+    await client.post(
+        f"/api/v1/orders/{paid['id']}/refunds",
+        json={"amount": paid["total"], "reason": "defective", "restock": True},
+        headers=_headers(admin),
+    )
+
+    resp = await client.get(f"/api/v1/orders/{paid['id']}/refunds", headers=_headers(admin))
+    assert resp.status_code == 200
+    assert len(resp.json()) == 1
+    assert resp.json()[0]["actor_email"] == "any-admin@example.com"
+
+
+# ----------------------------------------------------------------------
+# Admin PATCH-to-refunded continues to be rejected (updated message)
+# ----------------------------------------------------------------------
+
+
+async def test_admin_patch_to_refunded_points_at_endpoint(
+    client, user_factory, product_factory, test_shipping_method_id
+):
+    customer = user_factory(email="patchref-cust@example.com")
+    admin = user_factory(email="patchref-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10, price_usd=10.0)
+    paid = await _place_and_pay_order(
+        client, admin, customer, product, shipping_method_id=test_shipping_method_id
+    )
+
+    resp = await client.patch(
+        f"/api/v1/orders/{paid['id']}",
+        json={"status": "refunded"},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 400
+    # Updated message points the caller at the dedicated endpoint.
+    assert "refunds" in resp.json()["detail"]
+    assert "POST" in resp.json()["detail"]

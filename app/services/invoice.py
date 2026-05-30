@@ -36,11 +36,13 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy.orm import Session
 
+from app.crud import corrective_invoice as crud_corrective
 from app.crud import invoice as crud_invoice
 
 if TYPE_CHECKING:
     from app.core.config import Settings
     from app.models.order import Order
+    from app.models.refund import Refund
 
 _FONTS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
 _FONT_REGULAR = "DejaVuSans"
@@ -153,6 +155,24 @@ _LABELS: dict[str, dict[str, str]] = {
         "payment_method": "Payment method",
         "status": "Status",
         "thank_you": "Thank you for your order.",
+        # Corrective-invoice (faktura korygująca) labels.
+        "kor_title": "CORRECTIVE INVOICE",
+        "kor_no": "Corrective invoice no.",
+        "original_ref": "Issued to invoice",
+        "original_date": "Original issue date",
+        "refund_reason": "Reason for correction",
+        "before_correction": "Before correction",
+        "after_correction": "After correction",
+        "difference": "Difference (refunded)",
+        "kor_thank_you": "Refund has been recorded. Funds will be credited via "
+        "the original payment method within 5-10 business days.",
+        # Refund-reason translations used on the KOR PDF.
+        "refund_reason_defective": "Defective product",
+        "refund_reason_wrong_item": "Wrong item shipped",
+        "refund_reason_customer_request": "Customer request",
+        "refund_reason_lost_in_transit": "Lost in transit",
+        "refund_reason_damaged_in_transit": "Damaged in transit",
+        "refund_reason_other": "Other",
     },
     "pl": {
         "invoice": "FAKTURA",
@@ -179,6 +199,24 @@ _LABELS: dict[str, dict[str, str]] = {
         "payment_method": "Metoda płatności",
         "status": "Status",
         "thank_you": "Dziękujemy za zamówienie.",
+        # Corrective-invoice (faktura korygująca) labels.
+        "kor_title": "FAKTURA KORYGUJĄCA",
+        "kor_no": "Nr faktury korygującej",
+        "original_ref": "Wystawiona do faktury",
+        "original_date": "Data wystawienia oryginału",
+        "refund_reason": "Przyczyna korekty",
+        "before_correction": "Przed korektą",
+        "after_correction": "Po korekcie",
+        "difference": "Różnica (zwrot)",
+        "kor_thank_you": "Zwrot został zarejestrowany. Środki zostaną zwrócone "
+        "tą samą metodą płatności w ciągu 5-10 dni roboczych.",
+        # Refund-reason translations used on the KOR PDF.
+        "refund_reason_defective": "Wadliwy produkt",
+        "refund_reason_wrong_item": "Wysłano niewłaściwy produkt",
+        "refund_reason_customer_request": "Na życzenie klienta",
+        "refund_reason_lost_in_transit": "Zaginął w transporcie",
+        "refund_reason_damaged_in_transit": "Uszkodzony w transporcie",
+        "refund_reason_other": "Inny",
     },
 }
 
@@ -434,5 +472,294 @@ def render_invoice_pdf(
         invoice_number=derive_proforma_number(order),
         issued_at=dt.date.today(),
         is_proforma=True,
+        lang=lang,
+    )
+
+
+# ----------------------------------------------------------------------
+# Faktura korygująca (corrective invoice for a refund)
+# ----------------------------------------------------------------------
+
+
+def _localized_refund_reason(reason: str, labels: dict[str, str]) -> str:
+    """Translate the raw enum value to its EN/PL label, falling back to the value."""
+    return labels.get(f"refund_reason_{reason}", reason)
+
+
+def build_corrective_invoice_pdf(
+    refund: Refund,
+    *,
+    order: Order,
+    store: StoreIdentity,
+    kor_number: str,
+    issued_at: dt.date,
+    original_invoice_number: str,
+    original_issued_at: dt.date,
+    lang: str = "en",
+) -> bytes:
+    """Render a one-page faktura korygująca PDF and return its bytes.
+
+    Pure — reads only its arguments (``refund`` + eager-loaded
+    ``order.items``/``order.user``, ``store``, the resolved KOR number/date, and
+    the original faktura's number + issue date) — no DB access, so it is
+    unit-testable in isolation. ``render_corrective_invoice_pdf`` is the
+    DB-aware orchestrator that looks up the KOR registry and the original
+    ``invoices`` row before calling this.
+
+    Layout (mirrors a real PL faktura korygująca):
+
+    - Header: title + KOR number + issue date.
+    - Reference block: original invoice number + its issue date + the refund
+      reason (translated).
+    - Seller / buyer (same as the original faktura).
+    - Line items table (the items being refunded; v1 = all items, full refund).
+    - **Before correction** column: net / VAT / gross at the original totals.
+    - **After correction** column: net / VAT / gross at the post-refund totals
+      (v1 = 0, since the refund is full).
+    - **Difference** column: the refunded amounts as negative values (this is
+      the legal "wartość korekty").
+    """
+    _ensure_fonts_registered()
+    labels = _LABELS.get(lang, _LABELS["en"])
+    currency = order.currency
+
+    def money(amount: float) -> str:
+        return f"{amount:,.2f} {currency}"
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=18 * mm,
+        rightMargin=18 * mm,
+        topMargin=18 * mm,
+        bottomMargin=18 * mm,
+        title=f"{labels['kor_title']} {kor_number}",
+    )
+
+    sample = getSampleStyleSheet()
+    base = ParagraphStyle(
+        "kor_base", parent=sample["Normal"], fontName=_FONT_REGULAR, fontSize=9, leading=13
+    )
+    title_style = ParagraphStyle(
+        "kor_title", parent=base, fontName=_FONT_BOLD, fontSize=22, leading=26
+    )
+    right = ParagraphStyle("kor_right", parent=base, alignment=TA_RIGHT)
+    footer = ParagraphStyle("kor_footer", parent=base, textColor=_MUTED)
+
+    # Header.
+    meta = "<br/>".join(
+        [
+            f"<b>{labels['kor_no']}:</b> {_esc(kor_number)}",
+            f"<b>{labels['issue_date']}:</b> {issued_at.isoformat()}",
+            f"<b>{labels['order_no']}:</b> {_esc(order.order_number)}",
+        ]
+    )
+    header = Table(
+        [[Paragraph(_esc(labels["kor_title"]), title_style), Paragraph(meta, right)]],
+        colWidths=[doc.width * 0.55, doc.width * 0.45],
+    )
+    header.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
+
+    # Original-invoice reference + refund reason.
+    reason_label = _localized_refund_reason(refund.reason, labels)
+    ref_para = Paragraph(
+        "<br/>".join(
+            [
+                f"<b>{labels['original_ref']}:</b> {_esc(original_invoice_number)}",
+                f"<b>{labels['original_date']}:</b> {original_issued_at.isoformat()}",
+                f"<b>{labels['refund_reason']}:</b> {_esc(reason_label)}",
+            ]
+        ),
+        base,
+    )
+
+    # Seller / buyer (same shape as build_invoice_pdf).
+    seller = [f"<b>{labels['seller']}</b>", _esc(store.name)]
+    seller += [_esc(v) for v in (store.address_line, store.postal_city, store.country) if v]
+    if store.tax_id:
+        seller.append(f"{labels['tax_id']}: {_esc(store.tax_id)}")
+    if store.email:
+        seller.append(_esc(store.email))
+
+    user = order.user
+    buyer = [f"<b>{labels['bill_to']}</b>"]
+    if user.company_name:
+        buyer.append(_esc(user.company_name))
+        if user.company_tax_id:
+            buyer.append(f"{labels['tax_id']}: {_esc(user.company_tax_id)}")
+        if user.company_address_street:
+            buyer.append(_esc(user.company_address_street))
+        company_city = " ".join(
+            p for p in (user.company_address_postal_code, user.company_address_city) if p
+        )
+        if company_city:
+            buyer.append(_esc(company_city))
+        if user.company_address_country:
+            buyer.append(_esc(user.company_address_country))
+    else:
+        buyer.append(_esc(user.full_name))
+    buyer.append(_esc(user.email))
+
+    parties = Table(
+        [[Paragraph("<br/>".join(seller), base), Paragraph("<br/>".join(buyer), base)]],
+        colWidths=[doc.width * 0.5, doc.width * 0.5],
+    )
+    parties.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (0, -1), 0),
+                ("RIGHTPADDING", (-1, 0), (-1, -1), 0),
+            ]
+        )
+    )
+
+    # Line items (the items being refunded — v1: all).
+    item_rows: list[list] = [
+        [labels["item"], labels["sku"], labels["qty"], labels["unit_price"], labels["line_total"]]
+    ]
+    for it in order.items:
+        item_rows.append(
+            [
+                Paragraph(_esc(it.product_name), base),
+                Paragraph(_esc(it.product_sku) if it.product_sku else "—", base),
+                str(it.quantity),
+                money(it.unit_price),
+                money(it.total_price),
+            ]
+        )
+    items_tbl = Table(
+        item_rows,
+        colWidths=[
+            doc.width * 0.42,
+            doc.width * 0.16,
+            doc.width * 0.08,
+            doc.width * 0.17,
+            doc.width * 0.17,
+        ],
+        repeatRows=1,
+    )
+    items_tbl.setStyle(
+        TableStyle(
+            [
+                ("FONTNAME", (0, 0), (-1, -1), _FONT_REGULAR),
+                ("FONTNAME", (0, 0), (-1, 0), _FONT_BOLD),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("BACKGROUND", (0, 0), (-1, 0), _HEAD_BG),
+                ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LINEBELOW", (0, 0), (-1, 0), 0.5, _BORDER),
+                ("LINEBELOW", (0, 1), (-1, -1), 0.25, _RULE),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
+
+    # Before / After / Difference totals (the legal "wartość korekty" block).
+    # v1 = full refund, so after-correction is the zero baseline and the
+    # difference equals the negative of the original gross total. The schema
+    # already supports partials (refund.amount can hold any value); the
+    # `after = original - amount` math below makes the partial-refund PR a
+    # one-line UI relaxation.
+    original_gross = round(order.total, 2)
+    refunded_gross = round(refund.amount, 2)
+    after_gross = round(original_gross - refunded_gross, 2)
+    original_net, original_vat = decompose_gross(original_gross, store.vat_rate)
+    after_net, after_vat = decompose_gross(after_gross, store.vat_rate)
+    diff_net = round(after_net - original_net, 2)
+    diff_vat = round(after_vat - original_vat, 2)
+    diff_gross = round(after_gross - original_gross, 2)
+
+    totals_rows: list[list[str]] = [
+        ["", labels["before_correction"], labels["after_correction"], labels["difference"]],
+    ]
+    if store.vat_rate > 0:
+        totals_rows.append([labels["net"], money(original_net), money(after_net), money(diff_net)])
+        totals_rows.append(
+            [
+                f"{labels['vat']} ({store.vat_rate}%)",
+                money(original_vat),
+                money(after_vat),
+                money(diff_vat),
+            ]
+        )
+    totals_rows.append(
+        [labels["total_due"], money(original_gross), money(after_gross), money(diff_gross)]
+    )
+    last = len(totals_rows) - 1
+    totals_tbl = Table(
+        totals_rows,
+        colWidths=[doc.width * 0.22, doc.width * 0.26, doc.width * 0.26, doc.width * 0.26],
+    )
+    totals_tbl.hAlign = "RIGHT"
+    totals_tbl.setStyle(
+        TableStyle(
+            [
+                ("FONTNAME", (0, 0), (-1, -1), _FONT_REGULAR),
+                ("FONTNAME", (0, 0), (-1, 0), _FONT_BOLD),
+                ("FONTNAME", (0, last), (-1, last), _FONT_BOLD),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+                ("BACKGROUND", (0, 0), (-1, 0), _HEAD_BG),
+                ("LINEBELOW", (0, 0), (-1, 0), 0.5, _BORDER),
+                ("LINEABOVE", (0, last), (-1, last), 0.5, _BORDER),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+
+    doc.build(
+        [
+            header,
+            Spacer(1, 6 * mm),
+            ref_para,
+            Spacer(1, 6 * mm),
+            parties,
+            Spacer(1, 8 * mm),
+            items_tbl,
+            Spacer(1, 6 * mm),
+            totals_tbl,
+            Spacer(1, 10 * mm),
+            Paragraph(_esc(labels["kor_thank_you"]), footer),
+        ]
+    )
+    return buf.getvalue()
+
+
+def render_corrective_invoice_pdf(
+    db: Session, refund: Refund, *, store: StoreIdentity, lang: str = "en"
+) -> bytes | None:
+    """Render the issued faktura korygująca for a refund, or None if none was issued.
+
+    Looks up the ``corrective_invoices`` registry (the KOR is assigned in the
+    same transaction as the refund — see ``crud_corrective.issue_for_refund``)
+    and feeds the resolved KOR + original faktura references into the pure
+    ``build_corrective_invoice_pdf``. Returns ``None`` when the refund has no
+    KOR (a refund against an order that never had a faktura — legacy or a
+    future "refund without invoice" path).
+    """
+    kor = crud_corrective.get_by_refund_id(db, refund.id)
+    if kor is None:
+        return None
+    original = kor.original_invoice
+    return build_corrective_invoice_pdf(
+        refund,
+        order=refund.order,
+        store=store,
+        kor_number=kor.kor_number,
+        issued_at=kor.issued_at.date(),
+        original_invoice_number=original.invoice_number,
+        original_issued_at=original.issued_at.date(),
         lang=lang,
     )

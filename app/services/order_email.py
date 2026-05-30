@@ -17,8 +17,13 @@ from typing import TYPE_CHECKING
 from app.core import email
 from app.core.config import settings
 from app.core.database import SessionLocal
+from app.crud import corrective_invoice as crud_corrective
 from app.crud import order as crud_order
-from app.services.invoice import StoreIdentity, render_invoice_pdf
+from app.services.invoice import (
+    StoreIdentity,
+    render_corrective_invoice_pdf,
+    render_invoice_pdf,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -34,15 +39,20 @@ class _EventSpec:
     heading: str
     intro_html: str
     attach_invoice: bool = False
+    attach_corrective: bool = False
 
 
 # OrderStatus values that map 1:1 to a notification event on the admin status
-# PATCH. Cancelled is fired by the cancel endpoint, confirmation by order create.
+# PATCH. Cancelled is fired by the cancel endpoint, confirmation by order create,
+# refunded by the dedicated refund endpoint.
 _STATUS_EVENTS = {"paid": "paid", "shipped": "shipped", "delivered": "delivered"}
 
 # Events that attach the order document: confirmation rides a *proforma* (the order
 # is still pending), paid rides the numbered *faktura* (see render_invoice_pdf).
 _ATTACH_EVENTS = {"confirmation", "paid"}
+
+# Events that attach the faktura korygująca (one event so far — the refund).
+_ATTACH_CORRECTIVE_EVENTS = {"refunded"}
 
 # Per-locale email copy. ``subject`` interpolates {name}/{num}; ``intro`` is a plain
 # sentence the builder wraps in <p> and follows with the "view order" link. Fallback
@@ -76,6 +86,13 @@ _EVENT_TEXT: dict[str, dict[str, dict[str, str]]] = {
             "intro": "Your order has been cancelled and any reserved stock released. "
             "If this was unexpected, please contact us.",
         },
+        "refunded": {
+            "subject": "{name} — Refund issued for order {num}",
+            "heading": "Your refund has been issued",
+            "intro": "We've issued a refund for your order. Funds will be credited "
+            "back to your original payment method within 5-10 business days. "
+            "A corrective invoice (faktura korygująca) is attached.",
+        },
     },
     "pl": {
         "confirmation": {
@@ -106,6 +123,13 @@ _EVENT_TEXT: dict[str, dict[str, dict[str, str]]] = {
             "intro": "Twoje zamówienie zostało anulowane, a zarezerwowany towar zwolniony. "
             "Jeśli to pomyłka, skontaktuj się z nami.",
         },
+        "refunded": {
+            "subject": "{name} — Zwrot za zamówienie {num}",
+            "heading": "Zwrot został zarejestrowany",
+            "intro": "Wystawiliśmy zwrot za Twoje zamówienie. Środki zostaną "
+            "zwrócone tą samą metodą płatności w ciągu 5-10 dni roboczych. "
+            "W załączniku faktura korygująca.",
+        },
     },
 }
 
@@ -135,6 +159,7 @@ def _spec_for(event: str, order: Order, lang: str) -> _EventSpec | None:
         heading=entry["heading"],
         intro_html=f"<p>{entry['intro']}</p>{view}",
         attach_invoice=event in _ATTACH_EVENTS,
+        attach_corrective=event in _ATTACH_CORRECTIVE_EVENTS,
     )
 
 
@@ -154,11 +179,24 @@ def send_order_event(db: Session, order: Order, event: str) -> None:
         logger.warning("Unknown order-email event %r (order %s)", event, order.order_number)
         return
     try:
+        store = StoreIdentity.from_settings(settings)
         invoice_pdf = (
-            render_invoice_pdf(db, order, store=StoreIdentity.from_settings(settings), lang=lang)
-            if spec.attach_invoice
-            else None
+            render_invoice_pdf(db, order, store=store, lang=lang) if spec.attach_invoice else None
         )
+        corrective_pdf: bytes | None = None
+        corrective_number: str | None = None
+        if spec.attach_corrective:
+            # For the refunded event we attach the KOR for the most recent
+            # refund on the order (v1 ships full refunds only, so there is at
+            # most one). Order.refunds is ascending by created_at, so the
+            # latest is the last entry; loaded by get_scoped's eager-load.
+            latest_refund = order.refunds[-1] if order.refunds else None
+            if latest_refund is not None:
+                corrective_pdf = render_corrective_invoice_pdf(
+                    db, latest_refund, store=store, lang=lang
+                )
+                kor = crud_corrective.get_by_refund_id(db, latest_refund.id)
+                corrective_number = kor.kor_number if kor is not None else None
         email.send_order_email(
             email_to=order.user.email,
             subject=spec.subject,
@@ -166,6 +204,8 @@ def send_order_event(db: Session, order: Order, event: str) -> None:
             intro_html=spec.intro_html,
             order=order,
             invoice_pdf=invoice_pdf,
+            corrective_invoice_pdf=corrective_pdf,
+            corrective_invoice_number=corrective_number,
             lang=lang,
         )
     except Exception:

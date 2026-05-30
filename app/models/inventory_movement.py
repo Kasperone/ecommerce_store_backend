@@ -22,6 +22,7 @@ class InventoryMovementReason(str, enum.Enum):
 
     ORDER_PLACED = "order_placed"
     ORDER_CANCELLED = "order_cancelled"
+    ORDER_REFUNDED = "order_refunded"
     MANUAL_ADJUSTMENT = "manual_adjustment"
     RESTOCK = "restock"
     TRANSFER_OUT = "transfer_out"

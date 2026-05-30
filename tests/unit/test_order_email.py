@@ -54,6 +54,12 @@ class _DummySession:
         pass
 
 
+class _StubKor:
+    """KOR-shaped placeholder used by the refunded-event composition tests."""
+
+    kor_number = "KOR/2026/00007"
+
+
 # The composition tests stub the renderer, so the session is never touched —
 # cast a dummy to satisfy the typed ``send_order_event(db: Session, ...)`` param.
 _DB = cast(Session, _DummySession())
@@ -61,13 +67,25 @@ _DB = cast(Session, _DummySession())
 
 @pytest.fixture(autouse=True)
 def _stub_render(monkeypatch):
-    """Stub the DB-backed invoice renderer for these composition tests.
+    """Stub the DB-backed invoice + KOR renderers for these composition tests.
 
-    ``send_order_event`` now resolves faktura-vs-proforma via the DB; the
-    faktura/proforma rendering itself is covered by the invoice + integration
-    tests, so here we only assert that *a* PDF is attached when the spec says so.
+    ``send_order_event`` resolves faktura-vs-proforma via the DB and (for the
+    refunded event) the KOR registry; the renderers themselves are covered by
+    the invoice + integration tests, so here we only assert that *a* PDF is
+    attached when the spec says so.
     """
     monkeypatch.setattr(order_email, "render_invoice_pdf", lambda *a, **k: b"%PDF-stub")
+    monkeypatch.setattr(
+        order_email, "render_corrective_invoice_pdf", lambda *a, **k: b"%PDF-kor-stub"
+    )
+    # The refunded event composition reads the KOR registry via
+    # ``crud_corrective.get_by_refund_id``; stub it out to a transient KOR-shaped
+    # object so the test doesn't need a DB row.
+    monkeypatch.setattr(
+        order_email.crud_corrective,
+        "get_by_refund_id",
+        lambda db, refund_id: _StubKor(),
+    )
 
 
 # --- event_for_status -------------------------------------------------------
@@ -83,6 +101,9 @@ def test_event_for_status_maps_notifiable(order_status, event):
 
 @pytest.mark.parametrize("order_status", ["pending", "processing", "cancelled", "refunded", "x"])
 def test_event_for_status_none_for_others(order_status):
+    # ``refunded`` is intentionally NOT routed via the admin status PATCH — it
+    # fires via the dedicated refund endpoint instead (mirrors how cancel is
+    # excluded from the PATCH-driven event map).
     assert order_email.event_for_status(order_status) is None
 
 
@@ -109,6 +130,42 @@ def test_status_events_have_no_attachment(captured_emails, event):
     order_email.send_order_event(_DB, _make_order(), event)
     assert len(captured_emails) == 1
     assert captured_emails[0]["invoice_pdf"] is None
+    # Non-refund events don't carry a KOR.
+    assert captured_emails[0].get("corrective_invoice_pdf") is None
+
+
+def test_refunded_attaches_kor_and_no_invoice(captured_emails):
+    """The refunded event attaches the KOR PDF (not the faktura) + its number."""
+    order = _make_order()
+    # Provide a refund row on the order so the spec can pick "latest" by index.
+    from app.models.refund import Refund
+
+    order.refunds = [
+        Refund(order_id=order.id, amount=order.total, currency=order.currency, reason="other")
+    ]
+
+    order_email.send_order_event(_DB, order, "refunded")
+    assert len(captured_emails) == 1
+    entry = captured_emails[0]
+    assert entry["kind"] == "order_email"
+    assert "Refund" in entry["subject"]
+    # KOR is attached; the invoice is NOT (refunded skips _ATTACH_EVENTS).
+    assert entry["invoice_pdf"] is None
+    assert entry["corrective_invoice_pdf"][:4] == b"%PDF"
+    assert entry["corrective_invoice_number"] == "KOR/2026/00007"
+
+
+def test_refunded_with_no_refunds_attaches_no_kor(captured_emails):
+    """Defensive: a refunded event for an order with no refunds (shouldn't happen
+    in practice — the route writes the refund before firing the email — but the
+    composition path must not crash)."""
+    order = _make_order()
+    order.refunds = []  # explicitly empty
+
+    order_email.send_order_event(_DB, order, "refunded")
+    entry = captured_emails[0]
+    assert entry["corrective_invoice_pdf"] is None
+    assert entry["corrective_invoice_number"] is None
 
 
 def test_unknown_event_sends_nothing(captured_emails):
