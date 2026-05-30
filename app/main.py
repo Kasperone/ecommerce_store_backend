@@ -77,6 +77,7 @@ from app.api.v1 import (  # noqa: E402
     admin_dashboard,
     admin_inventory,
     admin_reviews,
+    admin_shipping,
     admin_tags,
     admin_warehouses,
     auth,
@@ -86,6 +87,7 @@ from app.api.v1 import (  # noqa: E402
     products,
     reviews,
     search,
+    shipping,
     uploads,
 )
 
@@ -95,9 +97,11 @@ app.include_router(categories.router, prefix="/api/v1/categories", tags=["Catego
 app.include_router(orders.router, prefix="/api/v1/orders", tags=["Orders"])
 app.include_router(payments.router, prefix="/api/v1/payments", tags=["Payments"])
 app.include_router(search.router, prefix="/api/v1/search", tags=["Search"])
+app.include_router(shipping.router, prefix="/api/v1/shipping", tags=["Shipping"])
 app.include_router(
     admin_customers.router, prefix="/api/v1/admin/customers", tags=["Admin Customers"]
 )
+app.include_router(admin_shipping.router, prefix="/api/v1/admin/shipping", tags=["Admin Shipping"])
 app.include_router(
     admin_dashboard.router, prefix="/api/v1/admin/dashboard", tags=["Admin Dashboard"]
 )

@@ -38,14 +38,17 @@ def _headers(user) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _order_body(product_id: int, qty: int = 1, currency: str = "USD") -> dict:
+def _order_body(
+    product_id: int, *, shipping_method_id: int, quantity: int = 1, currency: str = "USD"
+) -> dict:
     return {
-        "items": [{"product_id": product_id, "quantity": qty}],
+        "items": [{"product_id": product_id, "quantity": quantity}],
         "currency": currency,
         "shipping_address": "1 Test St",
         "shipping_city": "Testville",
         "shipping_postal_code": "00-001",
-        "shipping_country": "Poland",
+        "shipping_country": "PL",
+        "shipping_method_id": shipping_method_id,
     }
 
 
@@ -60,12 +63,16 @@ async def test_kpis_forbidden_for_customer(client, user_factory):
     assert resp.status_code == 403
 
 
-async def test_kpis_admin_returns_full_shape(client, user_factory, product_factory):
+async def test_kpis_admin_returns_full_shape(
+    client, user_factory, product_factory, test_shipping_method_id
+):
     admin = user_factory(email="dash-admin@example.com", role=UserRole.ADMIN)
     customer = user_factory(email="dash-cust@example.com")
     product = product_factory(stock=50, price_usd=20.0)
     created = await client.post(
-        "/api/v1/orders/", json=_order_body(product.id, 2), headers=_headers(customer)
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=2, shipping_method_id=test_shipping_method_id),
+        headers=_headers(customer),
     )
     assert created.status_code == 201
 

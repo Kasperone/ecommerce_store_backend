@@ -36,14 +36,17 @@ def _sign(body: bytes) -> str:
     return hashlib.md5(body + SECOND_KEY.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
-def _make_pending_order(db, user, product, quantity: int = 2, currency: str = "PLN"):
+def _make_pending_order(
+    db, user, product, *, shipping_method_id: int, quantity: int = 2, currency: str = "PLN"
+):
     obj_in = OrderCreate(
         items=[OrderItemCreate(product_id=product.id, quantity=quantity)],
         currency=currency,
         shipping_address="1 Test St",
         shipping_city="Town",
         shipping_postal_code="00-001",
-        shipping_country="Poland",
+        shipping_country="PL",
+        shipping_method_id=shipping_method_id,
     )
     order = crud_order.create_with_items(db, user_id=user.id, obj_in=obj_in)
     db.commit()
@@ -70,7 +73,7 @@ def configured_payu(monkeypatch):
 
 @respx.mock
 async def test_create_checkout_returns_redirect(
-    client, user_factory, product_factory, db_session, configured_payu
+    client, user_factory, product_factory, db_session, configured_payu, test_shipping_method_id
 ):
     respx.post(f"{SANDBOX}/pl/standard/user/oauth/authorize").mock(
         return_value=httpx.Response(200, json={"access_token": "tok"}),
@@ -87,7 +90,9 @@ async def test_create_checkout_returns_redirect(
     )
     user = user_factory()
     product = product_factory(stock=10, price_pln=499.0)
-    order = _make_pending_order(db_session, user, product)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
 
     resp = await client.post(f"/api/v1/payments/payu/orders/{order.id}", headers=_headers(user))
 
@@ -96,11 +101,13 @@ async def test_create_checkout_returns_redirect(
 
 
 async def test_create_checkout_503_when_unconfigured(
-    client, user_factory, product_factory, db_session
+    client, user_factory, product_factory, db_session, test_shipping_method_id
 ):
     user = user_factory()
     product = product_factory(stock=5, price_pln=10.0)
-    order = _make_pending_order(db_session, user, product)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
 
     resp = await client.post(f"/api/v1/payments/payu/orders/{order.id}", headers=_headers(user))
     assert resp.status_code == 503
@@ -112,23 +119,27 @@ async def test_create_checkout_401_without_auth(client):
 
 
 async def test_create_checkout_404_for_other_users_order(
-    client, user_factory, product_factory, db_session, configured_payu
+    client, user_factory, product_factory, db_session, configured_payu, test_shipping_method_id
 ):
     owner = user_factory()
     other = user_factory()
     product = product_factory(stock=5, price_pln=10.0)
-    order = _make_pending_order(db_session, owner, product)
+    order = _make_pending_order(
+        db_session, owner, product, shipping_method_id=test_shipping_method_id
+    )
 
     resp = await client.post(f"/api/v1/payments/payu/orders/{order.id}", headers=_headers(other))
     assert resp.status_code == 404
 
 
 async def test_create_checkout_409_when_not_pending(
-    client, user_factory, product_factory, db_session, configured_payu
+    client, user_factory, product_factory, db_session, configured_payu, test_shipping_method_id
 ):
     user = user_factory()
     product = product_factory(stock=5, price_pln=10.0)
-    order = _make_pending_order(db_session, user, product)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
     crud_order.cancel(db_session, order=order)
     db_session.commit()
 
@@ -142,11 +153,13 @@ async def test_create_checkout_409_when_not_pending(
 
 
 async def test_webhook_marks_order_paid(
-    client, user_factory, product_factory, db_session, configured_payu
+    client, user_factory, product_factory, db_session, configured_payu, test_shipping_method_id
 ):
     user = user_factory()
     product = product_factory(stock=5, price_pln=10.0)
-    order = _make_pending_order(db_session, user, product)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
 
     body = json.dumps(
         {"order": {"extOrderId": order.order_number, "orderId": "PAYU-9", "status": "COMPLETED"}}
@@ -168,11 +181,13 @@ async def test_webhook_marks_order_paid(
 
 
 async def test_webhook_rejects_invalid_signature(
-    client, user_factory, product_factory, db_session, configured_payu
+    client, user_factory, product_factory, db_session, configured_payu, test_shipping_method_id
 ):
     user = user_factory()
     product = product_factory(stock=5, price_pln=10.0)
-    order = _make_pending_order(db_session, user, product)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
 
     body = json.dumps(
         {"order": {"extOrderId": order.order_number, "orderId": "X", "status": "COMPLETED"}}
@@ -189,11 +204,13 @@ async def test_webhook_rejects_invalid_signature(
 
 
 async def test_webhook_ignores_non_completed_status(
-    client, user_factory, product_factory, db_session, configured_payu
+    client, user_factory, product_factory, db_session, configured_payu, test_shipping_method_id
 ):
     user = user_factory()
     product = product_factory(stock=5, price_pln=10.0)
-    order = _make_pending_order(db_session, user, product)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
 
     body = json.dumps(
         {"order": {"extOrderId": order.order_number, "orderId": "X", "status": "CANCELED"}}
@@ -210,11 +227,13 @@ async def test_webhook_ignores_non_completed_status(
 
 
 async def test_webhook_is_idempotent(
-    client, user_factory, product_factory, db_session, configured_payu
+    client, user_factory, product_factory, db_session, configured_payu, test_shipping_method_id
 ):
     user = user_factory()
     product = product_factory(stock=5, price_pln=10.0)
-    order = _make_pending_order(db_session, user, product)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
 
     body = json.dumps(
         {"order": {"extOrderId": order.order_number, "orderId": "PAYU-9", "status": "COMPLETED"}}

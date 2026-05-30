@@ -39,14 +39,17 @@ def _stripe_sig(payload: bytes, secret: str = WEBHOOK_SECRET) -> str:
     return f"t={ts},v1={sig}"
 
 
-def _make_pending_order(db, user, product, quantity: int = 2, currency: str = "USD"):
+def _make_pending_order(
+    db, user, product, *, shipping_method_id: int, quantity: int = 2, currency: str = "USD"
+):
     obj_in = OrderCreate(
         items=[OrderItemCreate(product_id=product.id, quantity=quantity)],
         currency=currency,
         shipping_address="1 Test St",
         shipping_city="Town",
         shipping_postal_code="00-001",
-        shipping_country="USA",
+        shipping_country="US",
+        shipping_method_id=shipping_method_id,
     )
     order = crud_order.create_with_items(db, user_id=user.id, obj_in=obj_in)
     db.commit()
@@ -136,11 +139,19 @@ def fake_payment_intent(monkeypatch):
 
 
 async def test_create_checkout_returns_url(
-    client, user_factory, product_factory, db_session, configured_stripe, fake_session
+    client,
+    user_factory,
+    product_factory,
+    db_session,
+    configured_stripe,
+    fake_session,
+    test_shipping_method_id,
 ):
     user = user_factory()
     product = product_factory(stock=10, price_usd=499.0)
-    order = _make_pending_order(db_session, user, product)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
 
     resp = await client.post(f"/api/v1/payments/stripe/checkout/{order.id}", headers=_headers(user))
 
@@ -149,11 +160,13 @@ async def test_create_checkout_returns_url(
 
 
 async def test_create_checkout_503_when_unconfigured(
-    client, user_factory, product_factory, db_session
+    client, user_factory, product_factory, db_session, test_shipping_method_id
 ):
     user = user_factory()
     product = product_factory(stock=5, price_usd=10.0)
-    order = _make_pending_order(db_session, user, product)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
 
     resp = await client.post(f"/api/v1/payments/stripe/checkout/{order.id}", headers=_headers(user))
     assert resp.status_code == 503
@@ -165,12 +178,20 @@ async def test_create_checkout_401_without_auth(client):
 
 
 async def test_create_checkout_404_for_other_users_order(
-    client, user_factory, product_factory, db_session, configured_stripe, fake_session
+    client,
+    user_factory,
+    product_factory,
+    db_session,
+    configured_stripe,
+    fake_session,
+    test_shipping_method_id,
 ):
     owner = user_factory()
     other = user_factory()
     product = product_factory(stock=5, price_usd=10.0)
-    order = _make_pending_order(db_session, owner, product)
+    order = _make_pending_order(
+        db_session, owner, product, shipping_method_id=test_shipping_method_id
+    )
 
     resp = await client.post(
         f"/api/v1/payments/stripe/checkout/{order.id}", headers=_headers(other)
@@ -179,11 +200,19 @@ async def test_create_checkout_404_for_other_users_order(
 
 
 async def test_create_checkout_409_when_not_pending(
-    client, user_factory, product_factory, db_session, configured_stripe, fake_session
+    client,
+    user_factory,
+    product_factory,
+    db_session,
+    configured_stripe,
+    fake_session,
+    test_shipping_method_id,
 ):
     user = user_factory()
     product = product_factory(stock=5, price_usd=10.0)
-    order = _make_pending_order(db_session, user, product)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
     crud_order.cancel(db_session, order=order)
     db_session.commit()
 
@@ -197,11 +226,13 @@ async def test_create_checkout_409_when_not_pending(
 
 
 async def test_webhook_marks_order_paid(
-    client, user_factory, product_factory, db_session, configured_stripe
+    client, user_factory, product_factory, db_session, configured_stripe, test_shipping_method_id
 ):
     user = user_factory()
     product = product_factory(stock=5, price_usd=10.0)
-    order = _make_pending_order(db_session, user, product)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
 
     body = _completed_event(order.order_number)
     resp = await client.post(
@@ -218,11 +249,13 @@ async def test_webhook_marks_order_paid(
 
 
 async def test_webhook_rejects_invalid_signature(
-    client, user_factory, product_factory, db_session, configured_stripe
+    client, user_factory, product_factory, db_session, configured_stripe, test_shipping_method_id
 ):
     user = user_factory()
     product = product_factory(stock=5, price_usd=10.0)
-    order = _make_pending_order(db_session, user, product)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
 
     body = _completed_event(order.order_number)
     resp = await client.post(
@@ -237,11 +270,13 @@ async def test_webhook_rejects_invalid_signature(
 
 
 async def test_webhook_ignores_unpaid_session(
-    client, user_factory, product_factory, db_session, configured_stripe
+    client, user_factory, product_factory, db_session, configured_stripe, test_shipping_method_id
 ):
     user = user_factory()
     product = product_factory(stock=5, price_usd=10.0)
-    order = _make_pending_order(db_session, user, product)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
 
     body = _completed_event(order.order_number, payment_status="unpaid")
     resp = await client.post(
@@ -268,11 +303,13 @@ async def test_webhook_ignores_other_event_types(client, db_session, configured_
 
 
 async def test_webhook_is_idempotent(
-    client, user_factory, product_factory, db_session, configured_stripe
+    client, user_factory, product_factory, db_session, configured_stripe, test_shipping_method_id
 ):
     user = user_factory()
     product = product_factory(stock=5, price_usd=10.0)
-    order = _make_pending_order(db_session, user, product)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
 
     body = _completed_event(order.order_number)
     headers = {"Stripe-Signature": _stripe_sig(body)}
@@ -317,11 +354,19 @@ async def test_stripe_config_requires_auth(client):
 
 
 async def test_create_payment_intent_returns_client_secret(
-    client, user_factory, product_factory, db_session, configured_stripe, fake_payment_intent
+    client,
+    user_factory,
+    product_factory,
+    db_session,
+    configured_stripe,
+    fake_payment_intent,
+    test_shipping_method_id,
 ):
     user = user_factory()
     product = product_factory(stock=10, price_usd=499.0)
-    order = _make_pending_order(db_session, user, product)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
 
     resp = await client.post(
         f"/api/v1/payments/stripe/payment-intent/{order.id}", headers=_headers(user)
@@ -332,11 +377,13 @@ async def test_create_payment_intent_returns_client_secret(
 
 
 async def test_create_payment_intent_503_when_unconfigured(
-    client, user_factory, product_factory, db_session, unconfigured_stripe
+    client, user_factory, product_factory, db_session, unconfigured_stripe, test_shipping_method_id
 ):
     user = user_factory()
     product = product_factory(stock=5, price_usd=10.0)
-    order = _make_pending_order(db_session, user, product)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
 
     resp = await client.post(
         f"/api/v1/payments/stripe/payment-intent/{order.id}", headers=_headers(user)
@@ -350,12 +397,20 @@ async def test_create_payment_intent_401_without_auth(client):
 
 
 async def test_create_payment_intent_404_for_other_users_order(
-    client, user_factory, product_factory, db_session, configured_stripe, fake_payment_intent
+    client,
+    user_factory,
+    product_factory,
+    db_session,
+    configured_stripe,
+    fake_payment_intent,
+    test_shipping_method_id,
 ):
     owner = user_factory()
     other = user_factory()
     product = product_factory(stock=5, price_usd=10.0)
-    order = _make_pending_order(db_session, owner, product)
+    order = _make_pending_order(
+        db_session, owner, product, shipping_method_id=test_shipping_method_id
+    )
 
     resp = await client.post(
         f"/api/v1/payments/stripe/payment-intent/{order.id}", headers=_headers(other)
@@ -364,11 +419,19 @@ async def test_create_payment_intent_404_for_other_users_order(
 
 
 async def test_create_payment_intent_409_when_not_pending(
-    client, user_factory, product_factory, db_session, configured_stripe, fake_payment_intent
+    client,
+    user_factory,
+    product_factory,
+    db_session,
+    configured_stripe,
+    fake_payment_intent,
+    test_shipping_method_id,
 ):
     user = user_factory()
     product = product_factory(stock=5, price_usd=10.0)
-    order = _make_pending_order(db_session, user, product)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
     crud_order.cancel(db_session, order=order)
     db_session.commit()
 
@@ -384,11 +447,13 @@ async def test_create_payment_intent_409_when_not_pending(
 
 
 async def test_webhook_payment_intent_succeeded_marks_paid(
-    client, user_factory, product_factory, db_session, configured_stripe
+    client, user_factory, product_factory, db_session, configured_stripe, test_shipping_method_id
 ):
     user = user_factory()
     product = product_factory(stock=5, price_usd=10.0)
-    order = _make_pending_order(db_session, user, product)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
 
     body = _payment_intent_succeeded_event(order.order_number, pi="pi_999")
     resp = await client.post(
