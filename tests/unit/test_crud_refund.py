@@ -1,10 +1,11 @@
 """Unit tests for ``app/crud/refund.py``.
 
-Covers the refundable-status matrix (D3), the v1 full-only amount guard,
-the ``restock`` branch (inventory movements + product stock), the order
-status flip, and the always-issue-KOR side effect when the order has a
-faktura. Mirrors the shape of ``tests/unit/test_crud_inventory.py`` /
-``tests/unit/test_crud_invoice.py``.
+Covers the refundable-status matrix (D3), the v2 running-total amount guard,
+the per-line picker validation (D2), the ``restock`` branch (inventory
+movements + product stock), the status flip threshold (REFUNDED at total,
+PARTIALLY_REFUNDED below), and the always-issue-KOR side effect when the
+order has a faktura. Mirrors the shape of ``tests/unit/test_crud_inventory.py``
+/ ``tests/unit/test_crud_invoice.py``.
 """
 
 from __future__ import annotations
@@ -13,7 +14,13 @@ import pytest
 
 from app.crud import refund as crud_refund
 from app.crud.invoice import invoice as crud_invoice
-from app.crud.refund import OrderNotRefundableError, PartialRefundUnsupportedError
+from app.crud.refund import (
+    OrderNotRefundableError,
+    RefundLineNotOnOrderError,
+    RefundLineOverError,
+    RefundOverError,
+    RestockRequiresItemsError,
+)
 from app.models.inventory_movement import InventoryMovement
 from app.models.order import Order, OrderItem, OrderStatus
 from app.models.refund import RefundReason
@@ -64,7 +71,13 @@ def _make_order(
 
 @pytest.mark.parametrize(
     "status",
-    [OrderStatus.PAID, OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.DELIVERED],
+    [
+        OrderStatus.PAID,
+        OrderStatus.PROCESSING,
+        OrderStatus.SHIPPED,
+        OrderStatus.DELIVERED,
+        OrderStatus.PARTIALLY_REFUNDED,
+    ],
 )
 def test_refund_accepts_refundable_statuses(db_session, user_factory, product_factory, status):
     user = user_factory()
@@ -111,22 +124,76 @@ def test_refund_rejects_non_refundable_statuses(db_session, user_factory, produc
 
 
 # ----------------------------------------------------------------------
-# Amount guard (D1: full-only in v1)
+# Amount guard (D1: running-total in v2)
 # ----------------------------------------------------------------------
 
 
-def test_partial_refund_rejected(db_session, user_factory, product_factory):
+def test_partial_refund_flips_to_partially_refunded(db_session, user_factory, product_factory):
+    """Sub-total amount → status PARTIALLY_REFUNDED (was rejected in v1)."""
     user = user_factory()
     admin = user_factory(email="admin-partial@example.com")
     product = product_factory(stock=10, price_usd=20.0)
     order = _make_order(db_session, user=user, product=product, status=OrderStatus.PAID)
 
-    with pytest.raises(PartialRefundUnsupportedError):
+    refund = crud_refund.create_for_order(
+        db_session,
+        order=order,
+        amount=order.total - 5,
+        reason=RefundReason.CUSTOMER_REQUEST.value,
+        note=None,
+        restock=False,
+        actor_user_id=admin.id,
+    )
+    assert OrderStatus(order.status) == OrderStatus.PARTIALLY_REFUNDED
+    assert refund.amount == pytest.approx(order.total - 5)
+
+
+def test_over_refund_rejected(db_session, user_factory, product_factory):
+    """Amount > order.total → RefundOverError, even on the first refund."""
+    user = user_factory()
+    admin = user_factory(email="admin-over@example.com")
+    product = product_factory(stock=10, price_usd=10.0)
+    order = _make_order(db_session, user=user, product=product, status=OrderStatus.PAID)
+
+    with pytest.raises(RefundOverError) as excinfo:
         crud_refund.create_for_order(
             db_session,
             order=order,
-            amount=order.total - 5,
-            reason=RefundReason.CUSTOMER_REQUEST.value,
+            amount=order.total + 1,
+            reason=RefundReason.OTHER.value,
+            note=None,
+            restock=False,
+            actor_user_id=admin.id,
+        )
+    assert excinfo.value.prior_total == 0
+    assert excinfo.value.order_total == pytest.approx(order.total)
+
+
+def test_cumulative_over_refund_rejected(db_session, user_factory, product_factory):
+    """First refund $30, second refund $25 on a $40 order → second 400s (running guard)."""
+    user = user_factory()
+    admin = user_factory(email="admin-cumover@example.com")
+    product = product_factory(stock=10, price_usd=20.0)
+    order = _make_order(db_session, user=user, product=product, status=OrderStatus.PAID)
+    # order.total = 40.0 (2 * 20)
+
+    crud_refund.create_for_order(
+        db_session,
+        order=order,
+        amount=30.0,
+        reason=RefundReason.CUSTOMER_REQUEST.value,
+        note=None,
+        restock=False,
+        actor_user_id=admin.id,
+    )
+    assert OrderStatus(order.status) == OrderStatus.PARTIALLY_REFUNDED
+
+    with pytest.raises(RefundOverError):
+        crud_refund.create_for_order(
+            db_session,
+            order=order,
+            amount=25.0,
+            reason=RefundReason.OTHER.value,
             note=None,
             restock=False,
             actor_user_id=admin.id,
@@ -151,6 +218,202 @@ def test_full_refund_accepted_even_with_rounding(db_session, user_factory, produ
         actor_user_id=admin.id,
     )
     assert refund.amount == pytest.approx(order.total, abs=0.01)
+    # Sum lands at total → REFUNDED, not PARTIALLY_REFUNDED.
+    assert OrderStatus(order.status) == OrderStatus.REFUNDED
+
+
+def test_two_partials_reach_refunded(db_session, user_factory, product_factory):
+    """Two partial refunds that sum to order.total flip status to REFUNDED on the second."""
+    user = user_factory()
+    admin = user_factory(email="admin-twoparts@example.com")
+    product = product_factory(stock=10, price_usd=25.0)
+    order = _make_order(db_session, user=user, product=product, status=OrderStatus.PAID)
+    # order.total = 50.0
+
+    crud_refund.create_for_order(
+        db_session,
+        order=order,
+        amount=20.0,
+        reason=RefundReason.CUSTOMER_REQUEST.value,
+        note=None,
+        restock=False,
+        actor_user_id=admin.id,
+    )
+    assert OrderStatus(order.status) == OrderStatus.PARTIALLY_REFUNDED
+
+    crud_refund.create_for_order(
+        db_session,
+        order=order,
+        amount=30.0,
+        reason=RefundReason.OTHER.value,
+        note=None,
+        restock=False,
+        actor_user_id=admin.id,
+    )
+    assert OrderStatus(order.status) == OrderStatus.REFUNDED
+
+
+# ----------------------------------------------------------------------
+# Per-line picker validation (D2)
+# ----------------------------------------------------------------------
+
+
+def test_pick_unknown_order_item_rejected(db_session, user_factory, product_factory):
+    user = user_factory()
+    admin = user_factory(email="admin-badpick@example.com")
+    product = product_factory(stock=10, price_usd=10.0)
+    order = _make_order(db_session, user=user, product=product, status=OrderStatus.PAID)
+
+    with pytest.raises(RefundLineNotOnOrderError):
+        crud_refund.create_for_order(
+            db_session,
+            order=order,
+            amount=10.0,
+            reason=RefundReason.CUSTOMER_REQUEST.value,
+            note=None,
+            restock=False,
+            actor_user_id=admin.id,
+            items=[(9999, 1)],  # not on this order
+        )
+
+
+def test_pick_qty_over_line_qty_rejected(db_session, user_factory, product_factory):
+    user = user_factory()
+    admin = user_factory(email="admin-overpick@example.com")
+    product = product_factory(stock=10, price_usd=10.0)
+    order = _make_order(db_session, user=user, product=product, status=OrderStatus.PAID, quantity=2)
+    line = order.items[0]
+
+    with pytest.raises(RefundLineOverError) as excinfo:
+        crud_refund.create_for_order(
+            db_session,
+            order=order,
+            amount=order.total,
+            reason=RefundReason.DEFECTIVE.value,
+            note=None,
+            restock=False,
+            actor_user_id=admin.id,
+            items=[(line.id, 5)],  # only 2 on the line
+        )
+    assert excinfo.value.line_qty == 2
+    assert excinfo.value.requested_qty == 5
+
+
+def test_pick_cumulative_across_refunds_rejected(db_session, user_factory, product_factory):
+    """First refund picks 2 of 3 → second refund picking 2 more is over the line cap.
+
+    Uses small amounts so the running-total guard ($30 cap on a 3 x $10 order)
+    never fires — the line-qty guard is the one we're isolating here.
+    """
+    user = user_factory()
+    admin = user_factory(email="admin-cumpick@example.com")
+    product = product_factory(stock=10, price_usd=10.0)
+    order = _make_order(db_session, user=user, product=product, status=OrderStatus.PAID, quantity=3)
+    line = order.items[0]
+
+    crud_refund.create_for_order(
+        db_session,
+        order=order,
+        amount=20.0,  # 2 x 10
+        reason=RefundReason.DEFECTIVE.value,
+        note=None,
+        restock=False,
+        actor_user_id=admin.id,
+        items=[(line.id, 2)],
+    )
+    with pytest.raises(RefundLineOverError):
+        crud_refund.create_for_order(
+            db_session,
+            order=order,
+            amount=5.0,  # well under the $10 remaining
+            reason=RefundReason.DEFECTIVE.value,
+            note=None,
+            restock=False,
+            actor_user_id=admin.id,
+            items=[(line.id, 2)],  # cumulative qty = 4 > line.quantity (3)
+        )
+
+
+def test_restock_without_items_rejected(db_session, user_factory, product_factory):
+    """D5: restock=True + items=None → RestockRequiresItemsError (nothing to put back)."""
+    user = user_factory()
+    admin = user_factory(email="admin-norestockpick@example.com")
+    product = product_factory(stock=10, price_usd=10.0)
+    order = _make_order(db_session, user=user, product=product, status=OrderStatus.PAID)
+
+    with pytest.raises(RestockRequiresItemsError):
+        crud_refund.create_for_order(
+            db_session,
+            order=order,
+            amount=order.total,
+            reason=RefundReason.DEFECTIVE.value,
+            note=None,
+            restock=True,
+            actor_user_id=admin.id,
+            items=None,
+        )
+
+
+def test_restock_with_empty_items_rejected(db_session, user_factory, product_factory):
+    """An explicit empty list of items is the same as None for D5."""
+    user = user_factory()
+    admin = user_factory(email="admin-noempty@example.com")
+    product = product_factory(stock=10, price_usd=10.0)
+    order = _make_order(db_session, user=user, product=product, status=OrderStatus.PAID)
+
+    with pytest.raises(RestockRequiresItemsError):
+        crud_refund.create_for_order(
+            db_session,
+            order=order,
+            amount=order.total,
+            reason=RefundReason.DEFECTIVE.value,
+            note=None,
+            restock=True,
+            actor_user_id=admin.id,
+            items=[],
+        )
+
+
+def test_picked_items_persisted_in_refund_items(db_session, user_factory, product_factory):
+    user = user_factory()
+    admin = user_factory(email="admin-persist@example.com")
+    product = product_factory(stock=10, price_usd=10.0)
+    order = _make_order(db_session, user=user, product=product, status=OrderStatus.PAID, quantity=3)
+    line = order.items[0]
+
+    refund = crud_refund.create_for_order(
+        db_session,
+        order=order,
+        amount=20.0,
+        reason=RefundReason.WRONG_ITEM.value,
+        note=None,
+        restock=False,
+        actor_user_id=admin.id,
+        items=[(line.id, 2)],
+    )
+    assert len(refund.items) == 1
+    assert refund.items[0].order_item_id == line.id
+    assert refund.items[0].quantity == 2
+
+
+def test_goodwill_refund_has_no_picker(db_session, user_factory, product_factory):
+    """An ``items=None`` request records a refund row with no picker (goodwill credit)."""
+    user = user_factory()
+    admin = user_factory(email="admin-goodwill@example.com")
+    product = product_factory(stock=10, price_usd=10.0)
+    order = _make_order(db_session, user=user, product=product, status=OrderStatus.PAID)
+
+    refund = crud_refund.create_for_order(
+        db_session,
+        order=order,
+        amount=5.0,
+        reason=RefundReason.CUSTOMER_REQUEST.value,
+        note=None,
+        restock=False,
+        actor_user_id=admin.id,
+        items=None,
+    )
+    assert refund.items == []
 
 
 # ----------------------------------------------------------------------
@@ -194,6 +457,7 @@ def test_restock_true_writes_one_movement_per_line(db_session, user_factory, pro
     product = product_factory(stock=5, price_usd=8.0)
     starting_stock = product.stock
     order = _make_order(db_session, user=user, product=product, status=OrderStatus.PAID, quantity=2)
+    line = order.items[0]
 
     crud_refund.create_for_order(
         db_session,
@@ -203,6 +467,7 @@ def test_restock_true_writes_one_movement_per_line(db_session, user_factory, pro
         note=None,
         restock=True,
         actor_user_id=admin.id,
+        items=[(line.id, 2)],
     )
 
     movements = (
@@ -211,11 +476,43 @@ def test_restock_true_writes_one_movement_per_line(db_session, user_factory, pro
         .filter(InventoryMovement.reason == "order_refunded")
         .all()
     )
-    assert len(movements) == 1, "one order_refunded movement per line"
+    assert len(movements) == 1, "one order_refunded movement per picked line"
     assert movements[0].delta == 2
     assert movements[0].actor_user_id == admin.id
     assert movements[0].order_id == order.id
 
+    db_session.refresh(product)
+    assert product.stock == starting_stock + 2
+
+
+def test_restock_uses_picked_qty_not_line_qty(db_session, user_factory, product_factory):
+    """Partial restock: 2-of-3 picked → +2 movement (NOT +3 from the original line qty)."""
+    user = user_factory()
+    admin = user_factory(email="admin-partialrestock@example.com")
+    product = product_factory(stock=5, price_usd=8.0)
+    starting_stock = product.stock
+    order = _make_order(db_session, user=user, product=product, status=OrderStatus.PAID, quantity=3)
+    line = order.items[0]
+
+    crud_refund.create_for_order(
+        db_session,
+        order=order,
+        amount=16.0,  # 2 x 8
+        reason=RefundReason.DEFECTIVE.value,
+        note=None,
+        restock=True,
+        actor_user_id=admin.id,
+        items=[(line.id, 2)],
+    )
+
+    movements = (
+        db_session.query(InventoryMovement)
+        .filter(InventoryMovement.product_id == product.id)
+        .filter(InventoryMovement.reason == "order_refunded")
+        .all()
+    )
+    assert len(movements) == 1
+    assert movements[0].delta == 2  # NOT 3 (the line qty)
     db_session.refresh(product)
     assert product.stock == starting_stock + 2
 
@@ -227,6 +524,7 @@ def test_restock_writes_movement_to_default_warehouse(db_session, user_factory, 
     admin = user_factory(email="admin-warehouse@example.com")
     product = product_factory(stock=4, price_usd=10.0)
     order = _make_order(db_session, user=user, product=product, status=OrderStatus.PAID)
+    line = order.items[0]
 
     crud_refund.create_for_order(
         db_session,
@@ -236,6 +534,7 @@ def test_restock_writes_movement_to_default_warehouse(db_session, user_factory, 
         note=None,
         restock=True,
         actor_user_id=admin.id,
+        items=[(line.id, line.quantity)],
     )
 
     default = db_session.query(Warehouse).filter(Warehouse.is_default.is_(True)).one()

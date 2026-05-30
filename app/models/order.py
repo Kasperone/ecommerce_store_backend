@@ -15,13 +15,22 @@ if TYPE_CHECKING:
 
 
 class OrderStatus(str, enum.Enum):
-    """Order status enum"""
+    """Order status enum.
+
+    ``PARTIALLY_REFUNDED`` (v2 refunds) lives between the in-fulfilment statuses
+    and the terminal ``REFUNDED``: an order with ``sum(refunds) > 0 AND <
+    order.total`` carries this value, and only flips to ``REFUNDED`` once the
+    cumulative refund total hits ``order.total``. Stored on the PG enum type
+    via an ``ALTER TYPE … ADD VALUE`` migration (Postgres-native enums can't
+    cleanly remove values, so the downgrade leaves it in place).
+    """
 
     PENDING = "pending"
     PAID = "paid"
     PROCESSING = "processing"
     SHIPPED = "shipped"
     DELIVERED = "delivered"
+    PARTIALLY_REFUNDED = "partially_refunded"
     CANCELLED = "cancelled"
     REFUNDED = "refunded"
 

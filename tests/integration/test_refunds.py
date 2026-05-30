@@ -113,6 +113,7 @@ async def test_admin_issue_refund_happy_path(
     # to assert on what the refund POST scheduled.
     scheduled_emails.clear()
 
+    order_line_id = paid["items"][0]["id"]
     resp = await client.post(
         f"/api/v1/orders/{paid['id']}/refunds",
         json={
@@ -120,6 +121,7 @@ async def test_admin_issue_refund_happy_path(
             "reason": "customer_request",
             "note": "Refunded per customer request.",
             "restock": True,
+            "items": [{"order_item_id": order_line_id, "quantity": 2}],
         },
         headers=_headers(admin),
     )
@@ -135,6 +137,8 @@ async def test_admin_issue_refund_happy_path(
     assert body["actor_email"] == "refund-admin@example.com"
     assert body["corrective_invoice"] is not None
     assert body["corrective_invoice"]["kor_number"].startswith(("KOR/", "KOR-"))
+    assert len(body["items"]) == 1
+    assert body["items"][0]["quantity"] == 2
 
     # Order status flipped on the GET (refunds carried in the detail response).
     detail = await client.get(f"/api/v1/orders/{paid['id']}", headers=_headers(admin))
@@ -205,9 +209,10 @@ async def test_admin_issue_refund_restock_false_skips_movements(
 # ----------------------------------------------------------------------
 
 
-async def test_admin_issue_partial_refund_400(
+async def test_admin_issue_partial_refund_flips_partially_refunded(
     client, user_factory, product_factory, test_shipping_method_id
 ):
+    """v2: partial amount is accepted; status flips to ``partially_refunded``."""
     customer = user_factory(email="partial-cust@example.com")
     admin = user_factory(email="partial-admin@example.com", role=UserRole.ADMIN)
     product = product_factory(stock=10, price_usd=10.0)
@@ -220,8 +225,168 @@ async def test_admin_issue_partial_refund_400(
         json={"amount": paid["total"] / 2, "reason": "customer_request", "restock": False},
         headers=_headers(admin),
     )
+    assert resp.status_code == 201, resp.text
+
+    detail = await client.get(f"/api/v1/orders/{paid['id']}", headers=_headers(admin))
+    assert detail.json()["status"] == "partially_refunded"
+
+
+async def test_admin_issue_over_refund_400(
+    client, user_factory, product_factory, test_shipping_method_id
+):
+    """v2: ``amount`` > ``order.total`` (running-total) → 400 ``RefundOverError``."""
+    customer = user_factory(email="over-cust@example.com")
+    admin = user_factory(email="over-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10, price_usd=10.0)
+    paid = await _place_and_pay_order(
+        client, admin, customer, product, shipping_method_id=test_shipping_method_id
+    )
+
+    resp = await client.post(
+        f"/api/v1/orders/{paid['id']}/refunds",
+        json={"amount": paid["total"] + 1, "reason": "other", "restock": False},
+        headers=_headers(admin),
+    )
     assert resp.status_code == 400
-    assert "Partial refunds" in resp.json()["detail"]
+    assert "exceed" in resp.json()["detail"]
+
+
+async def test_admin_two_partials_flip_to_refunded(
+    client, user_factory, product_factory, test_shipping_method_id, scheduled_emails
+):
+    """v2: two consecutive partials whose sum == ``order.total`` flip status to ``refunded``."""
+    customer = user_factory(email="two-cust@example.com")
+    admin = user_factory(email="two-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10, price_usd=12.0)
+    paid = await _place_and_pay_order(
+        client, admin, customer, product, shipping_method_id=test_shipping_method_id, quantity=2
+    )
+    total = paid["total"]
+
+    first = await client.post(
+        f"/api/v1/orders/{paid['id']}/refunds",
+        json={"amount": total / 2, "reason": "customer_request", "restock": False},
+        headers=_headers(admin),
+    )
+    assert first.status_code == 201
+
+    after_first = await client.get(f"/api/v1/orders/{paid['id']}", headers=_headers(admin))
+    assert after_first.json()["status"] == "partially_refunded"
+
+    second = await client.post(
+        f"/api/v1/orders/{paid['id']}/refunds",
+        json={"amount": total / 2, "reason": "defective", "restock": False},
+        headers=_headers(admin),
+    )
+    assert second.status_code == 201
+
+    after_second = await client.get(f"/api/v1/orders/{paid['id']}", headers=_headers(admin))
+    assert after_second.json()["status"] == "refunded"
+    assert len(after_second.json()["refunds"]) == 2
+
+
+async def test_admin_issue_refund_line_picker_persists(
+    client, user_factory, product_factory, db_session: Session, test_shipping_method_id
+):
+    """v2: picked ``items`` round-trip on the response with denormalised name + price."""
+    customer = user_factory(email="picker-cust@example.com")
+    admin = user_factory(email="picker-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10, price_usd=15.0, name="Widget X")
+    paid = await _place_and_pay_order(
+        client, admin, customer, product, shipping_method_id=test_shipping_method_id, quantity=3
+    )
+    order_line_id = paid["items"][0]["id"]
+
+    resp = await client.post(
+        f"/api/v1/orders/{paid['id']}/refunds",
+        json={
+            "amount": 30.0,  # 2 x 15
+            "reason": "defective",
+            "restock": True,
+            "items": [{"order_item_id": order_line_id, "quantity": 2}],
+        },
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert len(body["items"]) == 1
+    line = body["items"][0]
+    assert line["order_item_id"] == order_line_id
+    assert line["quantity"] == 2
+    assert line["product_name"] == "Widget X"
+    assert line["unit_price"] == pytest.approx(15.0)
+    assert line["line_subtotal"] == pytest.approx(30.0)
+
+
+async def test_admin_issue_refund_restock_without_items_400(
+    client, user_factory, product_factory, test_shipping_method_id
+):
+    """D5: ``restock=True`` without ``items`` → 400 ``RestockRequiresItemsError``."""
+    customer = user_factory(email="d5-cust@example.com")
+    admin = user_factory(email="d5-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10, price_usd=10.0)
+    paid = await _place_and_pay_order(
+        client, admin, customer, product, shipping_method_id=test_shipping_method_id
+    )
+
+    resp = await client.post(
+        f"/api/v1/orders/{paid['id']}/refunds",
+        json={"amount": paid["total"], "reason": "defective", "restock": True},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 400
+    assert "restock" in resp.json()["detail"].lower()
+
+
+async def test_admin_issue_refund_line_over_qty_400(
+    client, user_factory, product_factory, test_shipping_method_id
+):
+    """v2: picked qty > line.quantity → 400 ``RefundLineOverError``.
+
+    Uses a smaller amount than ``order.total`` so the running-total guard
+    doesn't fire first — the test asserts the line-qty guard in isolation.
+    """
+    customer = user_factory(email="lineover-cust@example.com")
+    admin = user_factory(email="lineover-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10, price_usd=10.0)
+    paid = await _place_and_pay_order(
+        client, admin, customer, product, shipping_method_id=test_shipping_method_id, quantity=2
+    )
+    order_line_id = paid["items"][0]["id"]
+
+    resp = await client.post(
+        f"/api/v1/orders/{paid['id']}/refunds",
+        json={
+            "amount": 1.0,  # well under any total — isolates the line guard
+            "reason": "defective",
+            "restock": False,
+            "items": [{"order_item_id": order_line_id, "quantity": 5}],  # only 2 on the line
+        },
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 400
+    assert "remain refundable" in resp.json()["detail"]
+
+
+async def test_admin_patch_to_partially_refunded_points_at_endpoint(
+    client, user_factory, product_factory, test_shipping_method_id
+):
+    """v2: admin PATCH ``status=partially_refunded`` 400s with the "use refund endpoint" hint."""
+    customer = user_factory(email="patchpart-cust@example.com")
+    admin = user_factory(email="patchpart-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10, price_usd=10.0)
+    paid = await _place_and_pay_order(
+        client, admin, customer, product, shipping_method_id=test_shipping_method_id
+    )
+
+    resp = await client.patch(
+        f"/api/v1/orders/{paid['id']}",
+        json={"status": "partially_refunded"},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 400
+    assert "refunds" in resp.json()["detail"]
+    assert "POST" in resp.json()["detail"]
 
 
 async def test_admin_issue_refund_on_pending_400(
@@ -334,11 +499,18 @@ async def test_admin_lists_any_order_refunds(
     paid = await _place_and_pay_order(
         client, admin, customer, product, shipping_method_id=test_shipping_method_id
     )
-    await client.post(
+    order_line_id = paid["items"][0]["id"]
+    create_resp = await client.post(
         f"/api/v1/orders/{paid['id']}/refunds",
-        json={"amount": paid["total"], "reason": "defective", "restock": True},
+        json={
+            "amount": paid["total"],
+            "reason": "defective",
+            "restock": True,
+            "items": [{"order_item_id": order_line_id, "quantity": 1}],
+        },
         headers=_headers(admin),
     )
+    assert create_resp.status_code == 201, create_resp.text
 
     resp = await client.get(f"/api/v1/orders/{paid['id']}/refunds", headers=_headers(admin))
     assert resp.status_code == 200
