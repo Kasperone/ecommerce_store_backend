@@ -197,3 +197,74 @@ def test_delete_product_cascades_to_its_images(db_session, product_factory):
     db_session.commit()
 
     assert db_session.query(ProductImage).filter(ProductImage.product_id == product.id).count() == 0
+
+
+# ---------------------------------------------------------------------------
+# Negative stock under backorder serialises cleanly
+#
+# Regression for the response-vs-runtime invariant collision documented in
+# ``notes/plans/test/fixed/2026-05-30-product-stock-ge0-vs-backorder-backend.md``:
+# ``crud_inventory.apply_delta(..., allow_negative=True)`` may legitimately
+# land ``Product.stock`` below zero when an order is placed on a backorder
+# product for more units than are on hand. Before the fix, ``ProductBase``
+# carried ``Field(ge=0)`` on ``stock``, which ``ProductResponse`` inherited
+# verbatim — so the very next ``GET /products/`` page that included that row
+# raised ``ResponseValidationError`` and the route 500'd. The fix moves the
+# floor onto ``ProductCreate`` (where caller-supplied stock genuinely can't
+# be negative) and lets the read shape accept the real value.
+# ---------------------------------------------------------------------------
+
+
+async def test_list_does_not_500_on_negative_stock_backorder(client, product_factory, db_session):
+    """A backorder product with negative stock must serialise cleanly."""
+    product = product_factory(slug="backorder-negative-stock-list", stock=10, allow_backorder=True)
+    # Direct write — simulates the legal end-state of ``apply_delta`` with
+    # ``allow_negative=True`` for an order whose quantity exceeded stock.
+    product.stock = -3
+    db_session.commit()
+
+    response = await client.get("/api/v1/products/")
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    found = next((it for it in items if it["id"] == product.id), None)
+    assert found is not None
+    assert found["stock"] == -3
+    # ``in_stock`` is the computed_field on ProductResponse — flips at <=0.
+    assert found["in_stock"] is False
+
+
+async def test_get_by_slug_does_not_500_on_negative_stock_backorder(
+    client, product_factory, db_session
+):
+    """Detail endpoint mirrors the list path — same response schema."""
+    product = product_factory(slug="backorder-negative-stock-detail", stock=5, allow_backorder=True)
+    product.stock = -1
+    db_session.commit()
+
+    response = await client.get(f"/api/v1/products/slug/{product.slug}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["stock"] == -1
+    assert body["in_stock"] is False
+
+
+def test_product_create_still_rejects_negative_stock():
+    """The ``ge=0`` floor was moved off the base, not deleted — ``ProductCreate``
+    keeps the create-time invariant. Negative initial stock is never the
+    customer-facing API caller's prerogative; orders own that path.
+    """
+    import pytest as _pytest
+    from pydantic import ValidationError
+
+    from app.schemas.product import ProductCreate
+
+    with _pytest.raises(ValidationError) as exc_info:
+        ProductCreate(
+            name="Bad",
+            slug="bad",
+            price_usd=1.0,
+            stock=-1,
+        )
+    assert any(err["loc"] == ("stock",) for err in exc_info.value.errors())
