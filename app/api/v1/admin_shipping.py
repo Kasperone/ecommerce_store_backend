@@ -37,6 +37,7 @@ from app.schemas.shipping import (
     ShippingRateResponse,
     ShippingRateTier,
     ShippingRateUpdate,
+    ShippingRateWeightTier,
     ShippingZoneCreate,
     ShippingZoneDetail,
     ShippingZoneListItem,
@@ -66,6 +67,11 @@ def _zone_detail(zone: ShippingZone) -> ShippingZoneDetail:
 def _rate_list_item(rate: ShippingRate) -> ShippingRateListItem:
     """Build the matrix-view list row (embeds zone+method names + a pricing tag)."""
     tier_models = [ShippingRateTier(**t) for t in rate.tiers] if rate.tiers is not None else None
+    weight_tier_models = (
+        [ShippingRateWeightTier(**t) for t in rate.weight_tiers]
+        if rate.weight_tiers is not None
+        else None
+    )
     return ShippingRateListItem(
         id=rate.id,
         created_at=rate.created_at,
@@ -78,7 +84,10 @@ def _rate_list_item(rate: ShippingRate) -> ShippingRateListItem:
         amount=rate.amount,
         free_above_subtotal=rate.free_above_subtotal,
         tiers=tier_models,
-        pricing_kind=_classify_pricing(rate.amount, rate.free_above_subtotal, tier_models),
+        weight_tiers=weight_tier_models,
+        pricing_kind=_classify_pricing(
+            rate.amount, rate.free_above_subtotal, tier_models, weight_tier_models
+        ),
     )
 
 

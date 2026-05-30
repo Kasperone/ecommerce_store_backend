@@ -45,14 +45,24 @@ async def quote_shipping(
     ),
     currency: SupportedCurrency = Query(..., description="USD, PLN, or EUR"),
     subtotal: float = Query(..., ge=0, description="Cart subtotal in the asked currency"),
+    weight_kg: float = Query(
+        0,
+        ge=0,
+        description=(
+            "Cart total weight in kg. When non-zero, weight-tiered rates resolve "
+            "against this value (free-above → weight-tiers → subtotal-tiers → "
+            "flat). Default 0 keeps storefronts that don't yet thread cart weight "
+            "working — they get subtotal-only resolution."
+        ),
+    ),
     db: Session = Depends(get_db),
 ):
     """Return the available shipping methods + resolved prices for a checkout.
 
     Each method's ``amount`` reflects the *resolved* shipping price for the
-    provided subtotal (free-above triggered, tier band picked, or the flat
-    fallback) — the storefront renders it directly without re-running the
-    resolver.
+    provided subtotal and (optional) cart weight — free-above triggered,
+    weight-tier band picked, subtotal-tier band picked, or the flat fallback.
+    The storefront renders it directly without re-running the resolver.
     """
     pairs = crud_shipping_rate.resolve_for_country(db, country_code=country, currency=currency)
     methods = [
@@ -62,10 +72,15 @@ async def quote_shipping(
             code=method.code,
             description=method.description,
             sort_order=method.sort_order,
-            amount=round(crud_shipping_rate.apply_shipping_rate(rate, subtotal), 2),
+            amount=round(
+                crud_shipping_rate.apply_shipping_rate(rate, subtotal, weight_kg=weight_kg),
+                2,
+            ),
             currency=currency,
             is_free=(rate.free_above_subtotal is not None and subtotal >= rate.free_above_subtotal),
-            pricing_kind=_classify_pricing(rate.amount, rate.free_above_subtotal, rate.tiers),
+            pricing_kind=_classify_pricing(
+                rate.amount, rate.free_above_subtotal, rate.tiers, rate.weight_tiers
+            ),
             free_above_subtotal=rate.free_above_subtotal,
         )
         for method, rate in pairs
