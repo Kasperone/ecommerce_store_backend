@@ -6,6 +6,7 @@ from app.crud.dashboard import dashboard
 from app.crud.inventory import inventory
 from app.crud.invoice import invoice
 from app.crud.order import order
+from app.crud.price_history import price_history
 from app.crud.product import product
 from app.crud.product_image import product_image
 from app.crud.refresh_token import refresh_token
@@ -30,6 +31,7 @@ __all__ = [
     "order",
     "inventory",
     "invoice",
+    "price_history",
     "audit_event",
     "refresh_token",
     "refund",
