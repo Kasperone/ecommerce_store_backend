@@ -35,10 +35,12 @@ from app.schemas.order import OrderCreate, OrderUpdate
 from app.services.dimensional_weight import billable_weight_kg, line_volume_cm3
 
 # Forward-only status workflow for the admin PATCH endpoint. Terminal and
-# stock-affecting transitions (cancelled, refunded) are NOT in this map —
-# cancellation goes through the dedicated cancel endpoint so stock is restored,
-# and refunds are Phase B. Keyed by OrderStatus; str-enum members hash equal to
-# their values so lookups work whether the key arrives as a member or a string.
+# stock-affecting transitions are NOT in this map — cancellation goes through
+# the dedicated cancel endpoint so stock is restored, refunds (including the
+# PARTIALLY_REFUNDED → REFUNDED transition) go through the refunds endpoint
+# so the KOR + email + ledger fire together. Keyed by OrderStatus; str-enum
+# members hash equal to their values so lookups work whether the key arrives
+# as a member or a string.
 _STATUS_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
     OrderStatus.PENDING: {OrderStatus.PAID, OrderStatus.PROCESSING},
     OrderStatus.PAID: {OrderStatus.PROCESSING, OrderStatus.SHIPPED},
@@ -46,10 +48,17 @@ _STATUS_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
     OrderStatus.SHIPPED: {OrderStatus.DELIVERED},
     OrderStatus.DELIVERED: set(),
     OrderStatus.CANCELLED: set(),
+    # PARTIALLY_REFUNDED → REFUNDED is the only forward path, owned by the
+    # refund endpoint (admin PATCH still rejects it via
+    # ``status_transition_error``).
+    OrderStatus.PARTIALLY_REFUNDED: {OrderStatus.REFUNDED},
     OrderStatus.REFUNDED: set(),
 }
 
 # Statuses from which an order may still be cancelled (stock-restoring).
+# PARTIALLY_REFUNDED is intentionally NOT in this set (D4): once a refund has
+# been issued the only forward path is another refund (which can flip the
+# status to REFUNDED), not a cancel that would lose the refund history.
 _CANCELLABLE: set[OrderStatus] = {
     OrderStatus.PENDING,
     OrderStatus.PAID,
@@ -91,7 +100,10 @@ def status_transition_error(current: OrderStatus, target: OrderStatus) -> str | 
         return None
     if target == OrderStatus.CANCELLED:
         return "Use the cancel endpoint to cancel an order"
-    if target == OrderStatus.REFUNDED:
+    if target == OrderStatus.REFUNDED or target == OrderStatus.PARTIALLY_REFUNDED:
+        # Refund status (full or partial) is managed by the refund endpoint —
+        # the admin PATCH never sets either directly. Mirrors the cancel
+        # endpoint pattern.
         return "Use POST /api/v1/orders/{id}/refunds to issue a refund"
     if target not in _STATUS_TRANSITIONS.get(current, set()):
         return f"Cannot transition order from '{current.value}' to '{target.value}'"

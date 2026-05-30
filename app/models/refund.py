@@ -31,6 +31,7 @@ from app.models.base import BaseModel
 if TYPE_CHECKING:
     from app.models.corrective_invoice import CorrectiveInvoice
     from app.models.order import Order
+    from app.models.refund_item import RefundItem
     from app.models.user import User
 
 
@@ -106,6 +107,15 @@ class Refund(BaseModel):
     # legal record that outlives its refund row.
     corrective_invoice: Mapped[CorrectiveInvoice | None] = relationship(
         "CorrectiveInvoice", back_populates="refund", uselist=False
+    )
+    # The v2 per-line picker. Cascade ``delete-orphan`` matches the FK ON DELETE
+    # CASCADE on ``refund_items.refund_id``: deleting the refund row takes its
+    # picker with it. Order matches insertion order for deterministic responses.
+    items: Mapped[list[RefundItem]] = relationship(
+        "RefundItem",
+        back_populates="refund",
+        cascade="all, delete-orphan",
+        order_by="RefundItem.id",
     )
 
     @property

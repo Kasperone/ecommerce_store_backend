@@ -17,7 +17,10 @@ from app.crud.order import (
 )
 from app.crud.refund import (
     OrderNotRefundableError,
-    PartialRefundUnsupportedError,
+    RefundLineNotOnOrderError,
+    RefundLineOverError,
+    RefundOverError,
+    RestockRequiresItemsError,
 )
 from app.crud.shipping import ShippingRateUnavailableError
 from app.models.order import OrderStatus
@@ -343,21 +346,37 @@ async def issue_refund(
     audit: AuditWriter = Depends(get_audit_writer),
 ):
     """
-    Issue a refund against a paid/processing/shipped/delivered order (admin only).
+    Issue a refund against a paid / processing / shipped / delivered / partially-refunded
+    order (admin only).
 
-    v1 ships full refunds only — ``refund_in.amount`` must equal ``order.total``;
-    a partial refund 400s with the "not yet supported" message. ``restock=True``
-    writes one ``order_refunded`` inventory movement per line via the
-    ``apply_delta`` choke point (same per-line pattern as cancel). Always issues
-    a faktura korygująca **if** the order has a faktura (orders that went
-    ``pending → paid``); the KOR is gap-free + scoped to this transaction.
+    v2 accepts partial refunds: ``amount`` is validated against the running
+    total (``sum(prior refunds) + amount ≤ order.total``; 400 on over-refund).
+    Optional ``items`` records a per-line picker (``order_item_id, quantity``);
+    each pick must belong to the order and the cumulative qty across all
+    refunds for the same line is capped at ``order_item.quantity``. ``restock=True``
+    requires items (400 otherwise) and writes one ``order_refunded`` inventory
+    movement per picked line via the ``apply_delta`` choke point — the movement
+    quantity is the picked qty, NOT the original line qty.
+
+    Always issues a faktura korygująca **if** the order has a faktura; each
+    partial gets its own KOR with its own gap-free number.
+
+    Status flip: cumulative refunds == ``order.total`` (rounding-tolerant) →
+    ``refunded``; cumulative > 0 but < total → ``partially_refunded``.
 
     Forward-only status workflow rules continue to apply: the admin PATCH
-    endpoint rejects an explicit ``status=refunded`` and points the caller here.
+    endpoint rejects explicit ``status=refunded`` / ``status=partially_refunded``
+    and points the caller here.
     """
     order = crud_order.get_scoped(db, order_id=order_id, user=current_admin)
     if order is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+
+    item_tuples: list[tuple[int, int]] | None = (
+        [(item.order_item_id, item.quantity) for item in refund_in.items]
+        if refund_in.items is not None
+        else None
+    )
 
     try:
         refund = crud_refund.create_for_order(
@@ -368,16 +387,23 @@ async def issue_refund(
             note=refund_in.note,
             restock=refund_in.restock,
             actor_user_id=current_admin.id,
+            items=item_tuples,
         )
     except OrderNotRefundableError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except PartialRefundUnsupportedError as exc:
+    except RefundOverError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except RefundLineNotOnOrderError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except RefundLineOverError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except RestockRequiresItemsError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     audit.record_create(resource_type="refund", obj=refund)
     db.commit()
-    # Re-load with the eager options so the response carries the KOR + actor
-    # without a fresh round-trip (db.refresh doesn't load relationships).
+    # Re-load with the eager options so the response carries the KOR + actor +
+    # picker without a fresh round-trip (db.refresh doesn't load relationships).
     refund = crud_refund.get(db, refund_id=refund.id) or refund
     # Stock potentially restored → refresh the in_stock facet (best-effort).
     if refund_in.restock:
