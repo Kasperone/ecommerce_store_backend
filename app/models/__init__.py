@@ -6,6 +6,7 @@ from app.models.customer_note import CustomerNote
 from app.models.inventory_movement import InventoryMovement, InventoryMovementReason
 from app.models.invoice import Invoice, InvoiceCounter
 from app.models.order import Order, OrderItem
+from app.models.price_history import SUPPORTED_CURRENCIES, PriceHistory
 from app.models.product import Product
 from app.models.product_image import ProductImage
 from app.models.refresh_token import RefreshToken
@@ -35,6 +36,8 @@ __all__ = [
     "ProductImage",
     "Order",
     "OrderItem",
+    "PriceHistory",
+    "SUPPORTED_CURRENCIES",
     "InventoryMovement",
     "InventoryMovementReason",
     "Invoice",

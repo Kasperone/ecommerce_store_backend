@@ -5,8 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_admin, get_db
+from app.crud import price_history as crud_price_history
 from app.crud import product as crud_product
+from app.models.price_history import SUPPORTED_CURRENCIES
 from app.models.user import User
+from app.schemas.price_history import LowestPriceResponse
 from app.schemas.product import (
     ProductCreate,
     ProductListResponse,
@@ -134,6 +137,34 @@ async def get_product_by_slug(
     return product
 
 
+@router.get("/{product_id}/lowest-30d", response_model=LowestPriceResponse)
+async def get_lowest_30d(
+    product_id: int,
+    currency: Literal["USD", "PLN", "EUR"] = Query(
+        ..., description="Currency to scope the lookup to"
+    ),
+    db: Session = Depends(get_db),
+):
+    """
+    OMNIBUS (Directive 98/6 Art. 6a) — lowest price for ``product_id`` in
+    ``currency`` over the last 30 days.
+
+    Public + unauthenticated: the answer is what the storefront PDP needs to
+    legally show next to a reduced price. Returns ``lowest_price = null`` +
+    ``since = null`` when no history exists for that (product, currency) — the
+    storefront then renders no comparison line.
+    """
+    product = crud_product.get(db, id=product_id)
+    if product is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+
+    result = crud_price_history.lowest_in_last_30_days(db, product_id=product.id, currency=currency)
+    if result is None:
+        return LowestPriceResponse(currency=currency, lowest_price=None, since=None)
+    lowest, since = result
+    return LowestPriceResponse(currency=currency, lowest_price=lowest, since=since)
+
+
 @router.post("/", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
 async def create_product(
     product_in: ProductCreate,
@@ -164,6 +195,16 @@ async def create_product(
 
     product = crud_product.create(db, obj_in=product_in)
     audit.record_create(resource_type="product", obj=product)
+    # OMNIBUS (Directive 98/6 Art. 6a): record the new product's prices so the
+    # 30-day-low query has an honest ground state. Same transaction as the
+    # product write — rollback un-does both.
+    for currency in SUPPORTED_CURRENCIES:
+        crud_price_history.record_if_changed(
+            db,
+            product=product,
+            currency=currency,
+            new_price=getattr(product, f"price_{currency.lower()}"),
+        )
     db.commit()
     db.refresh(product)
     # Best-effort: keep the search index in step (no-op when Meili unconfigured).
@@ -208,6 +249,20 @@ async def update_product(
 
     product = crud_product.update(db, db_obj=product, obj_in=product_in)
     audit.record_update(resource_type="product", obj=product)
+    # OMNIBUS: append a price-history row for any currency whose price changed.
+    # ``record_if_changed`` no-ops when the new price equals the most recent
+    # row, so calling it for all three currencies on every PUT is safe (and the
+    # idiomatic way to keep the chokepoint as the only writer). Must run AFTER
+    # ``audit.record_update`` — its flush would otherwise clear ``get_history``
+    # that the audit writer reads (banked from the mark_paid → audit ordering
+    # in admin orders PATCH).
+    for currency in SUPPORTED_CURRENCIES:
+        crud_price_history.record_if_changed(
+            db,
+            product=product,
+            currency=currency,
+            new_price=getattr(product, f"price_{currency.lower()}"),
+        )
     db.commit()
     db.refresh(product)
     # Best-effort re-sync (drops the doc if the update flipped is_active off).
