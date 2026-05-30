@@ -85,7 +85,9 @@ async def test_list_search_and_status_filters(client, user_factory):
 # ---------------------------------------------------------------------------
 
 
-async def test_detail_includes_order_metrics(client, user_factory, product_factory):
+async def test_detail_includes_order_metrics(
+    client, user_factory, product_factory, test_shipping_method_id
+):
     admin = user_factory(email="admin3@example.com", role=UserRole.ADMIN)
     customer = user_factory(email="buyer@example.com")
     product = product_factory(stock=50, price_usd=10.0)
@@ -97,7 +99,8 @@ async def test_detail_includes_order_metrics(client, user_factory, product_facto
             "shipping_address": "1 St",
             "shipping_city": "Town",
             "shipping_postal_code": "00-001",
-            "shipping_country": "Poland",
+            "shipping_country": "PL",
+            "shipping_method_id": test_shipping_method_id,
         },
         headers=_headers(customer),
     )

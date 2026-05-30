@@ -10,6 +10,9 @@ from app.crud.product_image import product_image
 from app.crud.refresh_token import refresh_token
 from app.crud.review import review
 from app.crud.review_vote import review_vote
+from app.crud.shipping import method as shipping_method
+from app.crud.shipping import rate as shipping_rate
+from app.crud.shipping import zone as shipping_zone
 from app.crud.tag import tag
 from app.crud.user import user
 from app.crud.warehouse import warehouse
@@ -28,6 +31,9 @@ __all__ = [
     "refresh_token",
     "review",
     "review_vote",
+    "shipping_zone",
+    "shipping_method",
+    "shipping_rate",
     "tag",
     "warehouse",
 ]

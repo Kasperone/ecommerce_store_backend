@@ -18,25 +18,34 @@ from app.schemas.order import OrderCreate, OrderItemCreate
 pytestmark = pytest.mark.integration
 
 
-def _order_in(product_id: int, quantity: int = 1, currency: str = "USD") -> OrderCreate:
+def _order_in(
+    product_id: int, *, shipping_method_id: int, quantity: int = 1, currency: str = "USD"
+) -> OrderCreate:
     return OrderCreate(
         items=[OrderItemCreate(product_id=product_id, quantity=quantity)],
         currency=currency,
         shipping_address="1 Test St",
         shipping_city="Testville",
         shipping_postal_code="00-001",
-        shipping_country="Poland",
+        shipping_country="PL",
+        shipping_method_id=shipping_method_id,
     )
 
 
-def _make_order(db, user_factory, product_factory):
+def _make_order(db, user_factory, product_factory, *, shipping_method_id: int):
     user = user_factory()
     product = product_factory(stock=10, price_usd=20.0)
-    return crud_order.create_with_items(db, user_id=user.id, obj_in=_order_in(product.id))
+    return crud_order.create_with_items(
+        db, user_id=user.id, obj_in=_order_in(product.id, shipping_method_id=shipping_method_id)
+    )
 
 
-def test_issue_for_order_allocates_first_number(db_session, user_factory, product_factory):
-    order = _make_order(db_session, user_factory, product_factory)
+def test_issue_for_order_allocates_first_number(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
+    order = _make_order(
+        db_session, user_factory, product_factory, shipping_method_id=test_shipping_method_id
+    )
 
     inv = crud_invoice.issue_for_order(db_session, order=order)
 
@@ -48,8 +57,12 @@ def test_issue_for_order_allocates_first_number(db_session, user_factory, produc
     assert inv.issued_at is not None
 
 
-def test_issue_for_order_is_idempotent(db_session, user_factory, product_factory):
-    order = _make_order(db_session, user_factory, product_factory)
+def test_issue_for_order_is_idempotent(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
+    order = _make_order(
+        db_session, user_factory, product_factory, shipping_method_id=test_shipping_method_id
+    )
 
     first = crud_invoice.issue_for_order(db_session, order=order)
     second = crud_invoice.issue_for_order(db_session, order=order)
@@ -61,9 +74,15 @@ def test_issue_for_order_is_idempotent(db_session, user_factory, product_factory
     assert second.seq == 1
 
 
-def test_sequential_gap_free_across_orders(db_session, user_factory, product_factory):
-    order_a = _make_order(db_session, user_factory, product_factory)
-    order_b = _make_order(db_session, user_factory, product_factory)
+def test_sequential_gap_free_across_orders(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
+    order_a = _make_order(
+        db_session, user_factory, product_factory, shipping_method_id=test_shipping_method_id
+    )
+    order_b = _make_order(
+        db_session, user_factory, product_factory, shipping_method_id=test_shipping_method_id
+    )
 
     inv_a = crud_invoice.issue_for_order(db_session, order=order_a)
     inv_b = crud_invoice.issue_for_order(db_session, order=order_b)
@@ -75,13 +94,21 @@ def test_sequential_gap_free_across_orders(db_session, user_factory, product_fac
     assert inv_b.invoice_number == f"FV/{year}/00002"
 
 
-def test_get_by_order_id_none_before_issue(db_session, user_factory, product_factory):
-    order = _make_order(db_session, user_factory, product_factory)
+def test_get_by_order_id_none_before_issue(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
+    order = _make_order(
+        db_session, user_factory, product_factory, shipping_method_id=test_shipping_method_id
+    )
     assert crud_invoice.get_by_order_id(db_session, order.id) is None
 
 
-def test_mark_paid_issues_invoice(db_session, user_factory, product_factory):
-    order = _make_order(db_session, user_factory, product_factory)
+def test_mark_paid_issues_invoice(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
+    order = _make_order(
+        db_session, user_factory, product_factory, shipping_method_id=test_shipping_method_id
+    )
 
     crud_order.mark_paid(
         db_session, order=order, payment_intent_id="pi_test", payment_method="stripe"
@@ -93,8 +120,12 @@ def test_mark_paid_issues_invoice(db_session, user_factory, product_factory):
     assert inv.seq == 1
 
 
-def test_mark_paid_twice_issues_one_invoice(db_session, user_factory, product_factory):
-    order = _make_order(db_session, user_factory, product_factory)
+def test_mark_paid_twice_issues_one_invoice(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
+    order = _make_order(
+        db_session, user_factory, product_factory, shipping_method_id=test_shipping_method_id
+    )
 
     crud_order.mark_paid(db_session, order=order, payment_intent_id="pi_1", payment_method="payu")
     # Second call no-ops (already paid) → must not allocate a second number.

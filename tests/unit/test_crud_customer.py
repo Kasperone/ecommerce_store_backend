@@ -12,7 +12,7 @@ from app.schemas.order import OrderCreate, OrderItemCreate
 pytestmark = pytest.mark.integration
 
 
-def _place_order(db, user, product, qty=1, currency="USD"):
+def _place_order(db, user, product, *, shipping_method_id: int, qty=1, currency="USD"):
     return crud_order.create_with_items(
         db,
         user_id=user.id,
@@ -22,7 +22,8 @@ def _place_order(db, user, product, qty=1, currency="USD"):
             shipping_address="1 St",
             shipping_city="Town",
             shipping_postal_code="00-001",
-            shipping_country="Poland",
+            shipping_country="PL",
+            shipping_method_id=shipping_method_id,
         ),
     )
 
@@ -68,13 +69,13 @@ def test_count_admin_matches_filter(db_session, user_factory):
     assert crud_user.count_admin(db_session) == 3
 
 
-def test_order_counts_for(db_session, user_factory, product_factory):
+def test_order_counts_for(db_session, user_factory, product_factory, test_shipping_method_id):
     u1 = user_factory(email="o1@example.com")
     u2 = user_factory(email="o2@example.com")
     product = product_factory(stock=50, price_usd=10.0)
-    _place_order(db_session, u1, product)
-    _place_order(db_session, u1, product)
-    _place_order(db_session, u2, product)
+    _place_order(db_session, u1, product, shipping_method_id=test_shipping_method_id)
+    _place_order(db_session, u1, product, shipping_method_id=test_shipping_method_id)
+    _place_order(db_session, u2, product, shipping_method_id=test_shipping_method_id)
     db_session.flush()
 
     counts = crud_user.order_counts_for(db_session, user_ids=[u1.id, u2.id])
@@ -82,13 +83,21 @@ def test_order_counts_for(db_session, user_factory, product_factory):
     assert crud_user.order_counts_for(db_session, user_ids=[]) == {}
 
 
-def test_order_metrics_excludes_cancelled_from_spend(db_session, user_factory, product_factory):
+def test_order_metrics_excludes_cancelled_from_spend(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
     user = user_factory(email="metrics@example.com")
     product = product_factory(stock=50, price_usd=10.0, price_pln=40.0)
 
-    _place_order(db_session, user, product, qty=2, currency="USD")  # 20 USD
-    pln = _place_order(db_session, user, product, qty=1, currency="PLN")  # 40 PLN
-    cancelled = _place_order(db_session, user, product, qty=1, currency="USD")  # 10 USD
+    _place_order(
+        db_session, user, product, qty=2, currency="USD", shipping_method_id=test_shipping_method_id
+    )  # 20 USD
+    pln = _place_order(
+        db_session, user, product, qty=1, currency="PLN", shipping_method_id=test_shipping_method_id
+    )  # 40 PLN
+    cancelled = _place_order(
+        db_session, user, product, qty=1, currency="USD", shipping_method_id=test_shipping_method_id
+    )  # 10 USD
     crud_order.cancel(db_session, order=cancelled)
     db_session.flush()
 

@@ -9,6 +9,7 @@ from app.models.base import BaseModel
 
 if TYPE_CHECKING:
     from app.models.product import Product
+    from app.models.shipping import ShippingMethod
     from app.models.user import User
 
 
@@ -53,6 +54,14 @@ class Order(BaseModel):
     payment_method: Mapped[str | None] = mapped_column(String(50))  # stripe, payu, etc
     payment_intent_id: Mapped[str | None] = mapped_column(String(255))  # From payment provider
 
+    # Shipping method (nullable so pre-shipping orders survive, SET NULL so deleting
+    # a deprecated method preserves the order; shipping_method_name keeps the
+    # snapshot of what the customer actually paid for).
+    shipping_method_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("shipping_methods.id", ondelete="SET NULL")
+    )
+    shipping_method_name: Mapped[str | None] = mapped_column(String(80))
+
     # Notes
     notes: Mapped[str | None] = mapped_column(Text)
 
@@ -61,6 +70,7 @@ class Order(BaseModel):
     items: Mapped[list["OrderItem"]] = relationship(
         "OrderItem", back_populates="order", cascade="all, delete-orphan"
     )
+    shipping_method: Mapped["ShippingMethod | None"] = relationship("ShippingMethod")
 
     def __repr__(self):
         return f"<Order {self.order_number}>"

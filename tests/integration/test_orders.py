@@ -24,14 +24,17 @@ def _headers(user) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _order_body(product_id: int, quantity: int = 1, currency: str = "USD") -> dict:
+def _order_body(
+    product_id: int, *, shipping_method_id: int, quantity: int = 1, currency: str = "USD"
+) -> dict:
     return {
         "items": [{"product_id": product_id, "quantity": quantity}],
         "currency": currency,
         "shipping_address": "1 Test St",
         "shipping_city": "Testville",
         "shipping_postal_code": "00-001",
-        "shipping_country": "Poland",
+        "shipping_country": "PL",
+        "shipping_method_id": shipping_method_id,
     }
 
 
@@ -40,12 +43,16 @@ def _order_body(product_id: int, quantity: int = 1, currency: str = "USD") -> di
 # ---------------------------------------------------------------------------
 
 
-async def test_create_order_happy_path(client, user_factory, product_factory, db_session):
+async def test_create_order_happy_path(
+    client, user_factory, product_factory, db_session, test_shipping_method_id
+):
     user = user_factory()
     product = product_factory(stock=10, price_usd=25.0)
 
     resp = await client.post(
-        "/api/v1/orders/", json=_order_body(product.id, 2), headers=_headers(user)
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=2, shipping_method_id=test_shipping_method_id),
+        headers=_headers(user),
     )
     assert resp.status_code == 201
     body = resp.json()
@@ -67,30 +74,41 @@ async def test_create_order_happy_path(client, user_factory, product_factory, db
     assert movements[0].delta == -2
 
 
-async def test_create_order_insufficient_stock_422(client, user_factory, product_factory):
+async def test_create_order_insufficient_stock_422(
+    client, user_factory, product_factory, test_shipping_method_id
+):
     user = user_factory()
     product = product_factory(stock=1, price_usd=25.0)
 
     resp = await client.post(
-        "/api/v1/orders/", json=_order_body(product.id, 5), headers=_headers(user)
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=5, shipping_method_id=test_shipping_method_id),
+        headers=_headers(user),
     )
     assert resp.status_code == 422
     assert "stock" in resp.json()["detail"].lower()
 
 
-async def test_create_order_inactive_product_422(client, user_factory, product_factory):
+async def test_create_order_inactive_product_422(
+    client, user_factory, product_factory, test_shipping_method_id
+):
     user = user_factory()
     product = product_factory(stock=10, price_usd=25.0, is_active=False)
 
     resp = await client.post(
-        "/api/v1/orders/", json=_order_body(product.id, 1), headers=_headers(user)
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=1, shipping_method_id=test_shipping_method_id),
+        headers=_headers(user),
     )
     assert resp.status_code == 422
 
 
-async def test_create_order_requires_auth(client, product_factory):
+async def test_create_order_requires_auth(client, product_factory, test_shipping_method_id):
     product = product_factory(stock=10, price_usd=25.0)
-    resp = await client.post("/api/v1/orders/", json=_order_body(product.id, 1))
+    resp = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=1, shipping_method_id=test_shipping_method_id),
+    )
     assert resp.status_code == 401
 
 
@@ -99,13 +117,23 @@ async def test_create_order_requires_auth(client, product_factory):
 # ---------------------------------------------------------------------------
 
 
-async def test_list_is_scoped_per_user(client, user_factory, product_factory):
+async def test_list_is_scoped_per_user(
+    client, user_factory, product_factory, test_shipping_method_id
+):
     owner = user_factory(email="list-owner@example.com")
     other = user_factory(email="list-other@example.com")
     product = product_factory(stock=20, price_usd=10.0)
 
-    await client.post("/api/v1/orders/", json=_order_body(product.id, 1), headers=_headers(owner))
-    await client.post("/api/v1/orders/", json=_order_body(product.id, 1), headers=_headers(other))
+    await client.post(
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=1, shipping_method_id=test_shipping_method_id),
+        headers=_headers(owner),
+    )
+    await client.post(
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=1, shipping_method_id=test_shipping_method_id),
+        headers=_headers(other),
+    )
 
     owner_list = await client.get("/api/v1/orders/", headers=_headers(owner))
     assert owner_list.status_code == 200
@@ -116,11 +144,17 @@ async def test_list_is_scoped_per_user(client, user_factory, product_factory):
     assert "items" not in row
 
 
-async def test_admin_list_sees_all_with_customer_email(client, user_factory, product_factory):
+async def test_admin_list_sees_all_with_customer_email(
+    client, user_factory, product_factory, test_shipping_method_id
+):
     owner = user_factory(email="seen@example.com")
     admin = user_factory(email="admin-list@example.com", role=UserRole.ADMIN)
     product = product_factory(stock=20, price_usd=10.0)
-    await client.post("/api/v1/orders/", json=_order_body(product.id, 1), headers=_headers(owner))
+    await client.post(
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=1, shipping_method_id=test_shipping_method_id),
+        headers=_headers(owner),
+    )
 
     resp = await client.get("/api/v1/orders/", headers=_headers(admin))
     assert resp.status_code == 200
@@ -128,12 +162,14 @@ async def test_admin_list_sees_all_with_customer_email(client, user_factory, pro
     assert resp.json()["items"][0]["customer_email"] == "seen@example.com"
 
 
-async def test_list_status_filter(client, user_factory, product_factory):
+async def test_list_status_filter(client, user_factory, product_factory, test_shipping_method_id):
     admin = user_factory(email="admin-filter@example.com", role=UserRole.ADMIN)
     customer = user_factory(email="filter-cust@example.com")
     product = product_factory(stock=20, price_usd=10.0)
     created = await client.post(
-        "/api/v1/orders/", json=_order_body(product.id, 1), headers=_headers(customer)
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=1, shipping_method_id=test_shipping_method_id),
+        headers=_headers(customer),
     )
     order_id = created.json()["id"]
     await client.post(f"/api/v1/orders/{order_id}/cancel", headers=_headers(customer))
@@ -149,13 +185,15 @@ async def test_list_status_filter(client, user_factory, product_factory):
 # ---------------------------------------------------------------------------
 
 
-async def test_detail_ownership(client, user_factory, product_factory):
+async def test_detail_ownership(client, user_factory, product_factory, test_shipping_method_id):
     owner = user_factory(email="d-owner@example.com")
     other = user_factory(email="d-other@example.com")
     admin = user_factory(email="d-admin@example.com", role=UserRole.ADMIN)
     product = product_factory(stock=10, price_usd=10.0)
     created = await client.post(
-        "/api/v1/orders/", json=_order_body(product.id, 1), headers=_headers(owner)
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=1, shipping_method_id=test_shipping_method_id),
+        headers=_headers(owner),
     )
     order_id = created.json()["id"]
 
@@ -172,12 +210,14 @@ async def test_detail_ownership(client, user_factory, product_factory):
 
 
 async def test_customer_cancels_pending_and_restores_stock(
-    client, user_factory, product_factory, db_session
+    client, user_factory, product_factory, db_session, test_shipping_method_id
 ):
     user = user_factory(email="cancel@example.com")
     product = product_factory(stock=10, price_usd=10.0)
     created = await client.post(
-        "/api/v1/orders/", json=_order_body(product.id, 4), headers=_headers(user)
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=4, shipping_method_id=test_shipping_method_id),
+        headers=_headers(user),
     )
     order_id = created.json()["id"]
 
@@ -190,12 +230,16 @@ async def test_customer_cancels_pending_and_restores_stock(
     assert fresh.stock == 10  # restored
 
 
-async def test_customer_cannot_cancel_non_pending(client, user_factory, product_factory):
+async def test_customer_cannot_cancel_non_pending(
+    client, user_factory, product_factory, test_shipping_method_id
+):
     customer = user_factory(email="np-cust@example.com")
     admin = user_factory(email="np-admin@example.com", role=UserRole.ADMIN)
     product = product_factory(stock=10, price_usd=10.0)
     created = await client.post(
-        "/api/v1/orders/", json=_order_body(product.id, 1), headers=_headers(customer)
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=1, shipping_method_id=test_shipping_method_id),
+        headers=_headers(customer),
     )
     order_id = created.json()["id"]
     # Admin advances it past pending.
@@ -207,12 +251,16 @@ async def test_customer_cannot_cancel_non_pending(client, user_factory, product_
     assert resp.status_code == 400
 
 
-async def test_cancel_cross_customer_404(client, user_factory, product_factory):
+async def test_cancel_cross_customer_404(
+    client, user_factory, product_factory, test_shipping_method_id
+):
     owner = user_factory(email="cc-owner@example.com")
     other = user_factory(email="cc-other@example.com")
     product = product_factory(stock=10, price_usd=10.0)
     created = await client.post(
-        "/api/v1/orders/", json=_order_body(product.id, 1), headers=_headers(owner)
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=1, shipping_method_id=test_shipping_method_id),
+        headers=_headers(owner),
     )
     order_id = created.json()["id"]
 
@@ -226,13 +274,15 @@ async def test_cancel_cross_customer_404(client, user_factory, product_factory):
 
 
 async def test_admin_patch_valid_transition_and_audit(
-    client, user_factory, product_factory, db_session: Session
+    client, user_factory, product_factory, db_session: Session, test_shipping_method_id
 ):
     customer = user_factory(email="patch-cust@example.com")
     admin = user_factory(email="patch-admin@example.com", role=UserRole.ADMIN)
     product = product_factory(stock=10, price_usd=10.0)
     created = await client.post(
-        "/api/v1/orders/", json=_order_body(product.id, 1), headers=_headers(customer)
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=1, shipping_method_id=test_shipping_method_id),
+        headers=_headers(customer),
     )
     order_id = created.json()["id"]
 
@@ -257,12 +307,16 @@ async def test_admin_patch_valid_transition_and_audit(
     assert audit == 1
 
 
-async def test_admin_patch_invalid_transition_400(client, user_factory, product_factory):
+async def test_admin_patch_invalid_transition_400(
+    client, user_factory, product_factory, test_shipping_method_id
+):
     customer = user_factory(email="bad-cust@example.com")
     admin = user_factory(email="bad-admin@example.com", role=UserRole.ADMIN)
     product = product_factory(stock=10, price_usd=10.0)
     created = await client.post(
-        "/api/v1/orders/", json=_order_body(product.id, 1), headers=_headers(customer)
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=1, shipping_method_id=test_shipping_method_id),
+        headers=_headers(customer),
     )
     order_id = created.json()["id"]
 
@@ -273,12 +327,16 @@ async def test_admin_patch_invalid_transition_400(client, user_factory, product_
     assert resp.status_code == 400
 
 
-async def test_admin_patch_to_cancelled_rejected(client, user_factory, product_factory):
+async def test_admin_patch_to_cancelled_rejected(
+    client, user_factory, product_factory, test_shipping_method_id
+):
     customer = user_factory(email="patchcancel-cust@example.com")
     admin = user_factory(email="patchcancel-admin@example.com", role=UserRole.ADMIN)
     product = product_factory(stock=10, price_usd=10.0)
     created = await client.post(
-        "/api/v1/orders/", json=_order_body(product.id, 1), headers=_headers(customer)
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=1, shipping_method_id=test_shipping_method_id),
+        headers=_headers(customer),
     )
     order_id = created.json()["id"]
 
@@ -289,11 +347,15 @@ async def test_admin_patch_to_cancelled_rejected(client, user_factory, product_f
     assert "cancel endpoint" in resp.json()["detail"]
 
 
-async def test_customer_cannot_patch(client, user_factory, product_factory):
+async def test_customer_cannot_patch(
+    client, user_factory, product_factory, test_shipping_method_id
+):
     customer = user_factory(email="forbidden@example.com")
     product = product_factory(stock=10, price_usd=10.0)
     created = await client.post(
-        "/api/v1/orders/", json=_order_body(product.id, 1), headers=_headers(customer)
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=1, shipping_method_id=test_shipping_method_id),
+        headers=_headers(customer),
     )
     order_id = created.json()["id"]
 
