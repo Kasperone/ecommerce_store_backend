@@ -14,6 +14,14 @@ from app.schemas.category import (
     CategoryUpdate,
     CategoryWithProductCount,
 )
+from app.schemas.coupon import (
+    CouponBase,
+    CouponCreate,
+    CouponDiscountTypeLiteral,
+    CouponListResponse,
+    CouponResponse,
+    CouponUpdate,
+)
 from app.schemas.order import (
     OrderBase,
     OrderCreate,
@@ -66,6 +74,13 @@ __all__ = [
     "CategoryUpdate",
     "CategoryResponse",
     "CategoryWithProductCount",
+    # Coupon
+    "CouponBase",
+    "CouponCreate",
+    "CouponUpdate",
+    "CouponResponse",
+    "CouponListResponse",
+    "CouponDiscountTypeLiteral",
     # Product
     "ProductBase",
     "ProductCreate",

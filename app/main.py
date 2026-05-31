@@ -73,6 +73,7 @@ async def health():
 # Import routers after middleware/limiter/CORS setup so they pick up the configured state.
 from app.api.v1 import (  # noqa: E402
     admin_audit,
+    admin_coupons,
     admin_customers,
     admin_dashboard,
     admin_inventory,
@@ -113,6 +114,7 @@ app.include_router(
 )
 app.include_router(admin_reviews.router, prefix="/api/v1/admin/reviews", tags=["Admin Reviews"])
 app.include_router(admin_tags.router, prefix="/api/v1/admin/tags", tags=["Admin Tags"])
+app.include_router(admin_coupons.router, prefix="/api/v1/admin/coupons", tags=["Admin Coupons"])
 app.include_router(
     admin_warehouses.router, prefix="/api/v1/admin/warehouses", tags=["Admin Warehouses"]
 )
