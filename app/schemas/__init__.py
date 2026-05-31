@@ -48,6 +48,17 @@ from app.schemas.refund import (
     RefundReasonLiteral,
     RefundResponse,
 )
+from app.schemas.report import (
+    CategoryRevenueReport,
+    CategoryRevenueRow,
+    RefundSummary,
+    RefundSummaryRow,
+    SalesBucket,
+    SalesGranularity,
+    SalesReport,
+    TopProductRow,
+    TopProductsReport,
+)
 from app.schemas.user import (
     UserBase,
     UserCreate,
@@ -104,6 +115,16 @@ __all__ = [
     "RefundResponse",
     "RefundReasonLiteral",
     "CorrectiveInvoiceResponse",
+    # Reports
+    "SalesGranularity",
+    "SalesBucket",
+    "SalesReport",
+    "TopProductRow",
+    "TopProductsReport",
+    "CategoryRevenueRow",
+    "CategoryRevenueReport",
+    "RefundSummaryRow",
+    "RefundSummary",
     # Auth
     "Token",
     "TokenData",
