@@ -12,6 +12,7 @@ from app.crud.product import product
 from app.crud.product_image import product_image
 from app.crud.refresh_token import refresh_token
 from app.crud.refund import refund
+from app.crud.report import report
 from app.crud.review import review
 from app.crud.review_vote import review_vote
 from app.crud.shipping import method as shipping_method
@@ -37,6 +38,7 @@ __all__ = [
     "audit_event",
     "refresh_token",
     "refund",
+    "report",
     "review",
     "review_vote",
     "shipping_zone",
