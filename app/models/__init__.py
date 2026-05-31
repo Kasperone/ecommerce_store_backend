@@ -2,6 +2,7 @@ from app.models.admin_audit_event import AdminAuditEvent
 from app.models.base import Base
 from app.models.category import Category
 from app.models.corrective_invoice import CorrectiveInvoice, CorrectiveInvoiceCounter
+from app.models.coupon import COUPON_DISCOUNT_TYPE_VALUES, Coupon, CouponDiscountType
 from app.models.customer_note import CustomerNote
 from app.models.inventory_movement import InventoryMovement, InventoryMovementReason
 from app.models.invoice import Invoice, InvoiceCounter
@@ -32,6 +33,9 @@ __all__ = [
     "Category",
     "CorrectiveInvoice",
     "CorrectiveInvoiceCounter",
+    "Coupon",
+    "CouponDiscountType",
+    "COUPON_DISCOUNT_TYPE_VALUES",
     "CustomerNote",
     "Product",
     "ProductImage",
