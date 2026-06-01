@@ -19,6 +19,7 @@ from app.models.order import Order, OrderItem
 from app.models.price_history import SUPPORTED_CURRENCIES, PriceHistory
 from app.models.product import Product
 from app.models.product_image import ProductImage
+from app.models.quote import QUOTE_STATUS_VALUES, Quote, QuoteItem, QuoteStatus
 from app.models.refresh_token import RefreshToken
 from app.models.refund import REFUND_REASON_VALUES, Refund, RefundReason
 from app.models.refund_item import RefundItem
@@ -60,6 +61,10 @@ __all__ = [
     "CustomerNote",
     "Product",
     "ProductImage",
+    "Quote",
+    "QuoteItem",
+    "QuoteStatus",
+    "QUOTE_STATUS_VALUES",
     "Order",
     "OrderItem",
     "PriceHistory",
