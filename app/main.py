@@ -75,6 +75,7 @@ from app.api.v1 import (  # noqa: E402
     admin_audit,
     admin_banners,
     admin_campaigns,
+    admin_companies,
     admin_coupons,
     admin_customers,
     admin_dashboard,
@@ -123,6 +124,9 @@ app.include_router(admin_tags.router, prefix="/api/v1/admin/tags", tags=["Admin 
 app.include_router(admin_banners.router, prefix="/api/v1/admin/banners", tags=["Admin Banners"])
 app.include_router(
     admin_campaigns.router, prefix="/api/v1/admin/campaigns", tags=["Admin Campaigns"]
+)
+app.include_router(
+    admin_companies.router, prefix="/api/v1/admin/companies", tags=["Admin Companies"]
 )
 app.include_router(admin_coupons.router, prefix="/api/v1/admin/coupons", tags=["Admin Coupons"])
 app.include_router(admin_staff.router, prefix="/api/v1/admin/staff", tags=["Admin Staff"])
