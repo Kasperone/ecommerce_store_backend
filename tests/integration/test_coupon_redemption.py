@@ -218,3 +218,119 @@ async def test_create_order_usage_cap_blocks_second(
     )
     assert second.status_code == 400
     assert "usage limit" in second.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Per-user cap (SEC-003 flexible coupon)
+# ---------------------------------------------------------------------------
+
+
+async def test_per_user_limit_blocks_same_user_second_order(
+    client, user_factory, product_factory, coupon_factory, test_shipping_method_id
+):
+    # per_user_limit=1, no global cap: the same customer can't use it twice.
+    user = user_factory()
+    product = product_factory(stock=10, price_usd=40.0)
+    coupon_factory(code="ONEPER", per_user_limit=1, max_uses=None)
+
+    first = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(
+            product.id, shipping_method_id=test_shipping_method_id, coupon_code="ONEPER"
+        ),
+        headers=_headers(user),
+    )
+    assert first.status_code == 201
+
+    second = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(
+            product.id, shipping_method_id=test_shipping_method_id, coupon_code="ONEPER"
+        ),
+        headers=_headers(user),
+    )
+    assert second.status_code == 400
+    assert "already used this coupon" in second.json()["detail"].lower()
+
+
+async def test_per_user_limit_allows_different_user(
+    client, user_factory, product_factory, coupon_factory, test_shipping_method_id
+):
+    # per_user_limit caps each customer independently — a second customer is fine.
+    user_a = user_factory()
+    user_b = user_factory()
+    product = product_factory(stock=10, price_usd=40.0)
+    coupon_factory(code="ONEEACH", per_user_limit=1, max_uses=None)
+
+    first = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(
+            product.id, shipping_method_id=test_shipping_method_id, coupon_code="ONEEACH"
+        ),
+        headers=_headers(user_a),
+    )
+    assert first.status_code == 201
+
+    other = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(
+            product.id, shipping_method_id=test_shipping_method_id, coupon_code="ONEEACH"
+        ),
+        headers=_headers(user_b),
+    )
+    assert other.status_code == 201
+
+
+async def test_per_user_limit_allows_multiple_up_to_limit(
+    client, user_factory, product_factory, coupon_factory, test_shipping_method_id
+):
+    # per_user_limit=2 lets the same customer redeem twice but not a third time.
+    user = user_factory()
+    product = product_factory(stock=10, price_usd=20.0)
+    coupon_factory(code="TWICE", per_user_limit=2, max_uses=None)
+
+    for _ in range(2):
+        ok = await client.post(
+            "/api/v1/orders/",
+            json=_order_body(
+                product.id, shipping_method_id=test_shipping_method_id, coupon_code="TWICE"
+            ),
+            headers=_headers(user),
+        )
+        assert ok.status_code == 201
+
+    third = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(
+            product.id, shipping_method_id=test_shipping_method_id, coupon_code="TWICE"
+        ),
+        headers=_headers(user),
+    )
+    assert third.status_code == 400
+
+
+async def test_validate_preview_reflects_per_user_limit(
+    client, user_factory, product_factory, coupon_factory, db_session, test_shipping_method_id
+):
+    # After the customer has hit their per-user cap, the preview endpoint also
+    # reports it (it passes the authenticated user_id through to the validator).
+    user = user_factory()
+    product = product_factory(stock=10, price_usd=40.0)
+    coupon_factory(code="PREVIEW1", per_user_limit=1, max_uses=None)
+
+    placed = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(
+            product.id, shipping_method_id=test_shipping_method_id, coupon_code="PREVIEW1"
+        ),
+        headers=_headers(user),
+    )
+    assert placed.status_code == 201
+
+    preview = await client.post(
+        "/api/v1/coupons/validate",
+        json={"code": "PREVIEW1", "subtotal": 40.0, "currency": "USD"},
+        headers=_headers(user),
+    )
+    assert preview.status_code == 400
+    assert "already used this coupon" in preview.json()["detail"].lower()
