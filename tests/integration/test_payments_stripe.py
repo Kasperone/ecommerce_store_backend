@@ -57,20 +57,31 @@ def _make_pending_order(
     return order
 
 
-def _completed_event(order_number: str, payment_status: str = "paid", pi: str = "pi_123") -> bytes:
+def _completed_event(
+    order_number: str,
+    payment_status: str = "paid",
+    pi: str = "pi_123",
+    amount_total: int | None = None,
+    currency: str | None = None,
+) -> bytes:
+    obj = {
+        "client_reference_id": order_number,
+        "payment_status": payment_status,
+        "payment_intent": pi,
+        "metadata": {"order_number": order_number},
+    }
+    # Only present when the test exercises the amount/currency assertion; absent
+    # keeps the lenient (signature-is-the-boundary) path that other tests use.
+    if amount_total is not None:
+        obj["amount_total"] = amount_total
+    if currency is not None:
+        obj["currency"] = currency
     return json.dumps(
         {
             "id": "evt_1",
             "object": "event",
             "type": "checkout.session.completed",
-            "data": {
-                "object": {
-                    "client_reference_id": order_number,
-                    "payment_status": payment_status,
-                    "payment_intent": pi,
-                    "metadata": {"order_number": order_number},
-                }
-            },
+            "data": {"object": obj},
         }
     ).encode("utf-8")
 
@@ -246,6 +257,77 @@ async def test_webhook_marks_order_paid(
     assert OrderStatus(order.status) == OrderStatus.PAID
     assert order.payment_method == "stripe"
     assert order.payment_intent_id == "pi_123"
+
+
+async def test_webhook_settles_when_amount_and_currency_match(
+    client, user_factory, product_factory, db_session, configured_stripe, test_shipping_method_id
+):
+    # SEC-006: a present, matching amount_total + currency settles as normal.
+    user = user_factory()
+    product = product_factory(stock=5, price_usd=10.0)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
+
+    body = _completed_event(
+        order.order_number, amount_total=round(order.total * 100), currency="usd"
+    )
+    resp = await client.post(
+        "/api/v1/payments/stripe/webhook",
+        content=body,
+        headers={"Stripe-Signature": _stripe_sig(body)},
+    )
+
+    assert resp.status_code == 200
+    db_session.refresh(order)
+    assert OrderStatus(order.status) == OrderStatus.PAID
+
+
+async def test_webhook_refuses_settle_on_amount_mismatch(
+    client, user_factory, product_factory, db_session, configured_stripe, test_shipping_method_id
+):
+    # SEC-006: a verified webhook whose paid amount != order total is refused.
+    user = user_factory()
+    product = product_factory(stock=5, price_usd=10.0)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
+
+    body = _completed_event(
+        order.order_number, amount_total=round(order.total * 100) - 500, currency="usd"
+    )
+    resp = await client.post(
+        "/api/v1/payments/stripe/webhook",
+        content=body,
+        headers={"Stripe-Signature": _stripe_sig(body)},
+    )
+
+    assert resp.status_code == 200  # acked so Stripe stops retrying
+    db_session.refresh(order)
+    assert OrderStatus(order.status) == OrderStatus.PENDING  # not settled
+
+
+async def test_webhook_refuses_settle_on_currency_mismatch(
+    client, user_factory, product_factory, db_session, configured_stripe, test_shipping_method_id
+):
+    user = user_factory()
+    product = product_factory(stock=5, price_usd=10.0)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
+
+    body = _completed_event(
+        order.order_number, amount_total=round(order.total * 100), currency="eur"
+    )
+    resp = await client.post(
+        "/api/v1/payments/stripe/webhook",
+        content=body,
+        headers={"Stripe-Signature": _stripe_sig(body)},
+    )
+
+    assert resp.status_code == 200
+    db_session.refresh(order)
+    assert OrderStatus(order.status) == OrderStatus.PENDING
 
 
 async def test_webhook_rejects_invalid_signature(

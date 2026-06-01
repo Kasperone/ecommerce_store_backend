@@ -14,6 +14,7 @@ idempotent (``crud_order.mark_paid`` no-ops unless the order is still pending).
 """
 
 import json
+import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.concurrency import run_in_threadpool
@@ -34,7 +35,39 @@ from app.services import order_email
 from app.services.payu import PayUError, get_payu_client
 from app.services.stripe import StripeError, get_stripe_service, stripe_configured
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+
+def _paid_amount_matches(
+    order, *, paid_amount_minor: int | None, paid_currency: str | None
+) -> bool:
+    """Defense-in-depth: a verified webhook's paid amount + currency must equal
+    the order's.
+
+    Charge amounts are computed server-side at session/intent creation
+    (``round(order.total * 100)``), so the buyer can't choose a different amount
+    — this is belt-and-suspenders against a tampered/misrouted notification or a
+    future flow that lets the client influence the charge. When the provider
+    omits the fields we don't block (the signature is the real boundary); a
+    present-but-mismatched amount refuses to settle.
+    """
+    if paid_amount_minor is None or paid_currency is None:
+        return True
+    expected_minor = round(order.total * 100)
+    if paid_amount_minor == expected_minor and paid_currency.upper() == order.currency.upper():
+        return True
+    logger.warning(
+        "Payment amount/currency mismatch for order %s: webhook=%s %s, "
+        "expected=%s %s — refusing to settle",
+        order.order_number,
+        paid_amount_minor,
+        paid_currency,
+        expected_minor,
+        order.currency,
+    )
+    return False
 
 
 @router.post("/payu/orders/{order_id}", response_model=PayUCheckoutResponse)
@@ -113,7 +146,12 @@ async def payu_notify(
     ext_order_id = payu_order.get("extOrderId")
     if ext_order_id and payu_order.get("status") == "COMPLETED":
         order = crud_order.get_by_order_number(db, order_number=ext_order_id)
-        if order is not None:
+        # PayU sends totalAmount in minor units as a string; currencyCode is ISO.
+        raw_total = payu_order.get("totalAmount")
+        paid_minor = int(raw_total) if raw_total is not None and str(raw_total).isdigit() else None
+        if order is not None and _paid_amount_matches(
+            order, paid_amount_minor=paid_minor, paid_currency=payu_order.get("currencyCode")
+        ):
             # Email only on the real pending→paid transition (mark_paid no-ops
             # otherwise, so duplicate PayU retries don't re-send).
             was_pending = OrderStatus(order.status) == OrderStatus.PENDING
@@ -271,13 +309,21 @@ async def stripe_webhook(
                 "order_number"
             )
             paid_order_id = _settle_stripe_order(
-                db, order_number=order_number, payment_intent_id=obj.get("payment_intent") or ""
+                db,
+                order_number=order_number,
+                payment_intent_id=obj.get("payment_intent") or "",
+                paid_amount_minor=obj.get("amount_total"),
+                paid_currency=obj.get("currency"),
             )
     elif event_type == "payment_intent.succeeded":
         # The event object IS the PaymentIntent; success is implied by the type.
         order_number = (obj.get("metadata") or {}).get("order_number")
         paid_order_id = _settle_stripe_order(
-            db, order_number=order_number, payment_intent_id=obj.get("id") or ""
+            db,
+            order_number=order_number,
+            payment_intent_id=obj.get("id") or "",
+            paid_amount_minor=obj.get("amount_received") or obj.get("amount"),
+            paid_currency=obj.get("currency"),
         )
 
     if paid_order_id is not None:
@@ -288,7 +334,12 @@ async def stripe_webhook(
 
 
 def _settle_stripe_order(
-    db: Session, *, order_number: str | None, payment_intent_id: str
+    db: Session,
+    *,
+    order_number: str | None,
+    payment_intent_id: str,
+    paid_amount_minor: int | None = None,
+    paid_currency: str | None = None,
 ) -> int | None:
     """Flip a pending order to paid from a verified Stripe webhook (idempotent).
 
@@ -299,6 +350,10 @@ def _settle_stripe_order(
         return None
     order = crud_order.get_by_order_number(db, order_number=order_number)
     if order is None:
+        return None
+    if not _paid_amount_matches(
+        order, paid_amount_minor=paid_amount_minor, paid_currency=paid_currency
+    ):
         return None
     # Idempotent: mark_paid no-ops if the order isn't pending.
     was_pending = OrderStatus(order.status) == OrderStatus.PENDING
