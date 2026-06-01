@@ -226,6 +226,71 @@ async def test_webhook_ignores_non_completed_status(
     assert OrderStatus(order.status) == OrderStatus.PENDING
 
 
+async def test_webhook_refuses_settle_on_amount_mismatch(
+    client, user_factory, product_factory, db_session, configured_payu, test_shipping_method_id
+):
+    # SEC-006: a verified PayU notification whose totalAmount != order total
+    # (in minor units) is refused — defense-in-depth against a tampered payload.
+    user = user_factory()
+    product = product_factory(stock=5, price_pln=10.0)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
+
+    wrong_minor = str(round(order.total * 100) - 500)
+    body = json.dumps(
+        {
+            "order": {
+                "extOrderId": order.order_number,
+                "orderId": "PAYU-9",
+                "status": "COMPLETED",
+                "totalAmount": wrong_minor,
+                "currencyCode": order.currency,
+            }
+        }
+    ).encode("utf-8")
+    resp = await client.post(
+        "/api/v1/payments/payu/notify",
+        content=body,
+        headers={"OpenPayU-Signature": f"signature={_sign(body)};algorithm=MD5"},
+    )
+
+    assert resp.status_code == 200  # acked so PayU stops retrying
+    db_session.refresh(order)
+    assert OrderStatus(order.status) == OrderStatus.PENDING  # not settled
+
+
+async def test_webhook_settles_when_amount_matches(
+    client, user_factory, product_factory, db_session, configured_payu, test_shipping_method_id
+):
+    user = user_factory()
+    product = product_factory(stock=5, price_pln=10.0)
+    order = _make_pending_order(
+        db_session, user, product, shipping_method_id=test_shipping_method_id
+    )
+
+    body = json.dumps(
+        {
+            "order": {
+                "extOrderId": order.order_number,
+                "orderId": "PAYU-9",
+                "status": "COMPLETED",
+                "totalAmount": str(round(order.total * 100)),
+                "currencyCode": order.currency,
+            }
+        }
+    ).encode("utf-8")
+    resp = await client.post(
+        "/api/v1/payments/payu/notify",
+        content=body,
+        headers={"OpenPayU-Signature": f"signature={_sign(body)};algorithm=MD5"},
+    )
+
+    assert resp.status_code == 200
+    db_session.refresh(order)
+    assert OrderStatus(order.status) == OrderStatus.PAID
+
+
 async def test_webhook_is_idempotent(
     client, user_factory, product_factory, db_session, configured_payu, test_shipping_method_id
 ):
