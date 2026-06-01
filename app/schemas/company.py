@@ -48,6 +48,10 @@ class CompanyBase(BaseSchema):
     status: CompanyStatusLiteral = "pending"
     account_manager: str | None = Field(default=None, max_length=255)
     notes: str | None = Field(default=None, max_length=5000)
+    # Designated primary contact customer (the user a quote→order conversion
+    # attributes the resulting order to). Optional; the route validates the
+    # referenced user exists (422 if not).
+    primary_user_id: int | None = Field(default=None)
 
     @model_validator(mode="after")
     def _normalise_name(self) -> CompanyBase:
@@ -75,6 +79,9 @@ class CompanyUpdate(BaseSchema):
     status: CompanyStatusLiteral | None = None
     account_manager: str | None = Field(default=None, max_length=255)
     notes: str | None = Field(default=None, max_length=5000)
+    # Set/clear the primary contact. Sending ``null`` explicitly clears it; omit to
+    # leave untouched (the route validates a non-null value references a real user).
+    primary_user_id: int | None = Field(default=None)
 
     @model_validator(mode="after")
     def _normalise_name(self) -> CompanyUpdate:
@@ -90,7 +97,11 @@ class CompanyResponse(CompanyBase, TimestampSchema):
 
     Includes at least ``{ id, name, status }`` (id + timestamps come from
     ``TimestampSchema``) — the stable contract the quotes vertical FKs against.
+    ``primary_user_email`` is a read-only denormalised display value (the
+    designated contact's email, or ``null`` when none is set).
     """
+
+    primary_user_email: str | None = None
 
 
 class CompanyListResponse(BaseSchema):

@@ -279,3 +279,74 @@ async def test_delete_404(client, user_factory):
     assert (
         await client.delete("/api/v1/admin/companies/999999", headers=_headers(admin))
     ).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# primary_user_id (primary contact)
+# ---------------------------------------------------------------------------
+
+
+async def test_create_with_primary_contact(client, user_factory):
+    admin = user_factory(email="co-pc-admin@example.com", role=UserRole.ADMIN)
+    contact = user_factory(email="co-pc-contact@example.com", role=UserRole.CUSTOMER)
+    resp = await client.post(
+        "/api/v1/admin/companies/",
+        json={"name": "PC Co", "primary_user_id": contact.id},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["primary_user_id"] == contact.id
+    assert body["primary_user_email"] == "co-pc-contact@example.com"
+
+
+async def test_create_unknown_primary_contact_422(client, user_factory):
+    admin = user_factory(email="co-pc-admin2@example.com", role=UserRole.ADMIN)
+    resp = await client.post(
+        "/api/v1/admin/companies/",
+        json={"name": "Bad PC Co", "primary_user_id": 999999},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 422
+    assert "not found" in resp.json()["detail"].lower()
+
+
+async def test_update_sets_primary_contact(client, user_factory, company_factory):
+    admin = user_factory(email="co-pc-admin3@example.com", role=UserRole.ADMIN)
+    contact = user_factory(email="co-pc-contact3@example.com", role=UserRole.CUSTOMER)
+    company = company_factory(name="UpdPC")
+    resp = await client.patch(
+        f"/api/v1/admin/companies/{company.id}",
+        json={"primary_user_id": contact.id},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["primary_user_id"] == contact.id
+    assert body["primary_user_email"] == "co-pc-contact3@example.com"
+
+
+async def test_update_unknown_primary_contact_422(client, user_factory, company_factory):
+    admin = user_factory(email="co-pc-admin4@example.com", role=UserRole.ADMIN)
+    company = company_factory(name="UpdBadPC")
+    resp = await client.patch(
+        f"/api/v1/admin/companies/{company.id}",
+        json={"primary_user_id": 999999},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 422
+
+
+async def test_update_clears_primary_contact(client, user_factory, company_factory):
+    admin = user_factory(email="co-pc-admin5@example.com", role=UserRole.ADMIN)
+    contact = user_factory(email="co-pc-contact5@example.com", role=UserRole.CUSTOMER)
+    company = company_factory(name="ClearPC", primary_user_id=contact.id)
+    resp = await client.patch(
+        f"/api/v1/admin/companies/{company.id}",
+        json={"primary_user_id": None},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["primary_user_id"] is None
+    assert body["primary_user_email"] is None

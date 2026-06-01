@@ -15,6 +15,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.company import Company
+from app.models.user import User
 from app.schemas.company import CompanyCreate, CompanyUpdate
 
 
@@ -23,6 +24,11 @@ class CRUDCompany:
 
     def get(self, db: Session, id: int) -> Company | None:
         return db.get(Company, id)
+
+    def user_exists(self, db: Session, user_id: int) -> bool:
+        """True if a user with ``user_id`` exists (route 422s on False when a
+        ``primary_user_id`` is supplied)."""
+        return db.query(User.id).filter(User.id == user_id).first() is not None
 
     def get_multi(
         self,
@@ -63,6 +69,7 @@ class CRUDCompany:
             status=obj_in.status,
             account_manager=obj_in.account_manager,
             notes=obj_in.notes,
+            primary_user_id=obj_in.primary_user_id,
         )
         db.add(company)
         db.flush()

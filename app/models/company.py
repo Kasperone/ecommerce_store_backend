@@ -17,15 +17,21 @@ change with no migration. ``account_manager`` is a free-text label for now — a
 from __future__ import annotations
 
 import enum
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     CheckConstraint,
+    ForeignKey,
+    Integer,
     String,
     Text,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import BaseModel
+
+if TYPE_CHECKING:
+    from app.models.user import User
 
 
 class CompanyStatus(str, enum.Enum):
@@ -72,6 +78,27 @@ class Company(BaseModel):
     status: Mapped[str] = mapped_column(String(16), default="pending", server_default="pending")
     account_manager: Mapped[str | None] = mapped_column(String(255))
     notes: Mapped[str | None] = mapped_column(Text)
+    # Designated primary contact customer. The user an admin picks as the company's
+    # contact; a quote→order conversion attributes the resulting order to this real
+    # customer (correct emails/history/invoices) rather than to the converting admin.
+    # Nullable (companies start without one) and ON DELETE SET NULL so deleting the
+    # user clears the link without blocking the user delete.
+    primary_user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+
+    # Loaded for the denormalised ``primary_user_email`` on the response (no N+1
+    # in the per-row/detail admin views). Plain (non-back_populates) — the User
+    # side has no inverse company collection in the MVP.
+    primary_user: Mapped[User | None] = relationship("User", lazy="joined")
+
+    @property
+    def primary_user_email(self) -> str | None:
+        """Email of the designated primary contact (for the admin response/display).
+
+        Surfaced via Pydantic ``from_attributes``; ``None`` when no contact is set.
+        """
+        return self.primary_user.email if self.primary_user is not None else None
 
     def __repr__(self) -> str:
         return f"<Company {self.id} {self.status!r} {self.name!r}>"
