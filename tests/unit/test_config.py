@@ -97,26 +97,38 @@ def test_sql_echo_explicit_overrides_debug():
 
 
 # --- SEC-005: prod + memory:// rate-limit storage warning ---
+#
+# These capture the validator's warning by stubbing ``config.logger.warning``
+# directly rather than via ``caplog`` — caplog depends on logger propagation /
+# global logging state, which other tests in the full suite reconfigure (the
+# warning fired but wasn't captured in CI). Stubbing the method is deterministic.
 
 
-def test_production_with_memory_rate_limit_warns(caplog):
+@pytest.fixture
+def captured_warnings(monkeypatch):
+    """Capture messages passed to ``app.core.config.logger.warning``."""
+    from app.core import config as config_mod
+
+    msgs: list[str] = []
+    monkeypatch.setattr(config_mod.logger, "warning", lambda msg, *a, **k: msgs.append(msg))
+    return msgs
+
+
+def test_production_with_memory_rate_limit_warns(captured_warnings):
     # Per-process memory:// buckets don't hold across multiple workers in prod.
-    with caplog.at_level("WARNING"):
-        _build(ENVIRONMENT="production", DEBUG=False, RATE_LIMIT_STORAGE_URL="memory://")
-    assert any("memory://" in r.message for r in caplog.records)
+    _build(ENVIRONMENT="production", DEBUG=False, RATE_LIMIT_STORAGE_URL="memory://")
+    assert any("memory://" in m for m in captured_warnings)
 
 
-def test_production_with_redis_rate_limit_does_not_warn(caplog):
-    with caplog.at_level("WARNING"):
-        _build(
-            ENVIRONMENT="production",
-            DEBUG=False,
-            RATE_LIMIT_STORAGE_URL="redis://localhost:6379/0",
-        )
-    assert not any("memory://" in r.message for r in caplog.records)
+def test_production_with_redis_rate_limit_does_not_warn(captured_warnings):
+    _build(
+        ENVIRONMENT="production",
+        DEBUG=False,
+        RATE_LIMIT_STORAGE_URL="redis://localhost:6379/0",
+    )
+    assert not any("memory://" in m for m in captured_warnings)
 
 
-def test_development_with_memory_rate_limit_does_not_warn(caplog):
-    with caplog.at_level("WARNING"):
-        _build(ENVIRONMENT="development", RATE_LIMIT_STORAGE_URL="memory://")
-    assert not any("memory://" in r.message for r in caplog.records)
+def test_development_with_memory_rate_limit_does_not_warn(captured_warnings):
+    _build(ENVIRONMENT="development", RATE_LIMIT_STORAGE_URL="memory://")
+    assert not any("memory://" in m for m in captured_warnings)
