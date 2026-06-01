@@ -2,8 +2,9 @@
 
 from datetime import UTC, datetime, timedelta
 
+import jwt
 import pytest
-from jose import JWTError, jwt
+from jwt import PyJWTError
 
 from app.core.config import settings
 from app.core.security import (
@@ -65,7 +66,7 @@ def test_refresh_token_roundtrip():
 def test_decode_rejects_wrong_type():
     """Access token presented to a refresh-type decode must fail."""
     token, _, _ = create_access_token(subject=1)
-    with pytest.raises(JWTError):
+    with pytest.raises(PyJWTError):
         decode_token(token, expected_type="refresh")
 
 
@@ -80,13 +81,13 @@ def test_decode_rejects_tampered_signature():
     head, _, sig = token.rpartition(".")
     bad_first = "A" if sig[0] != "A" else "B"
     tampered = f"{head}.{bad_first}{sig[1:]}"
-    with pytest.raises(JWTError):
+    with pytest.raises(PyJWTError):
         decode_token(tampered, expected_type="access")
 
 
 def test_decode_rejects_expired_token():
     token, _, _ = create_access_token(subject=1, expires_delta=timedelta(seconds=-1))
-    with pytest.raises(JWTError):
+    with pytest.raises(PyJWTError):
         decode_token(token, expected_type="access")
 
 
@@ -103,7 +104,7 @@ def test_decode_rejects_wrong_audience():
         "type": "access",
     }
     bad_token = jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
-    with pytest.raises(JWTError):
+    with pytest.raises(PyJWTError):
         decode_token(bad_token, expected_type="access")
 
 
@@ -120,7 +121,7 @@ def test_decode_rejects_missing_claims():
         "type": "access",
     }
     bad_token = jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
-    with pytest.raises(JWTError):
+    with pytest.raises(PyJWTError):
         decode_token(bad_token, expected_type="access")
 
 

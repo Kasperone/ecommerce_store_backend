@@ -3,7 +3,7 @@ from datetime import UTC
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError
+from jwt import PyJWTError
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
@@ -58,7 +58,7 @@ async def get_current_user(
 
     try:
         decoded = decode_token(token, expected_type="access")
-    except JWTError:
+    except PyJWTError:
         raise credentials_exception from None
 
     try:
