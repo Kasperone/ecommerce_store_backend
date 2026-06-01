@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import EmailStr, Field, field_validator
 
 from app.schemas.base import BaseSchema
@@ -73,3 +75,18 @@ class GenericMessage(BaseSchema):
     """Generic single-message response (used where revealing detail would leak info)."""
 
     message: str
+
+
+class SessionResponse(BaseSchema):
+    """A single active login session (one ``refresh_tokens`` row).
+
+    ``current`` is True for the row whose ``jti`` matches the caller's refresh
+    cookie. It is computed in the route handler, not derived from the ORM model.
+    """
+
+    id: int
+    created_at: datetime
+    created_ip: str | None
+    user_agent: str | None
+    current: bool
+    expires_at: datetime
