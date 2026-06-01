@@ -43,6 +43,15 @@ class User(BaseModel):
     # "en" (server_default backfills existing rows). Read at send time — the email
     # language can't come from request context (webhooks/admin actions have none).
     locale: Mapped[str] = mapped_column(String(5), default="en", server_default="en")
+    # Persisted storefront currency preference ("USD"/"PLN"/"EUR"). Nullable —
+    # NULL means "no explicit preference", and the storefront falls back to the
+    # locale-derived default. Validated against the supported set at the API layer.
+    preferred_currency: Mapped[str | None] = mapped_column(String(3))
+
+    # Reserved TOTP (2FA) slots — added now to avoid a later table rewrite. UNUSED
+    # this wave: no logic reads or writes these yet.
+    totp_secret_enc: Mapped[str | None] = mapped_column(String(255))
+    totp_enabled_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     # Shipping Address (optional)
     shipping_street: Mapped[str | None] = mapped_column(String(255))
