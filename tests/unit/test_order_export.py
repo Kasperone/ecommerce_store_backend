@@ -155,6 +155,31 @@ def test_blank_customer_name_when_no_user():
     assert row["customer_email"] == ""
 
 
+def test_formula_injection_in_notes_is_neutralized():
+    # A customer-controlled note starting with '=' must be quoted so Excel
+    # treats it as literal text, not a formula (SEC-008 / CWE-1236).
+    rows = _parse(build_orders_csv([_order(notes="=cmd|'/c calc'!A1")]))
+    row = dict(zip(CSV_HEADERS, rows[1], strict=True))
+    assert row["notes"] == "'=cmd|'/c calc'!A1"
+
+
+def test_formula_injection_neutralized_across_user_text_columns():
+    order = _order(
+        order_number="=ORD",
+        shipping_address="@evil",
+        shipping_city="+city",
+        coupon_code="-SAVE",
+        notes="=HYPERLINK(1)",
+    )
+    rows = _parse(build_orders_csv([order]))
+    row = dict(zip(CSV_HEADERS, rows[1], strict=True))
+    assert row["order_number"] == "'=ORD"
+    assert row["shipping_address"] == "'@evil"
+    assert row["shipping_city"] == "'+city"
+    assert row["coupon_code"] == "'-SAVE"
+    assert row["notes"] == "'=HYPERLINK(1)"
+
+
 def test_multiple_orders_one_row_each():
     rows = _parse(
         build_orders_csv(

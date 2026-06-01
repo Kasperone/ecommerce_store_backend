@@ -27,6 +27,8 @@ import csv
 import io
 from typing import TYPE_CHECKING
 
+from app.services._csv_safe import csv_safe
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -90,27 +92,29 @@ def _created_at(order: Order) -> str:
 
 
 def _row(order: Order) -> list[str]:
+    # User-controlled free-text cells go through ``csv_safe`` (formula-injection
+    # guard); numeric/date/enum/currency cells are server-derived and left as-is.
     return [
-        order.order_number,
+        csv_safe(order.order_number),
         _created_at(order),
         _status_value(order),
-        order.customer_email or "",
-        _customer_name(order),
+        csv_safe(order.customer_email or ""),
+        csv_safe(_customer_name(order)),
         order.currency,
         f"{order.subtotal:.2f}",
         f"{order.tax:.2f}",
         f"{order.shipping:.2f}",
         f"{(order.discount or 0):.2f}",
-        order.coupon_code or "",
+        csv_safe(order.coupon_code or ""),
         f"{order.total:.2f}",
         str(order.item_count),
-        _pack_items(order),
-        order.payment_method or "",
-        order.shipping_address or "",
-        order.shipping_city or "",
-        order.shipping_postal_code or "",
-        order.shipping_country or "",
-        order.notes or "",
+        csv_safe(_pack_items(order)),
+        csv_safe(order.payment_method or ""),
+        csv_safe(order.shipping_address or ""),
+        csv_safe(order.shipping_city or ""),
+        csv_safe(order.shipping_postal_code or ""),
+        csv_safe(order.shipping_country or ""),
+        csv_safe(order.notes or ""),
     ]
 
 
