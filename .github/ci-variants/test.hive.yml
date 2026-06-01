@@ -20,7 +20,7 @@ jobs:
     # is native so it can reach Postgres (hive's Docker has icc:false, so a
     # container job can't reach a `services:` DB; mixing container + native jobs
     # also corrupts the shared _work via root-owned files). setup-python has no
-    # Debian-13 build, so a uv-provided python3.12 sits on the runner PATH.
+    # Debian-13 build, so a uv-provided python3.13 sits on the runner PATH.
     # Rollback: restore `runs-on: ubuntu-latest` + the setup-python step.
     runs-on: [self-hosted, hive]
     steps:
@@ -28,7 +28,7 @@ jobs:
 
       - name: Set up venv + install deps
         run: |
-          python3.12 -m venv .venv
+          python3.13 -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
@@ -84,7 +84,7 @@ jobs:
 
       - name: Set up venv + install deps
         run: |
-          python3.12 -m venv .venv
+          python3.13 -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
