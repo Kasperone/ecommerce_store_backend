@@ -1,6 +1,13 @@
 from app.models.admin_audit_event import AdminAuditEvent
 from app.models.banner import BANNER_PLACEMENT_VALUES, Banner, BannerPlacement
 from app.models.base import Base
+from app.models.campaign import (
+    CAMPAIGN_AUDIENCE_VALUES,
+    CAMPAIGN_STATUS_VALUES,
+    Campaign,
+    CampaignAudience,
+    CampaignStatus,
+)
 from app.models.category import Category
 from app.models.corrective_invoice import CorrectiveInvoice, CorrectiveInvoiceCounter
 from app.models.coupon import COUPON_DISCOUNT_TYPE_VALUES, Coupon, CouponDiscountType
@@ -34,6 +41,11 @@ __all__ = [
     "BannerPlacement",
     "BANNER_PLACEMENT_VALUES",
     "Base",
+    "Campaign",
+    "CampaignAudience",
+    "CampaignStatus",
+    "CAMPAIGN_AUDIENCE_VALUES",
+    "CAMPAIGN_STATUS_VALUES",
     "User",
     "Category",
     "CorrectiveInvoice",

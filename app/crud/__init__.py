@@ -1,5 +1,6 @@
 from app.crud.audit_event import audit_event
 from app.crud.banner import banner
+from app.crud.campaign import campaign
 from app.crud.category import category
 from app.crud.corrective_invoice import corrective_invoice
 from app.crud.coupon import coupon
@@ -27,6 +28,7 @@ from app.crud.warehouse import warehouse
 __all__ = [
     "user",
     "banner",
+    "campaign",
     "corrective_invoice",
     "coupon",
     "customer_note",
