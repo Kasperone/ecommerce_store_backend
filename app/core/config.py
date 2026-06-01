@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Both `SECRET_KEY` and `JWT_SECRET_KEY` are HMAC keys; OWASP guidance is
@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = True
     ENVIRONMENT: Literal["development", "staging", "production"] = "development"
+    # SQLAlchemy engine ``echo`` (logs every statement WITH bound parameter
+    # values → PII in prod logs). Decoupled from DEBUG so verbose SQL is never
+    # tied to the broad flag. ``None`` inherits DEBUG for dev convenience; set
+    # explicitly (true/false) to override.
+    SQL_ECHO: bool | None = None
     SECRET_KEY: str
 
     # Database
@@ -104,6 +109,23 @@ class Settings(BaseSettings):
     INVOICE_KOR_NUMBER_FORMAT: str = "{prefix}/{year}/{seq:05d}"
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="allow")
+
+    @property
+    def sql_echo(self) -> bool:
+        """Effective SQLAlchemy ``echo``: explicit ``SQL_ECHO`` else ``DEBUG``."""
+        return self.DEBUG if self.SQL_ECHO is None else self.SQL_ECHO
+
+    @model_validator(mode="after")
+    def _no_debug_in_production(self) -> "Settings":
+        # A prod deploy that forgets DEBUG=false would log SQL (incl. bound PII)
+        # via the engine echo and expose verbose internals. Fail loud at startup
+        # rather than leaking silently for the life of the deploy.
+        if self.ENVIRONMENT == "production" and self.DEBUG:
+            raise ValueError(
+                "DEBUG must be false when ENVIRONMENT=production "
+                "(set DEBUG=false in the production environment)."
+            )
+        return self
 
     @field_validator("SECRET_KEY", "JWT_SECRET_KEY")
     @classmethod

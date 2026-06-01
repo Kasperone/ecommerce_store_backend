@@ -61,3 +61,36 @@ def test_settings_accepts_secret_at_32_bytes_boundary():
     thirty_two = "x" * 32
     settings = _build(SECRET_KEY=thirty_two)
     assert thirty_two == settings.SECRET_KEY
+
+
+# --- SEC-001: prod/debug cross-check + decoupled SQL echo ---
+
+
+def test_production_with_debug_true_is_rejected():
+    with pytest.raises(ValidationError) as excinfo:
+        _build(ENVIRONMENT="production", DEBUG=True)
+    msg = str(excinfo.value)
+    assert "DEBUG" in msg
+    assert "production" in msg
+
+
+def test_production_with_debug_false_is_accepted():
+    settings = _build(ENVIRONMENT="production", DEBUG=False)
+    assert settings.ENVIRONMENT == "production"
+    assert settings.DEBUG is False
+
+
+def test_development_with_debug_true_is_accepted():
+    settings = _build(ENVIRONMENT="development", DEBUG=True)
+    assert settings.DEBUG is True
+
+
+def test_sql_echo_inherits_debug_when_unset():
+    assert _build(DEBUG=True).sql_echo is True
+    assert _build(DEBUG=False).sql_echo is False
+
+
+def test_sql_echo_explicit_overrides_debug():
+    # Decoupled: SQL echo can be forced off even with DEBUG on (and vice-versa).
+    assert _build(DEBUG=True, SQL_ECHO=False).sql_echo is False
+    assert _build(ENVIRONMENT="development", DEBUG=False, SQL_ECHO=True).sql_echo is True
