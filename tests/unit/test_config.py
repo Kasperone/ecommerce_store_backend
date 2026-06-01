@@ -94,3 +94,29 @@ def test_sql_echo_explicit_overrides_debug():
     # Decoupled: SQL echo can be forced off even with DEBUG on (and vice-versa).
     assert _build(DEBUG=True, SQL_ECHO=False).sql_echo is False
     assert _build(ENVIRONMENT="development", DEBUG=False, SQL_ECHO=True).sql_echo is True
+
+
+# --- SEC-005: prod + memory:// rate-limit storage warning ---
+
+
+def test_production_with_memory_rate_limit_warns(caplog):
+    # Per-process memory:// buckets don't hold across multiple workers in prod.
+    with caplog.at_level("WARNING"):
+        _build(ENVIRONMENT="production", DEBUG=False, RATE_LIMIT_STORAGE_URL="memory://")
+    assert any("memory://" in r.message for r in caplog.records)
+
+
+def test_production_with_redis_rate_limit_does_not_warn(caplog):
+    with caplog.at_level("WARNING"):
+        _build(
+            ENVIRONMENT="production",
+            DEBUG=False,
+            RATE_LIMIT_STORAGE_URL="redis://localhost:6379/0",
+        )
+    assert not any("memory://" in r.message for r in caplog.records)
+
+
+def test_development_with_memory_rate_limit_does_not_warn(caplog):
+    with caplog.at_level("WARNING"):
+        _build(ENVIRONMENT="development", RATE_LIMIT_STORAGE_URL="memory://")
+    assert not any("memory://" in r.message for r in caplog.records)

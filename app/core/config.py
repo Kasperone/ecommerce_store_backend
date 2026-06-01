@@ -1,7 +1,10 @@
+import logging
 from typing import Literal
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 # Both `SECRET_KEY` and `JWT_SECRET_KEY` are HMAC keys; OWASP guidance is
 # >= 256 bits (32 bytes) of entropy. Enforced at startup so a misconfigured
@@ -124,6 +127,16 @@ class Settings(BaseSettings):
             raise ValueError(
                 "DEBUG must be false when ENVIRONMENT=production "
                 "(set DEBUG=false in the production environment)."
+            )
+        # SEC-005: memory:// rate-limit buckets are per-process, so with >1
+        # uvicorn worker each keeps its own counters and the effective limit is
+        # N x configured (login/reset/refresh throttles materially weaker than
+        # they read). Warn rather than raise — a single-worker prod is valid.
+        if self.ENVIRONMENT == "production" and self.RATE_LIMIT_STORAGE_URL.startswith("memory://"):
+            logger.warning(
+                "RATE_LIMIT_STORAGE_URL is memory:// in production — rate limits "
+                "are per-process and will not hold across multiple uvicorn workers. "
+                "Set a redis:// URL for a multi-worker deploy."
             )
         return self
 
