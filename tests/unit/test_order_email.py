@@ -78,6 +78,15 @@ def _stub_render(monkeypatch):
     monkeypatch.setattr(
         order_email, "render_corrective_invoice_pdf", lambda *a, **k: b"%PDF-kor-stub"
     )
+
+    # The store identity is now resolved from the DB-backed ``store_config``
+    # singleton (``StoreIdentity.from_store_config``); these composition tests
+    # use a dummy session, so stub the classmethod to a fixed identity (its own
+    # config-vs-env fallback is covered in ``test_store_identity.py``).
+    def _stub_identity(db, settings) -> order_email.StoreIdentity:
+        return order_email.StoreIdentity(name="Test Store")
+
+    monkeypatch.setattr(order_email.StoreIdentity, "from_store_config", _stub_identity)
     # The refunded event composition reads the KOR registry via
     # ``crud_corrective.get_by_refund_id``; stub it out to a transient KOR-shaped
     # object so the test doesn't need a DB row.

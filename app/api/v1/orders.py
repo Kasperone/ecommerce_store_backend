@@ -238,7 +238,7 @@ async def download_order_invoice(
     pdf = invoice_service.render_invoice_pdf(
         db,
         order,
-        store=invoice_service.StoreIdentity.from_settings(settings),
+        store=invoice_service.StoreIdentity.from_store_config(db, settings),
         lang=lang,
     )
     issued = crud_invoice.get_by_order_id(db, order.id)
