@@ -349,5 +349,20 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         db.add(user)
         return user
 
+    def count_active_admins(self, db: Session, *, exclude_id: int | None = None) -> int:
+        """Number of active ADMIN-role accounts, optionally excluding one user.
+
+        Backs the staff "last active admin" guard: the route counts the *other*
+        active admins before a demote/deactivate to refuse leaving the store with
+        zero admins able to log in.
+        """
+        query = db.query(User).filter(
+            User.role == UserRole.ADMIN,
+            User.is_active.is_(True),
+        )
+        if exclude_id is not None:
+            query = query.filter(User.id != exclude_id)
+        return query.count()
+
 
 user = CRUDUser(User)

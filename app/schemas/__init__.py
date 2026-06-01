@@ -59,6 +59,11 @@ from app.schemas.report import (
     TopProductRow,
     TopProductsReport,
 )
+from app.schemas.staff import (
+    StaffListResponse,
+    StaffResponse,
+    StaffUpdate,
+)
 from app.schemas.user import (
     UserBase,
     UserCreate,
@@ -125,6 +130,10 @@ __all__ = [
     "CategoryRevenueReport",
     "RefundSummaryRow",
     "RefundSummary",
+    # Staff
+    "StaffResponse",
+    "StaffUpdate",
+    "StaffListResponse",
     # Auth
     "Token",
     "TokenData",
