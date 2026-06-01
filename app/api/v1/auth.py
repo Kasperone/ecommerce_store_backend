@@ -38,6 +38,7 @@ from app.schemas.auth import (
     PasswordChange,
     PasswordReset,
     PasswordResetConfirm,
+    SessionResponse,
     Token,
 )
 from app.schemas.user import UserCreate, UserResponse, UserUpdate
@@ -391,6 +392,71 @@ async def logout_all(
     db.commit()
     _clear_refresh_cookie(response)
     return {"message": "Signed out of all sessions."}
+
+
+@router.get("/sessions", response_model=list[SessionResponse])
+async def list_sessions(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+    refresh_cookie: str | None = Cookie(default=None, alias=REFRESH_COOKIE_NAME),
+):
+    """List the caller's active login sessions (live ``refresh_tokens`` rows).
+
+    Only the authenticated user's sessions are returned, newest-first, and
+    only those that are neither revoked nor expired. The session whose ``jti``
+    matches the caller's refresh cookie is flagged ``current=True``; a
+    missing or invalid cookie means no row is current.
+    """
+    current_jti: str | None = None
+    if refresh_cookie:
+        try:
+            current_jti = decode_token(refresh_cookie, expected_type="refresh").jti
+        except PyJWTError:
+            current_jti = None
+
+    rows = crud_refresh_token.list_active_for_user(db, user_id=current_user.id)
+    return [
+        SessionResponse(
+            id=row.id,
+            created_at=row.created_at,
+            created_ip=row.created_ip,
+            user_agent=row.user_agent,
+            current=(current_jti is not None and row.jti == current_jti),
+            expires_at=row.expires_at,
+        )
+        for row in rows
+    ]
+
+
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_session(
+    session_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Revoke one of the caller's active sessions by id.
+
+    Owner-gated: a row that belongs to another user, an unknown id, or a row
+    that is already revoked/expired (i.e. not an active session) all return
+    404 — never 403 — so the endpoint can't be used to enumerate session ids.
+
+    Revoking the *current* session is allowed and not special-cased: the next
+    /refresh will fail and the client logs out. This does NOT clear the
+    refresh cookie (that is the client's /logout responsibility).
+    """
+    row = crud_refresh_token.get(db, id=session_id)
+    not_found = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    if (
+        row is None
+        or row.user_id != current_user.id
+        or crud_refresh_token.is_revoked(row)
+        or crud_refresh_token.is_expired(row)
+    ):
+        raise not_found
+
+    crud_refresh_token.revoke(db, row=row)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/verify-email", status_code=status.HTTP_200_OK)
