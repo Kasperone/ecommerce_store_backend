@@ -80,6 +80,7 @@ from app.api.v1 import (  # noqa: E402
     admin_reports,
     admin_reviews,
     admin_shipping,
+    admin_staff,
     admin_tags,
     admin_warehouses,
     auth,
@@ -117,6 +118,7 @@ app.include_router(admin_reports.router, prefix="/api/v1/admin/reports", tags=["
 app.include_router(admin_reviews.router, prefix="/api/v1/admin/reviews", tags=["Admin Reviews"])
 app.include_router(admin_tags.router, prefix="/api/v1/admin/tags", tags=["Admin Tags"])
 app.include_router(admin_coupons.router, prefix="/api/v1/admin/coupons", tags=["Admin Coupons"])
+app.include_router(admin_staff.router, prefix="/api/v1/admin/staff", tags=["Admin Staff"])
 app.include_router(
     admin_warehouses.router, prefix="/api/v1/admin/warehouses", tags=["Admin Warehouses"]
 )
