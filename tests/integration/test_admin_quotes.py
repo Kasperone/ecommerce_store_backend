@@ -471,6 +471,11 @@ async def test_convert_happy_path(
     db_session.refresh(quote)
     assert quote.converted_order_id == body["id"]
     assert quote.status == "accepted"
+    # The QuoteResponse exposes the marker so the admin UI can show the
+    # "view converted order" link + hide the convert action on reload.
+    detail = await client.get(f"/api/v1/admin/quotes/{qid}", headers=_headers(admin))
+    assert detail.status_code == 200
+    assert detail.json()["converted_order_id"] == body["id"]
 
 
 async def test_convert_404(client, user_factory):
