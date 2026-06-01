@@ -19,6 +19,8 @@ import io
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from app.services._csv_safe import csv_safe
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -55,15 +57,17 @@ def _pack_warehouses(row: InventoryExportRow) -> str:
 
 
 def _row(row: InventoryExportRow) -> list[str]:
+    # Catalog-controlled free-text cells (name/sku/warehouse codes) go through
+    # ``csv_safe``; numeric/status/bool cells are server-derived and left as-is.
     return [
         str(row.product_id),
-        row.name,
-        row.sku or "",
+        csv_safe(row.name),
+        csv_safe(row.sku or ""),
         str(row.stock),
         "" if row.low_stock_threshold is None else str(row.low_stock_threshold),
         row.status,
         "true" if row.allow_backorder else "false",
-        _pack_warehouses(row),
+        csv_safe(_pack_warehouses(row)),
     ]
 
 

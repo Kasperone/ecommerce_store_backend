@@ -41,6 +41,23 @@ def test_row_packs_warehouses_and_fields():
     assert r["warehouses"] == "MAIN: 6; EU-1: 4"
 
 
+def test_formula_injection_in_name_is_neutralized():
+    # A product name starting with '=' must be quoted (SEC-008 / CWE-1236).
+    row = InventoryExportRow(
+        product_id=1,
+        name="=HYPERLINK(1)",
+        sku="=SKU",
+        stock=1,
+        low_stock_threshold=None,
+        status="in_stock",
+        allow_backorder=False,
+        warehouses=[("MAIN", 1)],
+    )
+    r = _parse(build_inventory_csv([row]))[0]
+    assert r["name"] == "'=HYPERLINK(1)"
+    assert r["sku"] == "'=SKU"
+
+
 def test_none_sku_and_threshold_render_empty():
     row = InventoryExportRow(
         product_id=1,
