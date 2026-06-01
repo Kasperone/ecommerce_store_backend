@@ -1,4 +1,5 @@
 from app.models.admin_audit_event import AdminAuditEvent
+from app.models.banner import BANNER_PLACEMENT_VALUES, Banner, BannerPlacement
 from app.models.base import Base
 from app.models.category import Category
 from app.models.corrective_invoice import CorrectiveInvoice, CorrectiveInvoiceCounter
@@ -29,6 +30,9 @@ from app.models.warehouse import StockLevel, Warehouse
 
 __all__ = [
     "AdminAuditEvent",
+    "Banner",
+    "BannerPlacement",
+    "BANNER_PLACEMENT_VALUES",
     "Base",
     "User",
     "Category",
