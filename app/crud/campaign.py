@@ -1,16 +1,20 @@
-"""Campaign CRUD — admin-managed marketing email campaigns (management only).
+"""Campaign CRUD — admin-managed marketing email campaigns.
 
 Mirrors ``CRUDCoupon``: no commit anywhere (the route owns the transaction so the
-mutation and its audit row land together). Sending the campaign / stamping
-``sent_at`` is out of scope and lives in the future send layer — the admin CRUD
-never sets ``sent_at``.
+mutation and its audit row land together). The send layer (``POST
+/admin/campaigns/{id}/send``) lives in the route — this module only provides the
+audience-resolution + ``mark_sent`` helpers it leans on; neither commits.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from sqlalchemy.orm import Session
 
 from app.models.campaign import Campaign
+from app.models.company import Company
+from app.models.user import User, UserRole
 from app.schemas.campaign import CampaignCreate, CampaignUpdate
 
 
@@ -91,6 +95,40 @@ class CRUDCampaign:
 
     def delete(self, db: Session, *, campaign: Campaign) -> None:
         db.delete(campaign)
+
+    def resolve_recipient_emails(self, db: Session, *, audience: str) -> list[str]:
+        """Resolve a campaign ``audience`` to a list of recipient email addresses.
+
+        - ``all`` → every ``User`` with a non-empty email.
+        - ``customers`` → users whose ``role`` is ``CUSTOMER`` (non-empty email).
+        - ``b2b`` → distinct, non-null ``companies.email``.
+
+        Empty / NULL emails are filtered out so the send loop never hands a blank
+        address to the transport.
+        """
+        if audience == "b2b":
+            rows = (
+                db.query(Company.email)
+                .filter(Company.email.isnot(None), Company.email != "")
+                .distinct()
+                .all()
+            )
+            return [email for (email,) in rows if email]
+
+        query = db.query(User.email).filter(User.email.isnot(None), User.email != "")
+        if audience == "customers":
+            query = query.filter(User.role == UserRole.CUSTOMER)
+        return [email for (email,) in query.all() if email]
+
+    def mark_sent(self, db: Session, *, campaign: Campaign) -> Campaign:
+        """Flip a campaign to ``sent`` and stamp ``sent_at`` (naive UTC).
+
+        No commit — the route owns the transaction so the status flip and its
+        audit row land together (mirrors the rest of this module)."""
+        campaign.status = "sent"
+        campaign.sent_at = datetime.now(UTC).replace(tzinfo=None)
+        db.add(campaign)
+        return campaign
 
 
 campaign = CRUDCampaign()

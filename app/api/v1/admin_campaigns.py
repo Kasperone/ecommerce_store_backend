@@ -1,9 +1,13 @@
-"""Admin campaigns API — define/list/edit/delete marketing email campaigns.
+"""Admin campaigns API — define/list/edit/delete + send marketing email campaigns.
 
-All routes are admin-gated and audited (resource_type ``campaign``). This is
-**management metadata** — there is no send endpoint here and ``sent_at`` is
-read-only; actually delivering the email / executing audience segmentation is a
-separate, deferred concern.
+All routes are admin-gated and audited (resource_type ``campaign``). The
+CRUD routes manage **metadata**; the ``POST /{id}/send`` route activates a
+campaign — it resolves the audience and dispatches the email best-effort via
+Resend, then flips the campaign to ``sent`` and stamps ``sent_at`` (which is
+read-only everywhere else — clients can't set it through create/update).
+
+OUTWARD-FACING: ``send`` dispatches real email. Tests mock
+``app.core.email.send_email`` — no live sends in pytest.
 
 Validation: ``audience`` / ``status`` are constrained to their allowed sets by
 the schema literals; ``scheduled_at`` is required when ``status`` is
@@ -14,11 +18,13 @@ state, because a partial update may set ``status=scheduled`` without resending
 convention).
 """
 
+import logging
 from math import ceil
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from app.core import email as email_mod
 from app.core.dependencies import get_current_admin, get_db
 from app.crud import campaign as crud_campaign
 from app.models.user import User
@@ -32,6 +38,8 @@ from app.schemas.campaign import (
     validate_schedule,
 )
 from app.services.audit import AuditWriter, get_audit_writer
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -123,6 +131,68 @@ async def update_campaign(
         ) from exc
 
     crud_campaign.update(db, campaign=campaign, obj_in=payload)
+    audit.record_update(resource_type="campaign", obj=campaign)
+    db.commit()
+    db.refresh(campaign)
+    return campaign
+
+
+@router.post("/{campaign_id}/send", response_model=CampaignResponse)
+async def send_campaign(
+    campaign_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
+):
+    """Send a campaign to its resolved audience, then mark it ``sent``.
+
+    Only ``draft`` / ``scheduled`` campaigns may send (409 if already ``sent``).
+    The audience (``all`` / ``customers`` / ``b2b``) is resolved to recipient
+    emails, then each is mailed **best-effort** inside a per-recipient
+    try/except — one bad address never aborts the run (mirrors the order-email
+    best-effort posture); failures are logged. On completion the campaign flips
+    to ``sent`` with ``sent_at`` stamped, alongside an audit row, in one
+    transaction.
+
+    OUTWARD-FACING: this dispatches real email via Resend. Tests mock
+    ``app.core.email.send_email`` — no live sends in pytest.
+    """
+    campaign = crud_campaign.get(db, campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found")
+    if campaign.status == "sent":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="campaign already sent")
+
+    recipients = crud_campaign.resolve_recipient_emails(db, audience=campaign.audience)
+    sent_ok = 0
+    failed = 0
+    for recipient in recipients:
+        try:
+            email_mod.send_email(
+                email_to=recipient,
+                subject=campaign.subject,
+                html_content=campaign.body or "",
+            )
+            sent_ok += 1
+        except Exception:
+            failed += 1
+            logger.warning(
+                "Campaign send failed: campaign_id=%s recipient=%s",
+                campaign.id,
+                recipient,
+                exc_info=True,
+            )
+
+    logger.info(
+        "Campaign %s sent: audience=%s recipients=%s ok=%s failed=%s",
+        campaign.id,
+        campaign.audience,
+        len(recipients),
+        sent_ok,
+        failed,
+    )
+
+    crud_campaign.mark_sent(db, campaign=campaign)
     audit.record_update(resource_type="campaign", obj=campaign)
     db.commit()
     db.refresh(campaign)
