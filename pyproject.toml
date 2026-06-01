@@ -76,9 +76,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "pytest==8.3.3",
-  "pytest-asyncio==0.24.0",
-  "pytest-cov==5.0.0",
+  "pytest==9.0.3",
+  "pytest-asyncio==1.4.0",
+  "pytest-cov==7.1.0",
   "factory-boy==3.3.1",
   "faker==30.8.1",
   "freezegun==1.5.1",
@@ -170,6 +170,9 @@ reportPrivateUsage = "none"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# pytest-asyncio 1.x requires this be set explicitly (else a deprecation warning).
+# "function" preserves the historical default: one event loop per test function.
+asyncio_default_fixture_loop_scope = "function"
 python_files = "test_*.py"
 addopts = "-ra --strict-markers --cov=app --cov-report=term-missing --cov-report=xml"
 markers = [
