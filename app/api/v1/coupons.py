@@ -35,8 +35,9 @@ async def validate_coupon(
 
     200 with the computed discount when eligible; 400 with the failure reason
     (expired / inactive / min-order-not-met / currency-mismatch / usage-exhausted
-    / not-found) otherwise. No state is mutated — ``used_count`` is bumped only at
-    order create.
+    / per-user-exhausted / not-found) otherwise. No state is mutated —
+    ``used_count`` is bumped only at order create. The authenticated user is
+    passed through so the preview reflects the per-user cap.
     """
     try:
         coupon, discount = crud_coupon.validate_for_redemption(
@@ -44,6 +45,7 @@ async def validate_coupon(
             code=payload.code,
             subtotal=payload.subtotal,
             currency=payload.currency,
+            user_id=current_user.id,
         )
     except CouponRedemptionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.message) from exc

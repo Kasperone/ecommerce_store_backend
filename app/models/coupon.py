@@ -1,11 +1,12 @@
 """Coupon model — admin-defined discount codes.
 
-This is **management metadata only**: a coupon describes a discount (percent or a
-fixed amount in a currency), an optional validity window, an optional minimum
-order, and a usage cap. **Redeeming a coupon at checkout / applying it to an
-order total is deliberately NOT modelled here** — that touches the shared
-order-total contract and is handled separately. ``used_count`` is a plain counter
-the redemption layer will bump later; the admin CRUD only reads it.
+A coupon describes a discount (percent or a fixed amount in a currency), an
+optional validity window, an optional minimum order, a global usage cap
+(``max_uses``) and an optional per-customer cap (``per_user_limit``). The
+discount math / applying it to an order total lives in the redemption layer
+(``crud/coupon.py`` + ``crud/order.py``), not here. ``used_count`` is the global
+counter (bumped atomically at redeem); ``CouponRedemption`` rows (one per
+coupon+user+order) back the per-user cap.
 
 ``discount_type`` follows the ``RefundReason`` / ``InventoryMovementReason``
 convention: a ``str``-enum stored as the lowercase value in a plain
@@ -23,6 +24,8 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     Float,
+    ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -71,6 +74,10 @@ class Coupon(BaseModel):
         ),
         CheckConstraint("value > 0", name="ck_coupons_value_positive"),
         CheckConstraint("used_count >= 0", name="ck_coupons_used_count_non_negative"),
+        CheckConstraint(
+            "per_user_limit IS NULL OR per_user_limit > 0",
+            name="ck_coupons_per_user_limit_positive",
+        ),
     )
 
     code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
@@ -79,7 +86,12 @@ class Coupon(BaseModel):
     value: Mapped[float] = mapped_column(Float)
     currency: Mapped[str | None] = mapped_column(String(3))
     min_order_amount: Mapped[float | None] = mapped_column(Float)
+    # Global cap across all customers (NULL = unlimited).
     max_uses: Mapped[int | None] = mapped_column(Integer)
+    # Per-customer cap (NULL = unlimited per user). Independent of max_uses, so a
+    # coupon can be e.g. "1000 total uses, max 1 per customer" or any subset. The
+    # check counts rows in ``coupon_redemptions`` for (coupon, user).
+    per_user_limit: Mapped[int | None] = mapped_column(Integer)
     used_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     starts_at: Mapped[datetime | None] = mapped_column(DateTime)
     ends_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -87,3 +99,32 @@ class Coupon(BaseModel):
 
     def __repr__(self) -> str:
         return f"<Coupon {self.code} ({self.discount_type}={self.value})>"
+
+
+class CouponRedemption(BaseModel):
+    """One successful redemption of a coupon by a user on an order.
+
+    Backs the per-user cap (``Coupon.per_user_limit``): the count of rows for a
+    (coupon_id, user_id) pair is the number of times that customer has used the
+    code. Written in the same unit of work as the order, so a rolled-back order
+    never records a redemption. ``order_id`` is unique — one order redeems at
+    most one coupon, and re-running settlement never double-records.
+    """
+
+    __tablename__ = "coupon_redemptions"
+    __table_args__ = (Index("ix_coupon_redemptions_coupon_user", "coupon_id", "user_id"),)
+
+    coupon_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("coupons.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    order_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("orders.id", ondelete="CASCADE"), unique=True
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<CouponRedemption coupon={self.coupon_id} user={self.user_id} order={self.order_id}>"
+        )

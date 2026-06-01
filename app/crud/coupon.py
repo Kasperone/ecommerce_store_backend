@@ -26,10 +26,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from app.models.coupon import Coupon
+from app.models.coupon import Coupon, CouponRedemption
 from app.schemas.coupon import CouponCreate, CouponUpdate
 
 
@@ -37,8 +37,9 @@ class CouponRedemptionError(Exception):
     """A coupon failed an eligibility check at validate/redeem time.
 
     ``code`` is a stable machine-readable reason (``not_found``, ``inactive``,
-    ``not_started``, ``expired``, ``usage_exhausted``, ``currency_mismatch``,
-    ``min_order_not_met``); ``message`` is the human string surfaced to the
+    ``not_started``, ``expired``, ``usage_exhausted``, ``per_user_exhausted``,
+    ``currency_mismatch``, ``min_order_not_met``); ``message`` is the human
+    string surfaced to the
     customer. The route maps every variant to the same HTTP status — the
     distinction is for clients/tests, not for status codes.
     """
@@ -111,6 +112,7 @@ class CRUDCoupon:
             currency=obj_in.currency,
             min_order_amount=obj_in.min_order_amount,
             max_uses=obj_in.max_uses,
+            per_user_limit=obj_in.per_user_limit,
             starts_at=obj_in.starts_at,
             ends_at=obj_in.ends_at,
             is_active=obj_in.is_active,
@@ -133,6 +135,17 @@ class CRUDCoupon:
     def delete(self, db: Session, *, coupon: Coupon) -> None:
         db.delete(coupon)
 
+    def redemption_count_for_user(self, db: Session, *, coupon_id: int, user_id: int) -> int:
+        """How many times ``user_id`` has already redeemed coupon ``coupon_id``."""
+        return db.execute(
+            select(func.count())
+            .select_from(CouponRedemption)
+            .where(
+                CouponRedemption.coupon_id == coupon_id,
+                CouponRedemption.user_id == user_id,
+            )
+        ).scalar_one()
+
     def validate_for_redemption(
         self,
         db: Session,
@@ -140,16 +153,20 @@ class CRUDCoupon:
         code: str,
         subtotal: float,
         currency: str,
+        user_id: int | None = None,
         now: datetime | None = None,
     ) -> tuple[Coupon, float]:
         """Validate a coupon for use against ``subtotal`` in ``currency``.
 
         Returns ``(coupon, discount)`` when every eligibility rule passes, else
         raises ``CouponRedemptionError`` with a machine ``code``. Checks, in order:
-        existence → active → started → not expired → usage cap → currency match
-        (fixed coupons only) → minimum order. The ``now`` override keeps the
-        window checks testable without freezegun; it defaults to naive UTC to match
-        the (naive) ``starts_at`` / ``ends_at`` columns.
+        existence → active → started → not expired → usage cap → per-user cap →
+        currency match (fixed coupons only) → minimum order. The per-user cap is
+        only checked when ``user_id`` is given (anonymous previews skip it; the
+        order-create path always passes it and re-validates server-side). The
+        ``now`` override keeps the window checks testable without freezegun; it
+        defaults to naive UTC to match the (naive) ``starts_at`` / ``ends_at``
+        columns.
         """
         coupon = self.get_by_code(db, code=code)
         if coupon is None:
@@ -166,6 +183,17 @@ class CRUDCoupon:
         if coupon.max_uses is not None and coupon.used_count >= coupon.max_uses:
             raise CouponRedemptionError(
                 "usage_exhausted", "This coupon has reached its usage limit."
+            )
+
+        if (
+            coupon.per_user_limit is not None
+            and user_id is not None
+            and self.redemption_count_for_user(db, coupon_id=coupon.id, user_id=user_id)
+            >= coupon.per_user_limit
+        ):
+            raise CouponRedemptionError(
+                "per_user_exhausted",
+                "You have already used this coupon the maximum number of times.",
             )
 
         if coupon.discount_type == "fixed" and coupon.currency != currency:
@@ -208,6 +236,20 @@ class CRUDCoupon:
         # Keep the in-session instance consistent with the DB-side increment so a
         # subsequent read of ``coupon.used_count`` in the same unit of work is correct.
         db.refresh(coupon)
+
+    def record_redemption(
+        self, db: Session, *, coupon_id: int, user_id: int, order_id: int
+    ) -> CouponRedemption:
+        """Record a (coupon, user, order) redemption — backs the per-user cap.
+
+        Called after the order is flushed (so ``order_id`` exists), in the same
+        unit of work as ``redeem``; a rolled-back order never records a row. The
+        caller owns the commit.
+        """
+        row = CouponRedemption(coupon_id=coupon_id, user_id=user_id, order_id=order_id)
+        db.add(row)
+        db.flush()
+        return row
 
 
 coupon = CRUDCoupon()
