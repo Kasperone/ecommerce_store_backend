@@ -10,6 +10,7 @@ from app.core.dependencies import get_current_active_user, get_current_admin, ge
 from app.crud import invoice as crud_invoice
 from app.crud import order as crud_order
 from app.crud import refund as crud_refund
+from app.crud.coupon import CouponRedemptionError
 from app.crud.order import (
     InsufficientStockError,
     ProductUnavailableError,
@@ -92,6 +93,11 @@ async def create_order(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
+        ) from exc
+    except CouponRedemptionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=exc.message,
         ) from exc
 
     db.commit()

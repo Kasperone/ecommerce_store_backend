@@ -113,3 +113,103 @@ def test_delete_removes_row(db_session: Session, coupon_factory):
     crud_coupon.delete(db_session, coupon=c)
     db_session.commit()
     assert db_session.get(Coupon, cid) is None
+
+
+# ---------------------------------------------------------------------------
+# Redemption: compute_discount + validate_for_redemption + redeem
+# ---------------------------------------------------------------------------
+
+from datetime import UTC, datetime, timedelta  # noqa: E402
+
+from app.crud.coupon import CouponRedemptionError, compute_discount  # noqa: E402
+
+_NOW = datetime.now(UTC).replace(tzinfo=None)
+
+
+def test_compute_discount_percent():
+    c = CouponFactory.build(discount_type="percent", value=10, currency=None)
+    assert compute_discount(c, 200.0) == 20.0
+
+
+def test_compute_discount_fixed_capped_at_subtotal():
+    c = CouponFactory.build(discount_type="fixed", value=50, currency="USD")
+    assert compute_discount(c, 30.0) == 30.0  # never below zero
+    assert compute_discount(c, 80.0) == 50.0
+
+
+def test_validate_percent_returns_coupon_and_discount(db_session, coupon_factory):
+    coupon_factory(code="PCT20", discount_type="percent", value=20, currency=None)
+    found, discount = crud_coupon.validate_for_redemption(
+        db_session, code="pct20", subtotal=100.0, currency="USD"
+    )
+    assert found.code == "PCT20"
+    assert discount == 20.0
+
+
+def test_validate_unknown_code_raises_not_found(db_session):
+    with pytest.raises(CouponRedemptionError) as exc:
+        crud_coupon.validate_for_redemption(db_session, code="NOPE", subtotal=100.0, currency="USD")
+    assert exc.value.code == "not_found"
+
+
+def test_validate_inactive_raises(db_session, coupon_factory):
+    coupon_factory(code="OFF", is_active=False)
+    with pytest.raises(CouponRedemptionError) as exc:
+        crud_coupon.validate_for_redemption(db_session, code="OFF", subtotal=100.0, currency="USD")
+    assert exc.value.code == "inactive"
+
+
+def test_validate_not_started_raises(db_session, coupon_factory):
+    future = _NOW + timedelta(days=1)
+    coupon_factory(code="SOON", starts_at=future)
+    with pytest.raises(CouponRedemptionError) as exc:
+        crud_coupon.validate_for_redemption(db_session, code="SOON", subtotal=100.0, currency="USD")
+    assert exc.value.code == "not_started"
+
+
+def test_validate_expired_raises(db_session, coupon_factory):
+    past = _NOW - timedelta(days=1)
+    coupon_factory(code="GONE", ends_at=past)
+    with pytest.raises(CouponRedemptionError) as exc:
+        crud_coupon.validate_for_redemption(db_session, code="GONE", subtotal=100.0, currency="USD")
+    assert exc.value.code == "expired"
+
+
+def test_validate_usage_exhausted_raises(db_session, coupon_factory):
+    coupon_factory(code="MAXED", max_uses=2, used_count=2)
+    with pytest.raises(CouponRedemptionError) as exc:
+        crud_coupon.validate_for_redemption(
+            db_session, code="MAXED", subtotal=100.0, currency="USD"
+        )
+    assert exc.value.code == "usage_exhausted"
+
+
+def test_validate_fixed_currency_mismatch_raises(db_session, coupon_factory):
+    coupon_factory(code="USDONLY", discount_type="fixed", value=10, currency="USD")
+    with pytest.raises(CouponRedemptionError) as exc:
+        crud_coupon.validate_for_redemption(
+            db_session, code="USDONLY", subtotal=100.0, currency="PLN"
+        )
+    assert exc.value.code == "currency_mismatch"
+
+
+def test_validate_min_order_not_met_raises(db_session, coupon_factory):
+    coupon_factory(code="BIG", min_order_amount=100.0)
+    with pytest.raises(CouponRedemptionError) as exc:
+        crud_coupon.validate_for_redemption(db_session, code="BIG", subtotal=50.0, currency="USD")
+    assert exc.value.code == "min_order_not_met"
+
+
+def test_redeem_increments_used_count(db_session, coupon_factory):
+    c = coupon_factory(code="USE1", max_uses=5, used_count=0)
+    crud_coupon.redeem(db_session, coupon=c)
+    db_session.commit()
+    db_session.refresh(c)
+    assert c.used_count == 1
+
+
+def test_redeem_at_cap_raises_usage_exhausted(db_session, coupon_factory):
+    c = coupon_factory(code="USE2", max_uses=1, used_count=1)
+    with pytest.raises(CouponRedemptionError) as exc:
+        crud_coupon.redeem(db_session, coupon=c)
+    assert exc.value.code == "usage_exhausted"

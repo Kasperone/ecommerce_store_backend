@@ -1,18 +1,64 @@
-"""Coupon CRUD — admin-managed discount codes (management only).
+"""Coupon CRUD — admin-managed discount codes + checkout redemption.
 
-Mirrors ``CRUDWarehouse``: no commit anywhere (the route owns the transaction so
-the mutation and its audit row land together). ``code`` is matched case-insensitively
-via an uppercased comparison — the schema already uppercases on the way in, so the
-stored value is canonical, and ``get_by_code`` uppercases the lookup argument
-defensively. Redemption / ``used_count`` bumping is out of scope and lives elsewhere.
+The admin-management half mirrors ``CRUDWarehouse``: no commit anywhere (the route
+owns the transaction so the mutation and its audit row land together). ``code`` is
+matched case-insensitively via an uppercased comparison — the schema already
+uppercases on the way in, so the stored value is canonical, and ``get_by_code``
+uppercases the lookup argument defensively.
+
+The redemption half (added for coupon-at-checkout) lives here too so the discount
+math and the eligibility rules sit next to the model they read:
+
+- ``compute_discount`` — pure: percent → ``subtotal * value / 100``; fixed →
+  ``min(value, subtotal)`` (a coupon never discounts below zero). Rounded to 2dp.
+- ``validate_for_redemption`` — runs every eligibility check (active / window /
+  usage cap / currency match / min-order) against a given subtotal + currency and
+  returns ``(coupon, discount)`` or raises ``CouponRedemptionError`` carrying a
+  machine ``code`` + human message. Used by both the preview endpoint and the
+  order-create path (single source of truth — the preview can never diverge from
+  what checkout actually applies).
+- ``redeem`` — atomically bumps ``used_count`` with a guarded UPDATE so two
+  concurrent redemptions can't exceed ``max_uses`` (the validate-then-increment
+  window is otherwise racy). Caller owns the commit.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.models.coupon import Coupon
 from app.schemas.coupon import CouponCreate, CouponUpdate
+
+
+class CouponRedemptionError(Exception):
+    """A coupon failed an eligibility check at validate/redeem time.
+
+    ``code`` is a stable machine-readable reason (``not_found``, ``inactive``,
+    ``not_started``, ``expired``, ``usage_exhausted``, ``currency_mismatch``,
+    ``min_order_not_met``); ``message`` is the human string surfaced to the
+    customer. The route maps every variant to the same HTTP status — the
+    distinction is for clients/tests, not for status codes.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
+        super().__init__(message)
+
+
+def compute_discount(coupon: Coupon, subtotal: float) -> float:
+    """Discount amount a coupon yields against ``subtotal`` (goods only).
+
+    Percent coupons take ``value`` percent of the subtotal; fixed coupons take
+    ``value`` units of their currency but never more than the subtotal (a coupon
+    can zero an order but never make the total negative). Rounded to 2 decimals.
+    """
+    if coupon.discount_type == "percent":
+        return round(subtotal * coupon.value / 100, 2)
+    return round(min(coupon.value, subtotal), 2)
 
 
 class CRUDCoupon:
@@ -86,6 +132,82 @@ class CRUDCoupon:
 
     def delete(self, db: Session, *, coupon: Coupon) -> None:
         db.delete(coupon)
+
+    def validate_for_redemption(
+        self,
+        db: Session,
+        *,
+        code: str,
+        subtotal: float,
+        currency: str,
+        now: datetime | None = None,
+    ) -> tuple[Coupon, float]:
+        """Validate a coupon for use against ``subtotal`` in ``currency``.
+
+        Returns ``(coupon, discount)`` when every eligibility rule passes, else
+        raises ``CouponRedemptionError`` with a machine ``code``. Checks, in order:
+        existence → active → started → not expired → usage cap → currency match
+        (fixed coupons only) → minimum order. The ``now`` override keeps the
+        window checks testable without freezegun; it defaults to naive UTC to match
+        the (naive) ``starts_at`` / ``ends_at`` columns.
+        """
+        coupon = self.get_by_code(db, code=code)
+        if coupon is None:
+            raise CouponRedemptionError("not_found", "This coupon code is not valid.")
+        if not coupon.is_active:
+            raise CouponRedemptionError("inactive", "This coupon is no longer active.")
+
+        moment = now if now is not None else datetime.now(UTC).replace(tzinfo=None)
+        if coupon.starts_at is not None and moment < coupon.starts_at:
+            raise CouponRedemptionError("not_started", "This coupon is not valid yet.")
+        if coupon.ends_at is not None and moment >= coupon.ends_at:
+            raise CouponRedemptionError("expired", "This coupon has expired.")
+
+        if coupon.max_uses is not None and coupon.used_count >= coupon.max_uses:
+            raise CouponRedemptionError(
+                "usage_exhausted", "This coupon has reached its usage limit."
+            )
+
+        if coupon.discount_type == "fixed" and coupon.currency != currency:
+            raise CouponRedemptionError(
+                "currency_mismatch",
+                f"This coupon can only be used for {coupon.currency} orders.",
+            )
+
+        if coupon.min_order_amount is not None and subtotal < coupon.min_order_amount:
+            raise CouponRedemptionError(
+                "min_order_not_met",
+                f"This coupon requires a minimum order of {coupon.min_order_amount:.2f}"
+                f" {currency}.",
+            )
+
+        return coupon, compute_discount(coupon, subtotal)
+
+    def redeem(self, db: Session, *, coupon: Coupon) -> None:
+        """Atomically bump ``used_count`` (caller owns the commit).
+
+        Uses a guarded UPDATE — ``... WHERE id = :id AND (max_uses IS NULL OR
+        used_count < max_uses)`` — so two concurrent checkouts can't push the
+        counter past ``max_uses`` even though both passed the cap check in
+        ``validate_for_redemption``. A zero rowcount means another transaction
+        took the last use first → surfaces as ``usage_exhausted`` (same reason
+        code as the upfront check, so the caller maps it identically).
+        """
+        result = db.execute(
+            update(Coupon)
+            .where(
+                Coupon.id == coupon.id,
+                (Coupon.max_uses.is_(None)) | (Coupon.used_count < Coupon.max_uses),
+            )
+            .values(used_count=Coupon.used_count + 1)
+        )
+        if result.rowcount == 0:  # pyright: ignore[reportAttributeAccessIssue] -- DML execute returns a CursorResult with rowcount
+            raise CouponRedemptionError(
+                "usage_exhausted", "This coupon has reached its usage limit."
+            )
+        # Keep the in-session instance consistent with the DB-side increment so a
+        # subsequent read of ``coupon.used_count`` in the same unit of work is correct.
+        db.refresh(coupon)
 
 
 coupon = CRUDCoupon()

@@ -133,3 +133,37 @@ class CouponListResponse(BaseSchema):
     page: int
     page_size: int
     pages: int
+
+
+class CouponValidateRequest(BaseSchema):
+    """Request body for ``POST /api/v1/coupons/validate`` (checkout preview).
+
+    ``subtotal`` is the storefront's current goods total in ``currency``; the
+    discount is always computed against the subtotal (never shipping). The code is
+    uppercased so the lookup matches the canonical stored value regardless of how
+    the customer typed it.
+    """
+
+    code: Annotated[str, Field(min_length=1, max_length=64)]
+    subtotal: float = Field(..., ge=0)
+    currency: CurrencyLiteral
+
+    @model_validator(mode="after")
+    def _normalise_code(self) -> CouponValidateRequest:
+        self.code = self.code.strip().upper()
+        if not self.code:
+            raise ValueError("code must not be blank")
+        return self
+
+
+class CouponValidateResponse(BaseSchema):
+    """Preview of a valid coupon's effect on the posted subtotal.
+
+    Advisory only — the order-create path re-validates and re-computes against the
+    server-side subtotal, so a stale preview can never let an invalid code through.
+    """
+
+    code: str
+    discount_type: CouponDiscountTypeLiteral
+    discount_amount: float
+    currency: CurrencyLiteral

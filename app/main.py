@@ -90,6 +90,7 @@ from app.api.v1 import (  # noqa: E402
     admin_warehouses,
     auth,
     categories,
+    coupons,
     orders,
     payments,
     products,
@@ -103,6 +104,7 @@ app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(products.router, prefix="/api/v1/products", tags=["Products"])
 app.include_router(categories.router, prefix="/api/v1/categories", tags=["Categories"])
 app.include_router(orders.router, prefix="/api/v1/orders", tags=["Orders"])
+app.include_router(coupons.router, prefix="/api/v1/coupons", tags=["Coupons"])
 app.include_router(payments.router, prefix="/api/v1/payments", tags=["Payments"])
 app.include_router(search.router, prefix="/api/v1/search", tags=["Search"])
 app.include_router(shipping.router, prefix="/api/v1/shipping", tags=["Shipping"])
