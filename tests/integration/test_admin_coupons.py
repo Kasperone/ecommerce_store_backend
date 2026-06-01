@@ -101,6 +101,37 @@ async def test_create_percent_writes_audit_and_uppercases(client, user_factory, 
     assert _audit_count(db_session, "create") == before + 1
 
 
+async def test_create_with_per_user_limit_round_trips(client, user_factory):
+    # SEC-003 flexible coupon: per_user_limit is settable + returned, independent
+    # of the global max_uses.
+    admin = user_factory(email="cpn-admin-pul@example.com", role=UserRole.ADMIN)
+    resp = await client.post(
+        "/api/v1/admin/coupons/",
+        json={
+            "code": "FLEX",
+            "discount_type": "percent",
+            "value": 15,
+            "max_uses": 1000,
+            "per_user_limit": 2,
+        },
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["max_uses"] == 1000
+    assert body["per_user_limit"] == 2
+
+
+async def test_create_rejects_zero_per_user_limit(client, user_factory):
+    admin = user_factory(email="cpn-admin-pul0@example.com", role=UserRole.ADMIN)
+    resp = await client.post(
+        "/api/v1/admin/coupons/",
+        json={"code": "BADLIM", "discount_type": "percent", "value": 10, "per_user_limit": 0},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 422  # ge=1 in the schema
+
+
 async def test_create_fixed_requires_currency(client, user_factory):
     admin = user_factory(email="cpn-admin2@example.com", role=UserRole.ADMIN)
     resp = await client.post(

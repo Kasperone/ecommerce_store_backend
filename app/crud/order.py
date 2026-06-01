@@ -241,7 +241,11 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         redeemed_coupon = None
         if obj_in.coupon_code:
             redeemed_coupon, discount = crud_coupon.validate_for_redemption(
-                db, code=obj_in.coupon_code, subtotal=subtotal, currency=currency
+                db,
+                code=obj_in.coupon_code,
+                subtotal=subtotal,
+                currency=currency,
+                user_id=user_id,
             )
             crud_coupon.redeem(db, coupon=redeemed_coupon)
 
@@ -270,6 +274,14 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         )
         db.add(order)
         db.flush()  # populate order.id before writing inventory movements
+
+        # Record the per-user redemption now that order.id exists (same unit of
+        # work as redeem() above, so a rolled-back order burns no use and records
+        # no redemption). Backs Coupon.per_user_limit.
+        if redeemed_coupon is not None:
+            crud_coupon.record_redemption(
+                db, coupon_id=redeemed_coupon.id, user_id=user_id, order_id=order.id
+            )
 
         # Decrement stock + append the ledger now that order.id exists; one
         # ORDER_PLACED movement per line (duplicate lines decrement cumulatively).

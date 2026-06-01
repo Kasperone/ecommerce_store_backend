@@ -27,6 +27,7 @@ class CouponFactory(SQLAlchemyModelFactory):
     currency = None
     min_order_amount = None
     max_uses = None
+    per_user_limit = None
     used_count = 0
     starts_at = None
     ends_at = None

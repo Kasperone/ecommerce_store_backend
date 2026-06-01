@@ -71,6 +71,7 @@ class CouponBase(BaseSchema):
     currency: CurrencyLiteral | None = None
     min_order_amount: float | None = Field(default=None, ge=0)
     max_uses: int | None = Field(default=None, ge=1)
+    per_user_limit: int | None = Field(default=None, ge=1)
     starts_at: datetime | None = None
     ends_at: datetime | None = None
     is_active: bool = True
@@ -106,6 +107,7 @@ class CouponUpdate(BaseSchema):
     currency: CurrencyLiteral | None = None
     min_order_amount: float | None = Field(default=None, ge=0)
     max_uses: int | None = Field(default=None, ge=1)
+    per_user_limit: int | None = Field(default=None, ge=1)
     starts_at: datetime | None = None
     ends_at: datetime | None = None
     is_active: bool | None = None

@@ -11,7 +11,12 @@ from app.models.campaign import (
 from app.models.category import Category
 from app.models.company import COMPANY_STATUS_VALUES, Company, CompanyStatus
 from app.models.corrective_invoice import CorrectiveInvoice, CorrectiveInvoiceCounter
-from app.models.coupon import COUPON_DISCOUNT_TYPE_VALUES, Coupon, CouponDiscountType
+from app.models.coupon import (
+    COUPON_DISCOUNT_TYPE_VALUES,
+    Coupon,
+    CouponDiscountType,
+    CouponRedemption,
+)
 from app.models.customer_note import CustomerNote
 from app.models.inventory_movement import InventoryMovement, InventoryMovementReason
 from app.models.invoice import Invoice, InvoiceCounter
@@ -57,6 +62,7 @@ __all__ = [
     "CorrectiveInvoiceCounter",
     "Coupon",
     "CouponDiscountType",
+    "CouponRedemption",
     "COUPON_DISCOUNT_TYPE_VALUES",
     "CustomerNote",
     "Product",
