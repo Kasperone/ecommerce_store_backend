@@ -17,6 +17,7 @@ from datetime import UTC, date, datetime, time, timedelta
 
 from sqlalchemy.orm import Query, Session, selectinload
 
+from app.crud import coupon as crud_coupon
 from app.crud.base import CRUDBase
 from app.crud.inventory import inventory as crud_inventory
 from app.crud.invoice import invoice as crud_invoice
@@ -227,7 +228,24 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             crud_shipping_rate.apply_shipping_rate(ship_rate, subtotal, weight_kg=billable_kg),
             2,
         )
-        total = round(subtotal + shipping_amount, 2)
+
+        # Coupon redemption: re-validate the posted code against the *server-side*
+        # subtotal (the storefront preview is advisory) and apply the discount to
+        # the goods subtotal only — shipping is computed from the full subtotal
+        # above and is never discounted. The discount never drives the total below
+        # the shipping amount (compute_discount caps at subtotal). ``redeem``
+        # atomically bumps used_count; both raise CouponRedemptionError, which the
+        # route maps to a 400. The increment lands in the same unit of work as the
+        # order, so a rolled-back order never burns a use.
+        discount = 0.0
+        redeemed_coupon = None
+        if obj_in.coupon_code:
+            redeemed_coupon, discount = crud_coupon.validate_for_redemption(
+                db, code=obj_in.coupon_code, subtotal=subtotal, currency=currency
+            )
+            crud_coupon.redeem(db, coupon=redeemed_coupon)
+
+        total = round(subtotal - discount + shipping_amount, 2)
 
         order = Order(
             user_id=user_id,
@@ -236,8 +254,11 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             subtotal=subtotal,
             tax=0.0,
             shipping=shipping_amount,
+            discount=discount,
             total=total,
             currency=currency,
+            coupon_id=redeemed_coupon.id if redeemed_coupon is not None else None,
+            coupon_code=redeemed_coupon.code if redeemed_coupon is not None else None,
             shipping_address=obj_in.shipping_address,
             shipping_city=obj_in.shipping_city,
             shipping_postal_code=obj_in.shipping_postal_code,

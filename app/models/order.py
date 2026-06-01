@@ -51,8 +51,21 @@ class Order(BaseModel):
     subtotal: Mapped[float] = mapped_column(Float)
     tax: Mapped[float] = mapped_column(Float, default=0)
     shipping: Mapped[float] = mapped_column(Float, default=0)
+    # Coupon discount applied to the goods subtotal (never to shipping). 0 when no
+    # coupon was redeemed. ``total == round(subtotal - discount + shipping, 2)``.
+    discount: Mapped[float] = mapped_column(Float, default=0, server_default="0")
     total: Mapped[float] = mapped_column(Float)
     currency: Mapped[str] = mapped_column(String(3), default="USD")  # USD, PLN, EUR
+
+    # Redeemed coupon (nullable — most orders carry none). ``coupon_id`` SET NULL
+    # on delete so removing a coupon definition never blocks/loses an order;
+    # ``coupon_code`` snapshots the code at redemption time so it survives the
+    # coupon row being edited or deleted (same snapshot discipline as
+    # ``shipping_method_name`` and the order_item product snapshots).
+    coupon_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("coupons.id", ondelete="SET NULL")
+    )
+    coupon_code: Mapped[str | None] = mapped_column(String(64))
 
     # Shipping address
     shipping_address: Mapped[str] = mapped_column(Text)
