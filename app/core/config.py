@@ -1,7 +1,10 @@
+import logging
 from typing import Literal
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 # Both `SECRET_KEY` and `JWT_SECRET_KEY` are HMAC keys; OWASP guidance is
 # >= 256 bits (32 bytes) of entropy. Enforced at startup so a misconfigured
@@ -17,6 +20,11 @@ class Settings(BaseSettings):
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = True
     ENVIRONMENT: Literal["development", "staging", "production"] = "development"
+    # SQLAlchemy engine ``echo`` (logs every statement WITH bound parameter
+    # values → PII in prod logs). Decoupled from DEBUG so verbose SQL is never
+    # tied to the broad flag. ``None`` inherits DEBUG for dev convenience; set
+    # explicitly (true/false) to override.
+    SQL_ECHO: bool | None = None
     SECRET_KEY: str
 
     # Database
@@ -104,6 +112,33 @@ class Settings(BaseSettings):
     INVOICE_KOR_NUMBER_FORMAT: str = "{prefix}/{year}/{seq:05d}"
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="allow")
+
+    @property
+    def sql_echo(self) -> bool:
+        """Effective SQLAlchemy ``echo``: explicit ``SQL_ECHO`` else ``DEBUG``."""
+        return self.DEBUG if self.SQL_ECHO is None else self.SQL_ECHO
+
+    @model_validator(mode="after")
+    def _no_debug_in_production(self) -> "Settings":
+        # A prod deploy that forgets DEBUG=false would log SQL (incl. bound PII)
+        # via the engine echo and expose verbose internals. Fail loud at startup
+        # rather than leaking silently for the life of the deploy.
+        if self.ENVIRONMENT == "production" and self.DEBUG:
+            raise ValueError(
+                "DEBUG must be false when ENVIRONMENT=production "
+                "(set DEBUG=false in the production environment)."
+            )
+        # SEC-005: memory:// rate-limit buckets are per-process, so with >1
+        # uvicorn worker each keeps its own counters and the effective limit is
+        # N x configured (login/reset/refresh throttles materially weaker than
+        # they read). Warn rather than raise — a single-worker prod is valid.
+        if self.ENVIRONMENT == "production" and self.RATE_LIMIT_STORAGE_URL.startswith("memory://"):
+            logger.warning(
+                "RATE_LIMIT_STORAGE_URL is memory:// in production — rate limits "
+                "are per-process and will not hold across multiple uvicorn workers. "
+                "Set a redis:// URL for a multi-worker deploy."
+            )
+        return self
 
     @field_validator("SECRET_KEY", "JWT_SECRET_KEY")
     @classmethod

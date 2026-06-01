@@ -156,7 +156,7 @@ def send_verification_email(
             </div>
 
             <div class="content">
-                <p>Hi {username},</p>
+                <p>Hi {html_escape(username)},</p>
 
                 <p>Thank you for registering with {settings.EMAIL_FROM_NAME}! We're excited to have you on board.</p>
 
@@ -264,7 +264,7 @@ def send_welcome_email(
     <body>
         <div class="container">
             <h1>✅ Email Verified!</h1>
-            <p>Hi {username},</p>
+            <p>Hi {html_escape(username)},</p>
             <p>Your email has been successfully verified. You can now enjoy all features of {settings.EMAIL_FROM_NAME}!</p>
             <div style="text-align: center;">
                 <a href="{settings.FRONTEND_URL}" class="button">Start Shopping</a>
@@ -339,7 +339,7 @@ def send_password_reset_email(
     <body>
         <div class="container">
             <h1>Reset your password</h1>
-            <p>Hi {username},</p>
+            <p>Hi {html_escape(username)},</p>
             <p>We received a request to reset your password. Click the button below to choose a new one:</p>
             <p style="text-align:center;">
                 <a href="{reset_link}" class="button">Reset password</a>
@@ -437,7 +437,7 @@ def send_account_locked_email(
     <body>
         <div class="container">
             <h1>Account temporarily locked</h1>
-            <p>Hi {username},</p>
+            <p>Hi {html_escape(username)},</p>
             <p>
                 We locked your account for <strong>{lockout_minutes} minutes</strong>
                 after several failed sign-in attempts. This is an automatic safeguard.
@@ -536,7 +536,7 @@ def send_already_registered_email(
     <body>
         <div class="container">
             <h1>Account already exists</h1>
-            <p>Hi {username},</p>
+            <p>Hi {html_escape(username)},</p>
             <p>
                 We received a registration request using this email address, but
                 an account already exists for it.
