@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "ecommerce_store_backend"
 version = "0.1.0"
 description = "E-commerce store FastAPI backend"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
   "alembic==1.17.0",
   "annotated-types==0.7.0",
@@ -96,7 +96,7 @@ packages = ["app"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py313"
 extend-exclude = ["alembic/versions", ".venv"]
 
 [tool.ruff.lint]
@@ -155,7 +155,7 @@ line-ending = "lf"
 
 [tool.pyright]
 typeCheckingMode = "standard"
-pythonVersion = "3.12"
+pythonVersion = "3.13"
 include = ["app", "tests"]
 # `tests/legacy/` is the pre-pytest standalone-script directory (also in
 # `norecursedirs` for pytest); leave it out of typecheck too.
