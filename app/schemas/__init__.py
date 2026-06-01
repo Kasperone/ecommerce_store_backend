@@ -64,6 +64,11 @@ from app.schemas.staff import (
     StaffResponse,
     StaffUpdate,
 )
+from app.schemas.store_config import (
+    StoreConfigBase,
+    StoreConfigResponse,
+    StoreConfigUpdate,
+)
 from app.schemas.user import (
     UserBase,
     UserCreate,
@@ -134,6 +139,10 @@ __all__ = [
     "StaffResponse",
     "StaffUpdate",
     "StaffListResponse",
+    # Store config
+    "StoreConfigBase",
+    "StoreConfigUpdate",
+    "StoreConfigResponse",
     # Auth
     "Token",
     "TokenData",
