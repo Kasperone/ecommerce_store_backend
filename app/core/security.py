@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from jose import JWTError, jwt
+import jwt
 from passlib.context import CryptContext
 
 from app.core.config import settings
@@ -118,7 +118,7 @@ def create_refresh_token(
 def decode_token(token: str, *, expected_type: TokenType) -> DecodedToken:
     """Validate a JWT and require it to be of ``expected_type``.
 
-    Raises :class:`jose.JWTError` on any failure (bad signature, wrong
+    Raises :class:`jwt.PyJWTError` on any failure (bad signature, wrong
     issuer/audience, expiry, missing claims, type mismatch). Callers in the
     auth layer translate this into a 401.
     """
@@ -131,13 +131,13 @@ def decode_token(token: str, *, expected_type: TokenType) -> DecodedToken:
     )
     token_type = payload.get("type")
     if token_type != expected_type:
-        raise JWTError(f"expected token type {expected_type!r}, got {token_type!r}")
+        raise jwt.InvalidTokenError(f"expected token type {expected_type!r}, got {token_type!r}")
     sub = payload.get("sub")
     jti = payload.get("jti")
     iat = payload.get("iat")
     exp = payload.get("exp")
     if not sub or not jti or iat is None or exp is None:
-        raise JWTError("token is missing required claims")
+        raise jwt.InvalidTokenError("token is missing required claims")
     raw_impersonator = payload.get("impersonator_id")
     impersonator_id = int(raw_impersonator) if raw_impersonator is not None else None
     return DecodedToken(

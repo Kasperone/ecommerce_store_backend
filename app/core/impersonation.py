@@ -14,7 +14,7 @@ are already unreachable under impersonation: the token's ``sub`` is the customer
 so ``get_current_admin`` 403s on the role check regardless of method.
 """
 
-from jose import JWTError
+from jwt import PyJWTError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -48,7 +48,7 @@ class ImpersonationWriteGuardMiddleware(BaseHTTPMiddleware):
             if token is not None:
                 try:
                     decoded = decode_token(token, expected_type="access")
-                except JWTError:
+                except PyJWTError:
                     decoded = None
                 if decoded is not None and decoded.impersonator_id is not None:
                     return JSONResponse(
