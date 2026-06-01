@@ -13,6 +13,7 @@ from app.crud.order import order
 from app.crud.price_history import price_history
 from app.crud.product import product
 from app.crud.product_image import product_image
+from app.crud.quote import quote
 from app.crud.refresh_token import refresh_token
 from app.crud.refund import refund
 from app.crud.report import report
@@ -37,6 +38,7 @@ __all__ = [
     "dashboard",
     "product",
     "product_image",
+    "quote",
     "category",
     "order",
     "inventory",
