@@ -15,23 +15,23 @@ concurrency:
 jobs:
   lint-and-typecheck:
     name: Lint + type-check (Ruff + Pyright)
-    # Self-hosted runner on hive (free; runs even while GitHub-hosted minutes
-    # are capped). Native job (NOT containerised) — it must match `test`, which
-    # is native so it can reach Postgres (hive's Docker has icc:false, so a
-    # container job can't reach a `services:` DB; mixing container + native jobs
-    # also corrupts the shared _work via root-owned files). setup-python has no
-    # Debian-13 build, so a uv-provided python3.12 sits on the runner PATH.
-    # Rollback: restore `runs-on: ubuntu-latest` + the setup-python step.
-    runs-on: [self-hosted, hive]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up venv + install deps
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
         run: |
-          python3.12 -m venv .venv
-          .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
-          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Ruff lint
         run: ruff check .
@@ -45,10 +45,7 @@ jobs:
   test:
     name: Test (pytest + Postgres 16)
     needs: lint-and-typecheck
-    # Native job on hive (see lint-and-typecheck). hive's Docker runs icc:false,
-    # so a container job can't reach a `services:` Postgres; a native job reaches
-    # it via the published host port (localhost:5499).
-    runs-on: [self-hosted, hive]
+    runs-on: ubuntu-latest
 
     services:
       postgres:
@@ -58,9 +55,7 @@ jobs:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: ecommerce_test
         ports:
-          # Published to a host port the native job reaches at localhost:5499.
-          # hive's :5432 and :5433 are taken by other projects.
-          - 5499:5432
+          - 5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s
@@ -70,7 +65,7 @@ jobs:
     env:
       ENVIRONMENT: development
       DEBUG: "False"
-      DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5499/ecommerce_test
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/ecommerce_test
       SECRET_KEY: ci-secret-not-for-prod--not-for-prod--padding
       JWT_SECRET_KEY: ci-jwt-secret-not-for-prod--not-for-prod--padding
       RESEND_API_KEY: ""
@@ -82,12 +77,19 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up venv + install deps
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
         run: |
-          python3.12 -m venv .venv
-          .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
-          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Run migrations
         run: alembic upgrade head
@@ -107,10 +109,7 @@ jobs:
     name: Build and push image to GHCR
     needs: test
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    # Native job — uses the host Docker + buildx on hive. type=gha cache still
-    # works (Actions cache service, not minutes). Gated to main/dispatch, so it
-    # validates post-merge. Rollback: restore `runs-on: ubuntu-latest`.
-    runs-on: [self-hosted, hive]
+    runs-on: ubuntu-latest
 
     permissions:
       contents: read
