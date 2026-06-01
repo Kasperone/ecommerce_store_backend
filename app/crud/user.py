@@ -349,6 +349,25 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         db.add(user)
         return user
 
+    def set_preferences(
+        self,
+        db: Session,
+        *,
+        user: User,
+        changes: dict[str, str | None],
+    ) -> User:
+        """Apply a partial preferences update in place. Caller commits.
+
+        ``changes`` carries only the fields the request explicitly set
+        (``model_fields_set``), so an absent key never overwrites a stored value
+        while an explicit ``None`` clears it (e.g. ``preferred_currency=None``).
+        Currency/locale values are validated at the API layer before this is called.
+        """
+        for field, value in changes.items():
+            setattr(user, field, value)
+        db.add(user)
+        return user
+
     def count_active_admins(self, db: Session, *, exclude_id: int | None = None) -> int:
         """Number of active ADMIN-role accounts, optionally excluding one user.
 

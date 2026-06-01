@@ -72,6 +72,7 @@ async def health():
 
 # Import routers after middleware/limiter/CORS setup so they pick up the configured state.
 from app.api.v1 import (  # noqa: E402
+    account,
     admin_audit,
     admin_banners,
     admin_campaigns,
@@ -147,3 +148,4 @@ app.include_router(uploads.router, prefix="/api/v1/products", tags=["Product Ima
 # Customer + public reviews are nested under products (a review has no meaning
 # without its product). Paths surface as /api/v1/products/{id}/reviews...
 app.include_router(reviews.router, prefix="/api/v1/products", tags=["Reviews"])
+app.include_router(account.router, prefix="/api/v1/me", tags=["Account"])
