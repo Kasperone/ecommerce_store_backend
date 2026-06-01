@@ -101,6 +101,38 @@ class StoreIdentity:
             vat_rate=settings.INVOICE_VAT_RATE,
         )
 
+    @classmethod
+    def from_store_config(cls, db: Session, settings: Settings) -> StoreIdentity:
+        """Build the identity from the admin-editable ``store_config`` singleton.
+
+        Each text field uses the ``store_config`` value when non-blank
+        (``.strip()``), else falls back to the env ``settings.STORE_*``. The
+        singleton is seeded blank, so a blank config value must NOT wipe an
+        identity that is configured via env — fall back instead of overwriting
+        with empty. ``vat_rate`` always comes from the config row
+        (``invoice_vat_rate`` has a real ``server_default`` of 23, so it is
+        always present).
+        """
+        # Imported here (not at module scope) to avoid a circular import:
+        # app.crud.store_config -> app.schemas.store_config, both of which sit
+        # below the services layer.
+        from app.crud import store_config as crud_store_config
+
+        config = crud_store_config.get_singleton(db)
+
+        def pick(config_value: str, env_value: str) -> str:
+            return config_value if config_value.strip() else env_value
+
+        return cls(
+            name=pick(config.store_name, settings.STORE_NAME),
+            address_line=pick(config.address_line, settings.STORE_ADDRESS_LINE),
+            postal_city=pick(config.postal_city, settings.STORE_POSTAL_CITY),
+            country=pick(config.country, settings.STORE_COUNTRY),
+            tax_id=pick(config.tax_id, settings.STORE_TAX_ID),
+            email=pick(config.email, settings.STORE_EMAIL),
+            vat_rate=config.invoice_vat_rate,
+        )
+
 
 def decompose_gross(total_gross: float, vat_rate_pct: int) -> tuple[float, float]:
     """Split a VAT-inclusive (gross) amount into ``(net, vat)`` at the given rate.

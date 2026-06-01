@@ -179,7 +179,7 @@ def send_order_event(db: Session, order: Order, event: str) -> None:
         logger.warning("Unknown order-email event %r (order %s)", event, order.order_number)
         return
     try:
-        store = StoreIdentity.from_settings(settings)
+        store = StoreIdentity.from_store_config(db, settings)
         invoice_pdf = (
             render_invoice_pdf(db, order, store=store, lang=lang) if spec.attach_invoice else None
         )
