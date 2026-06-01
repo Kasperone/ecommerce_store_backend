@@ -57,6 +57,26 @@ class CRUDRefreshToken:
     def get_by_jti(self, db: Session, *, jti: str) -> RefreshToken | None:
         return db.query(RefreshToken).filter(RefreshToken.jti == jti).first()
 
+    def get(self, db: Session, *, id: int) -> RefreshToken | None:
+        return db.query(RefreshToken).filter(RefreshToken.id == id).first()
+
+    def list_active_for_user(self, db: Session, *, user_id: int) -> list[RefreshToken]:
+        """Active (not revoked, not expired) refresh rows for ``user_id``.
+
+        Ordered newest-first. These are the user's live login sessions.
+        """
+        now = _utcnow_naive()
+        return (
+            db.query(RefreshToken)
+            .filter(
+                RefreshToken.user_id == user_id,
+                RefreshToken.revoked_at.is_(None),
+                RefreshToken.expires_at > now,
+            )
+            .order_by(RefreshToken.created_at.desc(), RefreshToken.id.desc())
+            .all()
+        )
+
     def is_revoked(self, row: RefreshToken) -> bool:
         return row.revoked_at is not None
 
