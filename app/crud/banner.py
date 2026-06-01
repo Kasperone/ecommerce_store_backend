@@ -10,6 +10,9 @@ first as a stable tie-breaker.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.banner import Banner
@@ -51,6 +54,25 @@ class CRUDBanner:
         if placement is not None:
             query = query.filter(Banner.placement == placement)
         return query
+
+    def get_active(self, db: Session, *, placement: str | None = None) -> list[Banner]:
+        """Public storefront read: banners that are active AND currently within
+        their optional display window.
+
+        A null ``starts_at`` is open-ended on the lower bound; a null ``ends_at``
+        is open-ended on the upper bound. Comparison is against naive UTC ``now``
+        (every datetime column in this app is naive UTC). Ordered ``sort_order``
+        ascending then ``id`` ascending — a stable, deterministic public order.
+        """
+        now = datetime.now(UTC).replace(tzinfo=None)
+        query = db.query(Banner).filter(
+            Banner.is_active.is_(True),
+            or_(Banner.starts_at.is_(None), Banner.starts_at <= now),
+            or_(Banner.ends_at.is_(None), Banner.ends_at >= now),
+        )
+        if placement is not None:
+            query = query.filter(Banner.placement == placement)
+        return query.order_by(Banner.sort_order.asc(), Banner.id.asc()).all()
 
     def create(self, db: Session, *, obj_in: BannerCreate) -> Banner:
         """Stage a new banner (id populated via flush; caller commits)."""

@@ -93,3 +93,20 @@ class BannerListResponse(BaseSchema):
     page: int
     page_size: int
     pages: int
+
+
+class BannerPublic(BaseSchema):
+    """Slim banner shape for the public storefront read endpoint.
+
+    Exposes only what a customer-facing renderer needs — no audit timestamps,
+    no display-window bounds, and no ``is_active`` (the public endpoint only
+    ever returns active, in-window banners, so the flag carries no signal).
+    """
+
+    id: int
+    title: str
+    subtitle: str | None = None
+    image_url: str
+    link_url: str | None = None
+    placement: BannerPlacementLiteral
+    sort_order: int
