@@ -21,6 +21,7 @@ from app.models.shipping import (
     ShippingZone,
     ShippingZoneCountry,
 )
+from app.models.store_config import StoreConfig
 from app.models.tag import Tag, customer_tags
 from app.models.user import User
 from app.models.verification_token import VerificationToken
@@ -58,6 +59,7 @@ __all__ = [
     "ShippingRate",
     "ShippingZone",
     "ShippingZoneCountry",
+    "StoreConfig",
     "Tag",
     "customer_tags",
     "VerificationToken",
