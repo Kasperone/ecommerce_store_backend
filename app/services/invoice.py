@@ -148,6 +148,7 @@ _LABELS: dict[str, dict[str, str]] = {
         "unit_price": "Unit price",
         "line_total": "Amount",
         "subtotal": "Subtotal",
+        "discount": "Discount",
         "shipping": "Shipping",
         "net": "Net",
         "vat": "VAT",
@@ -192,6 +193,7 @@ _LABELS: dict[str, dict[str, str]] = {
         "unit_price": "Cena jedn.",
         "line_total": "Wartość",
         "subtotal": "Suma częściowa",
+        "discount": "Rabat",
         "shipping": "Dostawa",
         "net": "Netto",
         "vat": "VAT",
@@ -395,8 +397,18 @@ def build_invoice_pdf(
     net, vat = decompose_gross(order.total, store.vat_rate)
     totals_rows = [
         [labels["subtotal"], money(order.subtotal)],
-        [labels["shipping"], money(order.shipping)],
     ]
+    # Coupon discount line (only when one was applied) — shown as a negative
+    # amount between subtotal and shipping. The VAT decomposition above already
+    # works off the discounted ``order.total``, so net/VAT stay internally
+    # consistent.
+    discount = getattr(order, "discount", 0) or 0
+    if discount > 0:
+        discount_label = labels["discount"]
+        if order.coupon_code:
+            discount_label = f"{discount_label} ({order.coupon_code})"
+        totals_rows.append([discount_label, f"-{money(discount)}"])
+    totals_rows.append([labels["shipping"], money(order.shipping)])
     if store.vat_rate > 0:
         totals_rows.append([labels["net"], money(net)])
         totals_rows.append([f"{labels['vat']} ({store.vat_rate}%)", money(vat)])

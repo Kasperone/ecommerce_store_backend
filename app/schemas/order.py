@@ -51,6 +51,10 @@ class OrderCreate(OrderBase):
     # Required — the order route 422s when no rate exists for the chosen
     # method / country / currency triple (ShippingRateUnavailableError).
     shipping_method_id: int
+    # Optional discount code. Re-validated server-side against the computed
+    # subtotal at create time (the storefront preview is advisory only); an
+    # invalid/expired/exhausted code 400s the create with the reason message.
+    coupon_code: str | None = Field(default=None, max_length=64)
 
 
 class OrderUpdate(BaseSchema):
@@ -73,6 +77,10 @@ class OrderResponse(OrderBase, TimestampSchema):
     subtotal: float
     tax: float
     shipping: float
+    # Coupon discount applied to the subtotal (0 when none). ``coupon_code`` is the
+    # redeemed code snapshot (null when no coupon was used).
+    discount: float = 0.0
+    coupon_code: str | None = None
     total: float
     currency: str
 
@@ -105,6 +113,7 @@ class OrderListItem(TimestampSchema):
     order_number: str
     status: OrderStatus
     subtotal: float
+    discount: float = 0.0
     total: float
     currency: str
     item_count: int
