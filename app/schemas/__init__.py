@@ -15,6 +15,15 @@ from app.schemas.banner import (
     BannerUpdate,
 )
 from app.schemas.base import BaseSchema, TimestampSchema
+from app.schemas.campaign import (
+    CampaignAudienceLiteral,
+    CampaignBase,
+    CampaignCreate,
+    CampaignListResponse,
+    CampaignResponse,
+    CampaignStatusLiteral,
+    CampaignUpdate,
+)
 from app.schemas.category import (
     CategoryBase,
     CategoryCreate,
@@ -97,6 +106,14 @@ __all__ = [
     "BannerResponse",
     "BannerListResponse",
     "BannerPlacementLiteral",
+    # Campaign
+    "CampaignBase",
+    "CampaignCreate",
+    "CampaignUpdate",
+    "CampaignResponse",
+    "CampaignListResponse",
+    "CampaignAudienceLiteral",
+    "CampaignStatusLiteral",
     # User
     "UserBase",
     "UserCreate",
