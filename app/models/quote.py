@@ -99,6 +99,13 @@ class Quote(BaseModel):
     notes: Mapped[str | None] = mapped_column(Text)
     subtotal: Mapped[float] = mapped_column(Float, default=0.0)
     total: Mapped[float] = mapped_column(Float, default=0.0)
+    # Conversion marker + double-convert guard: set to the created order's id when
+    # the quote is converted into a pending order. ON DELETE SET NULL so deleting
+    # the order leaves the quote intact (it just becomes convertible again). The
+    # quote's ``status`` stays ``accepted`` after conversion — this FK is the marker.
+    converted_order_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("orders.id", ondelete="SET NULL"), index=True
+    )
 
     # Relationships
     company: Mapped[Company] = relationship("Company")
