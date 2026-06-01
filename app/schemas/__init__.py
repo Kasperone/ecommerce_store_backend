@@ -1,3 +1,8 @@
+from app.schemas.account import (
+    CurrencyLiteral,
+    PreferencesResponse,
+    PreferencesUpdate,
+)
 from app.schemas.auth import (
     EmailVerification,
     PasswordChange,
@@ -117,6 +122,10 @@ __all__ = [
     # Base
     "BaseSchema",
     "TimestampSchema",
+    # Account preferences
+    "PreferencesResponse",
+    "PreferencesUpdate",
+    "CurrencyLiteral",
     # Banner
     "BannerBase",
     "BannerCreate",
