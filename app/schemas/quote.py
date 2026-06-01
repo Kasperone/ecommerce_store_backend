@@ -107,6 +107,10 @@ class QuoteResponse(TimestampSchema):
     notes: str | None
     subtotal: float
     total: float
+    # Conversion marker: set to the created order's id once the quote is converted
+    # (see ``POST /admin/quotes/{id}/convert``). ``None`` until then — the admin UI
+    # shows a "view converted order" link when present and hides the convert action.
+    converted_order_id: int | None = None
     items: list[QuoteItemResponse] = Field(default_factory=list)
 
 
