@@ -383,3 +383,193 @@ async def test_delete_404(client, user_factory):
     assert (
         await client.delete("/api/v1/admin/quotes/999999", headers=_headers(admin))
     ).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# convert (POST /{id}/convert)
+# ---------------------------------------------------------------------------
+
+
+async def _make_quote(client, admin, company_id, *, product_id, quantity, unit_price, status=None):
+    """Create a quote (optionally flip its status) via the admin API; return its id."""
+    created = await client.post(
+        "/api/v1/admin/quotes/",
+        json=_body(
+            company_id,
+            items=[
+                {
+                    "description": "Line",
+                    "quantity": quantity,
+                    "unit_price": unit_price,
+                    "product_id": product_id,
+                }
+            ],
+        ),
+        headers=_headers(admin),
+    )
+    qid = created.json()["id"]
+    if status is not None:
+        await client.patch(
+            f"/api/v1/admin/quotes/{qid}", json={"status": status}, headers=_headers(admin)
+        )
+    return qid
+
+
+async def test_convert_requires_admin(client, user_factory):
+    customer = user_factory(email="qt-conv-cust@example.com", role=UserRole.CUSTOMER)
+    assert (await client.post("/api/v1/admin/quotes/1/convert")).status_code == 401
+    assert (
+        await client.post("/api/v1/admin/quotes/1/convert", headers=_headers(customer))
+    ).status_code == 403
+
+
+async def test_convert_happy_path(
+    client, user_factory, company_factory, product_factory, db_session
+):
+    admin = user_factory(email="qt-conv-admin@example.com", role=UserRole.ADMIN)
+    contact = user_factory(email="qt-conv-contact@example.com", role=UserRole.CUSTOMER)
+    company = company_factory(name="ConvCo", primary_user_id=contact.id)
+    product = product_factory(stock=10, name="ConvProd", sku="CV-9")
+    qid = await _make_quote(
+        client,
+        admin,
+        company.id,
+        product_id=product.id,
+        quantity=2,
+        unit_price=15.0,
+        status="accepted",
+    )
+    order_creates_before = (
+        db_session.query(AdminAuditEvent)
+        .filter(AdminAuditEvent.resource_type == "order", AdminAuditEvent.action == "create")
+        .count()
+    )
+    quote_updates_before = _audit_count(db_session, "update")
+    resp = await client.post(f"/api/v1/admin/quotes/{qid}/convert", headers=_headers(admin))
+    assert resp.status_code == 201
+    body = resp.json()
+    # Order owned by the company primary contact, not the admin.
+    assert body["user_id"] == contact.id
+    assert body["status"] == "pending"
+    assert body["currency"] == "USD"
+    assert body["subtotal"] == 30.0
+    assert body["total"] == 30.0
+    assert len(body["items"]) == 1
+    assert body["items"][0]["unit_price"] == 15.0  # quoted price honoured
+    assert body["items"][0]["product_name"] == "ConvProd"
+    assert f"Converted from quote #{qid}" in body["notes"]
+    # Audit: an order-create row + a quote-update row were written.
+    order_creates_after = (
+        db_session.query(AdminAuditEvent)
+        .filter(AdminAuditEvent.resource_type == "order", AdminAuditEvent.action == "create")
+        .count()
+    )
+    assert order_creates_after == order_creates_before + 1
+    assert _audit_count(db_session, "update") == quote_updates_before + 1
+    # Quote now carries the conversion marker.
+    quote = db_session.get(Quote, qid)
+    db_session.refresh(quote)
+    assert quote.converted_order_id == body["id"]
+    assert quote.status == "accepted"
+
+
+async def test_convert_404(client, user_factory):
+    admin = user_factory(email="qt-conv-404@example.com", role=UserRole.ADMIN)
+    assert (
+        await client.post("/api/v1/admin/quotes/999999/convert", headers=_headers(admin))
+    ).status_code == 404
+
+
+async def test_convert_not_accepted_422(client, user_factory, company_factory, product_factory):
+    admin = user_factory(email="qt-conv-na@example.com", role=UserRole.ADMIN)
+    contact = user_factory(email="qt-conv-na-c@example.com", role=UserRole.CUSTOMER)
+    company = company_factory(primary_user_id=contact.id)
+    product = product_factory(stock=10)
+    qid = await _make_quote(
+        client, admin, company.id, product_id=product.id, quantity=1, unit_price=5.0
+    )  # left in draft
+    resp = await client.post(f"/api/v1/admin/quotes/{qid}/convert", headers=_headers(admin))
+    assert resp.status_code == 422
+    assert "accepted" in resp.json()["detail"].lower()
+
+
+async def test_convert_double_convert_409(client, user_factory, company_factory, product_factory):
+    admin = user_factory(email="qt-conv-dc@example.com", role=UserRole.ADMIN)
+    contact = user_factory(email="qt-conv-dc-c@example.com", role=UserRole.CUSTOMER)
+    company = company_factory(primary_user_id=contact.id)
+    product = product_factory(stock=10)
+    qid = await _make_quote(
+        client,
+        admin,
+        company.id,
+        product_id=product.id,
+        quantity=1,
+        unit_price=5.0,
+        status="accepted",
+    )
+    first = await client.post(f"/api/v1/admin/quotes/{qid}/convert", headers=_headers(admin))
+    assert first.status_code == 201
+    second = await client.post(f"/api/v1/admin/quotes/{qid}/convert", headers=_headers(admin))
+    assert second.status_code == 409
+
+
+async def test_convert_free_text_line_422(client, user_factory, company_factory, product_factory):
+    admin = user_factory(email="qt-conv-ft@example.com", role=UserRole.ADMIN)
+    contact = user_factory(email="qt-conv-ft-c@example.com", role=UserRole.CUSTOMER)
+    company = company_factory(primary_user_id=contact.id)
+    # Quote with a free-text line (no product_id)
+    created = await client.post(
+        "/api/v1/admin/quotes/",
+        json=_body(
+            company.id,
+            items=[{"description": "Freeform service", "quantity": 1, "unit_price": 9.0}],
+        ),
+        headers=_headers(admin),
+    )
+    qid = created.json()["id"]
+    await client.patch(
+        f"/api/v1/admin/quotes/{qid}", json={"status": "accepted"}, headers=_headers(admin)
+    )
+    resp = await client.post(f"/api/v1/admin/quotes/{qid}/convert", headers=_headers(admin))
+    assert resp.status_code == 422
+    assert "product" in resp.json()["detail"].lower()
+
+
+async def test_convert_no_primary_contact_422(
+    client, user_factory, company_factory, product_factory
+):
+    admin = user_factory(email="qt-conv-np@example.com", role=UserRole.ADMIN)
+    company = company_factory(primary_user_id=None)  # no contact set
+    product = product_factory(stock=10)
+    qid = await _make_quote(
+        client,
+        admin,
+        company.id,
+        product_id=product.id,
+        quantity=1,
+        unit_price=5.0,
+        status="accepted",
+    )
+    resp = await client.post(f"/api/v1/admin/quotes/{qid}/convert", headers=_headers(admin))
+    assert resp.status_code == 422
+    assert "primary contact" in resp.json()["detail"].lower()
+
+
+async def test_convert_insufficient_stock_422(
+    client, user_factory, company_factory, product_factory
+):
+    admin = user_factory(email="qt-conv-ins@example.com", role=UserRole.ADMIN)
+    contact = user_factory(email="qt-conv-ins-c@example.com", role=UserRole.CUSTOMER)
+    company = company_factory(primary_user_id=contact.id)
+    product = product_factory(stock=1, allow_backorder=False)
+    qid = await _make_quote(
+        client,
+        admin,
+        company.id,
+        product_id=product.id,
+        quantity=9,
+        unit_price=5.0,
+        status="accepted",
+    )
+    resp = await client.post(f"/api/v1/admin/quotes/{qid}/convert", headers=_headers(admin))
+    assert resp.status_code == 422

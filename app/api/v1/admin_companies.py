@@ -69,7 +69,15 @@ async def create_company(
     audit: AuditWriter = Depends(get_audit_writer),
 ):
     """Create a company. ``status`` defaults to ``pending`` (an unknown status 422s,
-    enforced by the schema)."""
+    enforced by the schema). A supplied ``primary_user_id`` must reference an existing
+    user (422 otherwise)."""
+    if payload.primary_user_id is not None and not crud_company.user_exists(
+        db, payload.primary_user_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Primary contact user not found",
+        )
     company = crud_company.create(db, obj_in=payload)
     audit.record_create(resource_type="company", obj=company)
     db.commit()
@@ -103,6 +111,18 @@ async def update_company(
     company = crud_company.get(db, company_id)
     if company is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+
+    # Validate a newly-set primary contact (a non-null value that was explicitly
+    # sent). An explicit ``null`` clears the link; an omitted field leaves it.
+    if (
+        "primary_user_id" in payload.model_fields_set
+        and payload.primary_user_id is not None
+        and not crud_company.user_exists(db, payload.primary_user_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Primary contact user not found",
+        )
 
     crud_company.update(db, company=company, obj_in=payload)
     audit.record_update(resource_type="company", obj=company)

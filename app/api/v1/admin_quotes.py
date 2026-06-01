@@ -21,7 +21,11 @@ from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_admin, get_db
 from app.crud import quote as crud_quote
+from app.crud.order import InsufficientStockError, ProductUnavailableError
+from app.crud.order import order as crud_order
+from app.crud.quote import QuoteNotConvertibleError
 from app.models.user import User
+from app.schemas.order import OrderResponse
 from app.schemas.quote import (
     QuoteCreate,
     QuoteListResponse,
@@ -117,6 +121,57 @@ async def update_quote(
     audit.record_update(resource_type="quote", obj=quote)
     db.commit()
     return crud_quote.get(db, quote_id)
+
+
+@router.post(
+    "/{quote_id}/convert",
+    response_model=OrderResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def convert_quote(
+    quote_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
+):
+    """Convert an **accepted** quote into a pending order.
+
+    The order is owned by the company's **primary contact customer**
+    (``company.primary_user_id``) — the real customer, so emails / order history /
+    invoices are correct — NOT the converting admin (the admin is only the audit
+    actor). Line items snapshot the live product name/sku and honour the **quoted**
+    unit price + quantity (no re-pricing); stock is decremented from the default
+    warehouse like a normal order; ``shipping``/``discount``/``tax`` are 0 and no
+    shipping method is set (the admin sets one later).
+
+    Eligibility (else error): quote not found → 404; ``status != 'accepted'`` →
+    422; already converted → 409; no items → 422; any free-text line (no
+    ``product_id``) → 422; company has no primary contact → 422; insufficient
+    stock on any line (no backorder) → 422.
+    """
+    quote = crud_quote.get(db, quote_id)
+    if quote is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote not found")
+
+    try:
+        order = crud_quote.convert_to_order(db, quote=quote, actor_user_id=current_admin.id)
+    except QuoteNotConvertibleError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    except ProductUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Product {exc.product_id} is unavailable",
+        ) from exc
+    except InsufficientStockError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+    audit.record_create(resource_type="order", obj=order)
+    audit.record_update(resource_type="quote", obj=quote)
+    db.commit()
+    # Re-load with items eager-loaded so the 201 body carries the full order view.
+    return crud_order.get_scoped(db, order_id=order.id, user=current_admin)
 
 
 @router.delete("/{quote_id}", status_code=status.HTTP_204_NO_CONTENT)
