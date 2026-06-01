@@ -31,6 +31,14 @@ from app.schemas.category import (
     CategoryUpdate,
     CategoryWithProductCount,
 )
+from app.schemas.company import (
+    CompanyBase,
+    CompanyCreate,
+    CompanyListResponse,
+    CompanyResponse,
+    CompanyStatusLiteral,
+    CompanyUpdate,
+)
 from app.schemas.coupon import (
     CouponBase,
     CouponCreate,
@@ -127,6 +135,13 @@ __all__ = [
     "CategoryUpdate",
     "CategoryResponse",
     "CategoryWithProductCount",
+    # Company
+    "CompanyBase",
+    "CompanyCreate",
+    "CompanyUpdate",
+    "CompanyResponse",
+    "CompanyListResponse",
+    "CompanyStatusLiteral",
     # Coupon
     "CouponBase",
     "CouponCreate",
