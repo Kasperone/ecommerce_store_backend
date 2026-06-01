@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
-from jose import JWTError
+from jwt import PyJWTError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -291,7 +291,7 @@ async def refresh_token(
 
     try:
         decoded = decode_token(refresh_cookie, expected_type="refresh")
-    except JWTError:
+    except PyJWTError:
         _clear_refresh_cookie(response)
         raise invalid from None
 
@@ -359,7 +359,7 @@ async def logout(
     if refresh_cookie:
         try:
             decoded = decode_token(refresh_cookie, expected_type="refresh")
-        except JWTError:
+        except PyJWTError:
             decoded = None
         if decoded is not None:
             row = crud_refresh_token.get_by_jti(db, jti=decoded.jti)
