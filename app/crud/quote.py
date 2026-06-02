@@ -28,7 +28,33 @@ from app.models.inventory_movement import InventoryMovementReason
 from app.models.order import Order, OrderItem, OrderStatus
 from app.models.product import Product
 from app.models.quote import Quote, QuoteItem, QuoteStatus
-from app.schemas.quote import QuoteCreate, QuoteItemCreate, QuoteUpdate
+from app.schemas.quote import QuoteCreate, QuoteItemCreate, QuoteRequestCreate, QuoteUpdate
+
+
+class QuoteRequestError(Exception):
+    """A customer quote request fails a precondition.
+
+    Carries a machine ``reason`` code + the HTTP ``status_code`` the customer
+    route maps to the response (422 for a bad/inactive product line). Mirrors
+    ``QuoteNotConvertibleError`` so the route stays a thin mapper.
+    """
+
+    def __init__(self, *, reason: str, message: str, status_code: int = 422) -> None:
+        self.reason = reason
+        self.message = message
+        self.status_code = status_code
+        super().__init__(message)
+
+
+class QuoteNotAcceptableError(Exception):
+    """An accept-transition precondition fails (source state is not ``sent``).
+
+    Maps to 409 in the customer route. Mirrors the convert/redeem error posture.
+    """
+
+    def __init__(self, *, message: str = "only a sent quote can be accepted") -> None:
+        self.message = message
+        super().__init__(message)
 
 
 class QuoteNotConvertibleError(Exception):
@@ -138,6 +164,100 @@ class CRUDQuote:
         db.add(quote)
         db.flush()
         db.refresh(quote)
+        return quote
+
+    # ------------------------------------------------------------------
+    # Customer-facing (Wave C / B2B-1) — company-scoped reads + request + accept.
+    # ------------------------------------------------------------------
+
+    def list_for_company(self, db: Session, *, company_id: int) -> list[Quote]:
+        """All quotes for ``company_id``, newest-first, items eager-loaded."""
+        return (
+            db.query(Quote)
+            .options(selectinload(Quote.company), selectinload(Quote.items))
+            .filter(Quote.company_id == company_id)
+            .order_by(Quote.created_at.desc(), Quote.id.desc())
+            .all()
+        )
+
+    def get_for_company(self, db: Session, *, quote_id: int, company_id: int) -> Quote | None:
+        """Fetch one quote scoped to ``company_id`` (cross-company → ``None`` → 404)."""
+        return (
+            db.query(Quote)
+            .options(selectinload(Quote.company), selectinload(Quote.items))
+            .filter(Quote.id == quote_id, Quote.company_id == company_id)
+            .first()
+        )
+
+    def request_from_cart(
+        self,
+        db: Session,
+        *,
+        obj_in: QuoteRequestCreate,
+        company_id: int,
+        requested_by_user_id: int,
+    ) -> Quote:
+        """Create a ``requested`` quote from a customer's cart (no commit; caller owns txn).
+
+        **Server-priced (D-C-4 — mirrors the coupon discipline):** each line's
+        ``unit_price`` comes from the CURRENT product price in ``obj_in.currency``
+        via ``Product.get_price`` — a client never supplies a price. Each
+        ``product_id`` must reference an existing, active product (else
+        ``QuoteRequestError`` → 422); the line ``description`` is snapshotted from
+        the live product name. Reuses ``_build_items`` after server pricing so the
+        ``line_total`` / ``subtotal`` math is shared with the admin path.
+
+        Sets ``status='requested'``, ``company_id`` (the caller's company), and
+        ``requested_by_user_id`` (the caller). Flushes so the ``id`` is populated.
+        """
+        product_ids = [line.product_id for line in obj_in.items]
+        products = {p.id: p for p in db.query(Product).filter(Product.id.in_(product_ids)).all()}
+
+        priced_lines: list[QuoteItemCreate] = []
+        for line in obj_in.items:
+            product = products.get(line.product_id)
+            if product is None or not product.is_active:
+                raise QuoteRequestError(
+                    reason="product_unavailable",
+                    message=f"Product {line.product_id} is unavailable",
+                )
+            unit_price = product.get_price(obj_in.currency)
+            priced_lines.append(
+                QuoteItemCreate(
+                    description=product.name,
+                    quantity=line.quantity,
+                    unit_price=unit_price,
+                    product_id=product.id,
+                )
+            )
+
+        items, subtotal = _build_items(priced_lines)
+        quote = Quote(
+            company_id=company_id,
+            status=QuoteStatus.REQUESTED.value,
+            currency=obj_in.currency,
+            valid_until=None,
+            notes=obj_in.notes,
+            subtotal=subtotal,
+            total=subtotal,  # total == subtotal in MVP
+            requested_by_user_id=requested_by_user_id,
+            items=items,
+        )
+        db.add(quote)
+        db.flush()
+        db.refresh(quote)
+        return quote
+
+    def accept(self, db: Session, *, quote: Quote) -> Quote:
+        """Customer-accept a ``sent`` quote → ``accepted`` (no flush; caller commits).
+
+        Only a ``sent`` quote may be accepted (D-C-5); any other source state
+        raises ``QuoteNotAcceptableError`` (→ 409). Conversion stays admin-only.
+        """
+        if quote.status != QuoteStatus.SENT.value:
+            raise QuoteNotAcceptableError()
+        quote.status = QuoteStatus.ACCEPTED.value
+        db.add(quote)
         return quote
 
     def update(self, db: Session, *, quote: Quote, obj_in: QuoteUpdate) -> Quote:
