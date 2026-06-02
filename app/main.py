@@ -94,6 +94,7 @@ from app.api.v1 import (  # noqa: E402
     banners,
     categories,
     companies,
+    company_team,
     coupons,
     orders,
     payments,
@@ -155,3 +156,6 @@ app.include_router(account.router, prefix="/api/v1/me", tags=["Account"])
 app.include_router(addresses.router, prefix="/api/v1/addresses", tags=["Addresses"])
 app.include_router(quotes.router, prefix="/api/v1/quotes", tags=["Quotes"])
 app.include_router(companies.router, prefix="/api/v1/companies", tags=["Companies"])
+# TM-be (Wave D slice 5) — company team management. Distinct path from
+# /companies/me (this is /companies/me/users/...); kept in its own router file.
+app.include_router(company_team.router, prefix="/api/v1/companies/me/users", tags=["Company Team"])
