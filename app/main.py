@@ -93,10 +93,12 @@ from app.api.v1 import (  # noqa: E402
     auth,
     banners,
     categories,
+    companies,
     coupons,
     orders,
     payments,
     products,
+    quotes,
     reviews,
     search,
     shipping,
@@ -151,3 +153,5 @@ app.include_router(uploads.router, prefix="/api/v1/products", tags=["Product Ima
 app.include_router(reviews.router, prefix="/api/v1/products", tags=["Reviews"])
 app.include_router(account.router, prefix="/api/v1/me", tags=["Account"])
 app.include_router(addresses.router, prefix="/api/v1/addresses", tags=["Addresses"])
+app.include_router(quotes.router, prefix="/api/v1/quotes", tags=["Quotes"])
+app.include_router(companies.router, prefix="/api/v1/companies", tags=["Companies"])

@@ -50,11 +50,15 @@ class QuoteStatus(str, enum.Enum):
 
     Stored as the lowercase value in a ``String(16)`` column (mirrors
     ``CompanyStatus`` / ``RefundReason``). ``DRAFT`` is the default for a freshly
-    created quote; the rest are set by an admin. Transitions are unconstrained in
-    MVP (any → any).
+    created admin quote; ``REQUESTED`` is the entry state for a customer-requested
+    quote (see ``CRUDQuote.request_from_cart``); the rest are set by an admin.
+    Transitions are unconstrained in MVP (any → any), except the customer-facing
+    ``accept`` flow which only flips ``sent → accepted`` (see
+    ``CRUDQuote.accept``).
     """
 
     DRAFT = "draft"
+    REQUESTED = "requested"
     SENT = "sent"
     ACCEPTED = "accepted"
     REJECTED = "rejected"
@@ -105,6 +109,14 @@ class Quote(BaseModel):
     # quote's ``status`` stays ``accepted`` after conversion — this FK is the marker.
     converted_order_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("orders.id", ondelete="SET NULL"), index=True
+    )
+    # The customer who requested this quote (the company's primary contact at
+    # request time). Set only for customer-requested quotes (status starts
+    # ``requested``); ``None`` for admin-created quotes. ON DELETE SET NULL so
+    # deleting the user leaves the historical quote intact (mirrors the
+    # ``companies.primary_user_id`` posture).
+    requested_by_user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
 
     # Relationships
