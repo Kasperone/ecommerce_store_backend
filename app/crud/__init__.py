@@ -26,6 +26,7 @@ from app.crud.shipping import zone as shipping_zone
 from app.crud.store_config import store_config
 from app.crud.tag import tag
 from app.crud.user import user
+from app.crud.user_consent import user_consent
 from app.crud.warehouse import warehouse
 
 __all__ = [
@@ -57,5 +58,6 @@ __all__ = [
     "shipping_rate",
     "store_config",
     "tag",
+    "user_consent",
     "warehouse",
 ]
