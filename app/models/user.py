@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from app.models.refresh_token import RefreshToken
     from app.models.review import Review
     from app.models.tag import Tag
+    from app.models.user_consent import UserConsent
     from app.models.verification_token import VerificationToken
 
 
@@ -85,6 +86,14 @@ class User(BaseModel):
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime)
 
+    # GDPR account-deletion lifecycle (D-B-4 / D-ACCT-1). Soft-delete: the request
+    # timestamps the deletion ask and triggers immediate PII anonymization
+    # in-place; ``anonymized_at`` records when the scrub ran. Both nullable —
+    # NULL means "active account, never asked to be deleted". Order/invoice rows
+    # are kept for tax retention; no purge job (5-year window is docs-only).
+    deletion_requested_at: Mapped[datetime | None] = mapped_column(DateTime)
+    anonymized_at: Mapped[datetime | None] = mapped_column(DateTime)
+
     # Role
     role: Mapped[UserRole] = mapped_column(SQLEnum(UserRole), default=UserRole.CUSTOMER)
 
@@ -117,6 +126,10 @@ class User(BaseModel):
     # enforced in the CRUD layer). Cascade-deletes with the user.
     addresses: Mapped[list["Address"]] = relationship(
         "Address", back_populates="user", cascade="all, delete-orphan"
+    )
+    # Append-only consent audit log (latest row per type = current value).
+    consents: Mapped[list["UserConsent"]] = relationship(
+        "UserConsent", back_populates="user", cascade="all, delete-orphan"
     )
 
     def __repr__(self):

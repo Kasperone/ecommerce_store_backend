@@ -40,6 +40,7 @@ from app.models.shipping import (
 from app.models.store_config import StoreConfig
 from app.models.tag import Tag, customer_tags
 from app.models.user import User
+from app.models.user_consent import UserConsent
 from app.models.verification_token import VerificationToken
 from app.models.warehouse import StockLevel, Warehouse
 
@@ -95,6 +96,7 @@ __all__ = [
     "StoreConfig",
     "Tag",
     "customer_tags",
+    "UserConsent",
     "VerificationToken",
     "RefreshToken",
     "Warehouse",

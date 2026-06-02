@@ -28,7 +28,7 @@ async def test_get_preferences_defaults(client, user_factory):
     resp = await client.get("/api/v1/me/preferences", headers=_headers(user))
     assert resp.status_code == 200
     body = resp.json()
-    assert body == {"preferred_currency": None, "locale": "en"}
+    assert body == {"preferred_currency": None, "locale": "en", "consents": {}}
 
 
 async def test_get_preferences_requires_auth(client):
@@ -47,7 +47,7 @@ async def test_patch_sets_currency(client, db_session, user_factory):
         headers=_headers(user),
     )
     assert resp.status_code == 200
-    assert resp.json() == {"preferred_currency": "PLN", "locale": "en"}
+    assert resp.json() == {"preferred_currency": "PLN", "locale": "en", "consents": {}}
 
     db_session.refresh(user)
     assert user.preferred_currency == "PLN"
@@ -61,7 +61,7 @@ async def test_patch_can_update_locale(client, user_factory):
         headers=_headers(user),
     )
     assert resp.status_code == 200
-    assert resp.json() == {"preferred_currency": None, "locale": "pl"}
+    assert resp.json() == {"preferred_currency": None, "locale": "pl", "consents": {}}
 
 
 async def test_patch_partial_leaves_other_field_unchanged(client, user_factory):
@@ -80,7 +80,7 @@ async def test_patch_partial_leaves_other_field_unchanged(client, user_factory):
         headers=_headers(user),
     )
     assert resp.status_code == 200
-    assert resp.json() == {"preferred_currency": "EUR", "locale": "pl"}
+    assert resp.json() == {"preferred_currency": "EUR", "locale": "pl", "consents": {}}
 
 
 async def test_patch_null_clears_currency(client, db_session, user_factory):
@@ -117,7 +117,7 @@ async def test_patch_empty_body_is_noop(client, user_factory):
         headers=_headers(user),
     )
     assert resp.status_code == 200
-    assert resp.json() == {"preferred_currency": "EUR", "locale": "en"}
+    assert resp.json() == {"preferred_currency": "EUR", "locale": "en", "consents": {}}
 
 
 # --- PATCH validation ------------------------------------------------------
