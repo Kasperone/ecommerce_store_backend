@@ -18,6 +18,7 @@ on.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
@@ -153,6 +154,78 @@ class CRUDCompanyUser:
         db.flush()
         db.refresh(membership)
         return membership
+
+    # ------------------------------------------------------------------
+    # Team-management helpers (TM-be, Wave D slice 5). Build on the
+    # foundational helpers above. No commit anywhere — the route owns the txn.
+    # ------------------------------------------------------------------
+
+    def invite(
+        self,
+        db: Session,
+        *,
+        company_id: int,
+        user_id: int,
+        email: str,
+        role: str,
+    ) -> CompanyUser:
+        """Stage an ``invited`` membership linking ``user_id`` to a company.
+
+        The membership is created in the ``invited`` status (it grants no access
+        until accepted/activated). ``invited_email`` records the address the
+        invite was issued to and ``invited_at`` is stamped (naive UTC, project
+        convention). ``user_id`` is required and must reference an existing user
+        — the ``company_users.user_id`` column is NOT NULL (see the note below),
+        so an invite is always **linked** to a concrete account; the route
+        resolves ``email`` to that account before calling this. The unique
+        ``(company_id, user_id)`` constraint plus the route's pre-check guard
+        against re-inviting an existing member.
+
+        NOTE (boundary): D-D-1 / the merged ``company_users`` schema make
+        ``user_id`` NOT NULL, so a "pending invite for an address with no account
+        yet" is not representable without a migration (out of TM-be scope). This
+        invite therefore covers the existing-account case; see ESCALATION in
+        ``status/TM-be.md`` for the rationale.
+        """
+        membership = CompanyUser(
+            company_id=company_id,
+            user_id=user_id,
+            role=role,
+            status=CompanyMemberStatus.INVITED.value,
+            invited_email=email,
+            invited_at=datetime.now(UTC).replace(tzinfo=None),
+        )
+        db.add(membership)
+        db.flush()
+        db.refresh(membership)
+        return membership
+
+    def update_member(
+        self,
+        db: Session,
+        *,
+        membership: CompanyUser,
+        role: str | None = None,
+        status: str | None = None,
+    ) -> CompanyUser:
+        """Apply a role and/or status change to an existing membership row.
+
+        Only fields explicitly provided (non-``None``) are overwritten — a PATCH
+        may send just one. Last-COMPANY_ADMIN protection lives in the route (it
+        needs the company-wide admin count); this just mutates and flushes."""
+        if role is not None:
+            membership.role = role
+        if status is not None:
+            membership.status = status
+        db.add(membership)
+        db.flush()
+        db.refresh(membership)
+        return membership
+
+    def remove(self, db: Session, *, membership: CompanyUser) -> None:
+        """Delete a membership row (caller commits). Last-admin guard in route."""
+        db.delete(membership)
+        db.flush()
 
 
 company_user = CRUDCompanyUser()

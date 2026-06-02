@@ -16,12 +16,13 @@ contract the quotes vertical depends on (``quotes.company_id -> companies.id``).
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 
 from app.models.company import COMPANY_STATUS_VALUES
-from app.models.company_user import COMPANY_ROLE_VALUES
+from app.models.company_user import COMPANY_MEMBER_STATUS_VALUES, COMPANY_ROLE_VALUES
 from app.schemas.base import BaseSchema, TimestampSchema
 
 # Hardcoded for pyright; the cross-check below catches drift from the model.
@@ -198,4 +199,79 @@ class CompanyProfileUpdate(BaseSchema):
                 setattr(self, field, trimmed or None)
         if self.default_currency:
             self.default_currency = self.default_currency.upper()
+        return self
+
+
+# TM-be (Wave D slice 5) — team management on /api/v1/companies/me/users.
+# Appended block (CP-be also appends to this module — keep additions grouped
+# and labelled so the parallel merge is a clean concat). Shares the
+# CompanyRoleLiteral above with CU-be/CP-be.
+# ===========================================================================
+
+# Membership lifecycle status on the team API. Hardcoded for pyright; cross-
+# checked against the model value set at import time (mirrors the role literal).
+CompanyMemberStatusLiteral = Literal["active", "invited", "suspended"]
+
+assert set(CompanyMemberStatusLiteral.__args__) == set(COMPANY_MEMBER_STATUS_VALUES), (  # noqa: S101
+    "CompanyMemberStatusLiteral drifted from "
+    "app.models.company_user.COMPANY_MEMBER_STATUS_VALUES: "
+    f"schema={set(CompanyMemberStatusLiteral.__args__)} "
+    f"vs model={set(COMPANY_MEMBER_STATUS_VALUES)}"
+)
+
+
+class CompanyMemberResponse(TimestampSchema):
+    """A ``company_users`` row as the team API returns it.
+
+    ``user_id`` is the linked account; ``user_email`` / ``user_name`` are read-only
+    denormalised display values from the linked ``User`` (resolved by the route so
+    the FE roster doesn't need a second fetch). ``invited_email`` / ``invited_at``
+    are populated for rows created via an invite, ``None`` otherwise.
+    """
+
+    company_id: int
+    user_id: int
+    role: CompanyRoleLiteral
+    status: CompanyMemberStatusLiteral
+    invited_email: str | None = None
+    invited_at: datetime | None = None
+    user_email: str | None = None
+    user_name: str | None = None
+
+
+class CompanyMemberInvite(BaseSchema):
+    """Request body for ``POST /api/v1/companies/me/users`` (invite by email + role).
+
+    ``email`` must resolve to an existing user account (the membership links to it);
+    ``role`` is the B2B role to grant. ``COMPANY_ADMIN`` is invitable (a company can
+    have several admins). The route creates an ``invited`` membership.
+    """
+
+    email: Annotated[str, Field(min_length=3, max_length=255)]
+    role: CompanyRoleLiteral
+
+    @model_validator(mode="after")
+    def _normalise_email(self) -> CompanyMemberInvite:
+        self.email = self.email.strip().lower()
+        if not self.email:
+            raise ValueError("email must not be blank")
+        return self
+
+
+class CompanyMemberUpdate(BaseSchema):
+    """Request body for ``PATCH /api/v1/companies/me/users/{id}`` (role / status).
+
+    Both fields optional — a PATCH may change just the role (e.g. promote to
+    COMPANY_ADMIN) or just the status (e.g. ``suspended`` to deactivate, ``active``
+    to reactivate). At least one must be provided (else the PATCH is a no-op → 422).
+    The last-COMPANY_ADMIN guard lives in the route.
+    """
+
+    role: CompanyRoleLiteral | None = None
+    status: CompanyMemberStatusLiteral | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> CompanyMemberUpdate:
+        if self.role is None and self.status is None:
+            raise ValueError("at least one of role / status must be provided")
         return self
