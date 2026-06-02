@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.models.company import Company
 from app.models.user import User
-from app.schemas.company import CompanyCreate, CompanyUpdate
+from app.schemas.company import CompanyCreate, CompanyProfileUpdate, CompanyUpdate
 
 
 class CRUDCompany:
@@ -97,6 +97,21 @@ class CRUDCompany:
 
     def delete(self, db: Session, *, company: Company) -> None:
         db.delete(company)
+
+    def update_profile(
+        self, db: Session, *, company: Company, obj_in: CompanyProfileUpdate
+    ) -> Company:
+        """Apply a COMPANY_ADMIN self-service profile update (Wave D / D-D-4).
+
+        Only the fields explicitly sent are touched (``exclude_unset``); the
+        allow-list of editable fields is enforced by the ``CompanyProfileUpdate``
+        schema (no ``name`` / ``status`` / ``primary_user_id`` here). No commit —
+        the route owns the transaction (mirrors ``update``)."""
+        data = obj_in.model_dump(exclude_unset=True)
+        for field, value in data.items():
+            setattr(company, field, value)
+        db.add(company)
+        return company
 
 
 company = CRUDCompany()

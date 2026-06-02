@@ -25,13 +25,17 @@ from app.core.security import (
     create_access_token,
     create_refresh_token,
     decode_token,
+    get_password_hash,
     verify_password,
 )
+from app.crud import company_user as crud_company_user
 from app.crud import refresh_token as crud_refresh_token
 from app.crud import user as crud_user
 from app.crud.verification_token import verification_token
+from app.models.company import Company
 from app.models.user import User
 from app.schemas.auth import (
+    BusinessRegister,
     EmailResend,
     EmailVerification,
     GenericMessage,
@@ -150,6 +154,102 @@ async def register(
     except Exception:
         # Don't fail the registration on email send failure; the user can
         # request a new verification email via /auth/resend-verification.
+        logger.warning(
+            "Email send failed: kind=%s user_id=%s",
+            "verification",
+            user.id,
+            exc_info=True,
+        )
+
+    return {"message": GENERIC_REGISTRATION_MESSAGE}
+
+
+@router.post(
+    "/register-business",
+    response_model=GenericMessage,
+    status_code=status.HTTP_200_OK,
+)
+@limiter.limit("5/hour")
+async def register_business(
+    request: Request,
+    payload: BusinessRegister,
+    db: Session = Depends(get_db),
+):
+    """Self-register a B2B account (Wave D / D-D-5).
+
+    Atomically creates the user (``UserRole.CUSTOMER``) + a ``pending`` company +
+    an active ``COMPANY_ADMIN`` membership for that user, in one transaction. The
+    company stays ``pending`` until an admin approves it via the existing admin
+    Companies UI (open registration + manual approval). The user then goes
+    through the normal email-verification path (reuses the ``register`` email
+    flow), and the response is **anti-enumeration**: the same generic 200 body is
+    returned whether the email is free or already taken (a duplicate sends the
+    "already registered" notice out of band and creates nothing).
+
+    - **email**, **password**, **first_name**, **last_name**, **phone**: the
+      personal account (same rules as ``/register``).
+    - **company_name** (required), **company_tax_id** (optional): the company.
+    """
+    existing_user = crud_user.get_by_email(db, email=payload.email)
+
+    if existing_user:
+        # Same anti-enumeration posture as ``/register``: notify the existing
+        # holder out of band and return the generic body. No company is created.
+        try:
+            send_already_registered_email(
+                email_to=existing_user.email,
+                username=existing_user.first_name or existing_user.email,
+            )
+        except Exception:
+            logger.warning(
+                "Email send failed: kind=%s user_id=%s",
+                "already_registered",
+                existing_user.id,
+                exc_info=True,
+            )
+        return {"message": GENERIC_REGISTRATION_MESSAGE}
+
+    # Build user + company + membership in a single transaction. We construct the
+    # User directly (rather than ``crud_user.create``, which commits on its own)
+    # so the three rows commit together — a failure rolls back the whole signup.
+    user = User(
+        email=payload.email,
+        hashed_password=get_password_hash(payload.password),
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        phone=payload.phone or None,
+        company_name=payload.company_name,
+        company_tax_id=payload.company_tax_id or None,
+    )
+    db.add(user)
+    db.flush()  # populate user.id without committing
+
+    company = Company(
+        name=payload.company_name,
+        tax_id=payload.company_tax_id or None,
+        status="pending",
+        primary_user_id=user.id,
+    )
+    db.add(company)
+    db.flush()  # populate company.id without committing
+
+    # Active COMPANY_ADMIN membership (reuses CU-be's helper — flush, no commit).
+    crud_company_user.create(db, company_id=company.id, user_id=user.id)
+
+    db.commit()
+    db.refresh(user)
+
+    # Email verification is a post-create side effect (it commits its own token
+    # row), exactly as in ``/register`` — keep it best-effort so an email outage
+    # doesn't undo a successful signup.
+    try:
+        token = verification_token.create_for_user(db, user_id=user.id)
+        send_verification_email(
+            email_to=user.email,
+            username=user.first_name or user.email,
+            token=token.token,
+        )
+    except Exception:
         logger.warning(
             "Email send failed: kind=%s user_id=%s",
             "verification",
