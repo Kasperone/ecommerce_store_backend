@@ -200,3 +200,12 @@ class TestConstructEvent:
     def test_rejects_malformed_header(self):
         with pytest.raises(StripeError):
             _service().construct_event(b"{}", "not-a-signature")
+
+    def test_wraps_malformed_but_validly_signed_payload(self):
+        # A correctly-signed body that omits the top-level ``object`` field makes the
+        # SDK's construct_event read ``event.object`` -> AttributeError. The service must
+        # wrap it as StripeError (not leak the raw AttributeError) so the route returns
+        # 400, never 500. Regression for the 2026-06-02 webhook-500 finding.
+        payload = b'{"type":"checkout.session.completed","data":{"object":{}}}'
+        with pytest.raises(StripeError):
+            _service().construct_event(payload, _stripe_sig(payload))
