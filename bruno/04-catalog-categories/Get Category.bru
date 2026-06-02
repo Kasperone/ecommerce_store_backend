@@ -1,0 +1,21 @@
+meta {
+  name: Get Category
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/api/v1/categories/:category_id
+  body: none
+  auth: none
+}
+
+params:path {
+  category_id: 1
+}
+
+docs {
+**Access:** Public (no token)
+
+**Responses:** 200, 422
+}

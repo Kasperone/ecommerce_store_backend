@@ -1,0 +1,21 @@
+meta {
+  name: Delete Address
+  type: http
+  seq: 3
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/addresses/:address_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  address_id: 1
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Responses:** 204, 422
+}

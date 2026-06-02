@@ -1,0 +1,21 @@
+meta {
+  name: Delete Warehouse
+  type: http
+  seq: 10
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/admin/warehouses/:warehouse_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  warehouse_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 204, 422
+}

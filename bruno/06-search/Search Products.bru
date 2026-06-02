@@ -1,0 +1,30 @@
+meta {
+  name: Search Products
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/search
+  body: none
+  auth: none
+}
+
+params:query {
+  ~q: shirt
+  ~locale: en
+  ~currency: USD
+  ~category_id: 1
+  ~min_price: 10
+  ~max_price: 10
+  ~in_stock: true
+  ~sort: relevance
+  ~page: 1
+  ~page_size: 20
+}
+
+docs {
+**Access:** Public (no token)
+
+**Responses:** 200, 422
+}

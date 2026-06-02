@@ -1,0 +1,21 @@
+meta {
+  name: Delete Rate
+  type: http
+  seq: 8
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/admin/shipping/rates/:rate_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  rate_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 204, 422
+}

@@ -1,0 +1,21 @@
+meta {
+  name: Get My Quote
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/quotes/:quote_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  quote_id: 1
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Responses:** 200, 422
+}

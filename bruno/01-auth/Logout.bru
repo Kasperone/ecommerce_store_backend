@@ -1,0 +1,17 @@
+meta {
+  name: Logout
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v1/auth/logout
+  body: none
+  auth: none
+}
+
+docs {
+**Access:** Public (no token)
+
+**Responses:** 200, 422
+}

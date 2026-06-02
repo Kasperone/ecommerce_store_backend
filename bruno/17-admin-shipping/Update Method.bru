@@ -1,0 +1,36 @@
+meta {
+  name: Update Method
+  type: http
+  seq: 5
+}
+
+put {
+  url: {{baseUrl}}/api/v1/admin/shipping/methods/:method_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  method_id: 1
+}
+
+body:json {
+  {
+    "name": "Example",
+    "code": "EXAMPLE10",
+    "description": "string"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `ShippingMethodUpdate`:
+  - `name`: string|null
+  - `code`: string|null
+  - `description`: string|null
+  - `sort_order`: integer|null
+  - `is_active`: boolean|null
+
+**Responses:** 200, 422
+}

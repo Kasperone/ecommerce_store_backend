@@ -1,0 +1,33 @@
+meta {
+  name: Transfer Stock
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/inventory/transfer
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "product_id": 1,
+    "from_warehouse_id": 1,
+    "to_warehouse_id": 1,
+    "quantity": 1
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `TransferRequest`:
+  - `product_id`: integer (required)
+  - `from_warehouse_id`: integer (required)
+  - `to_warehouse_id`: integer (required)
+  - `quantity`: integer (required)
+  - `note`: string|null
+
+**Responses:** 200, 422
+}

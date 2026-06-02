@@ -1,0 +1,17 @@
+meta {
+  name: Stripe Webhook
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/v1/payments/stripe/webhook
+  body: none
+  auth: none
+}
+
+docs {
+**Access:** Public (no token)
+
+**Responses:** 200
+}

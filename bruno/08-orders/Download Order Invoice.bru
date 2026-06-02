@@ -1,0 +1,25 @@
+meta {
+  name: Download Order Invoice
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/api/v1/orders/:order_id/invoice
+  body: none
+  auth: inherit
+}
+
+params:path {
+  order_id: 1
+}
+
+params:query {
+  ~lang: en
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Responses:** 200, 422
+}

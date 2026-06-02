@@ -1,0 +1,21 @@
+meta {
+  name: Delete Tag
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/admin/tags/:tag_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  tag_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 204, 422
+}

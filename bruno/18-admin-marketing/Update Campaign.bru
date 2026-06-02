@@ -1,0 +1,37 @@
+meta {
+  name: Update Campaign
+  type: http
+  seq: 10
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/admin/campaigns/:campaign_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  campaign_id: 1
+}
+
+body:json {
+  {
+    "name": "Example",
+    "subject": "string",
+    "audience": "string"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `CampaignUpdate`:
+  - `name`: string|null
+  - `subject`: string|null
+  - `audience`: string|null
+  - `status`: string|null
+  - `body`: string|null
+  - `scheduled_at`: string|null
+
+**Responses:** 200, 422
+}

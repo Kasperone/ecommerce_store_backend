@@ -1,0 +1,38 @@
+meta {
+  name: Create Coupon
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/coupons/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "code": "EXAMPLE10",
+    "discount_type": "percent",
+    "value": 10.0
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `CouponCreate`:
+  - `code`: string (required)
+  - `description`: string|null
+  - `discount_type`: string (required) — one of ['percent', 'fixed']
+  - `value`: number (required)
+  - `currency`: string|null
+  - `min_order_amount`: number|null
+  - `max_uses`: integer|null
+  - `per_user_limit`: integer|null
+  - `starts_at`: string|null
+  - `ends_at`: string|null
+  - `is_active`: boolean
+
+**Responses:** 201, 422
+}

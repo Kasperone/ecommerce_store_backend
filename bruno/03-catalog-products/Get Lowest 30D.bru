@@ -1,0 +1,25 @@
+meta {
+  name: Get Lowest 30D
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/api/v1/products/:product_id/lowest-30d
+  body: none
+  auth: none
+}
+
+params:path {
+  product_id: 1
+}
+
+params:query {
+  currency: USD
+}
+
+docs {
+**Access:** Public (no token)
+
+**Responses:** 200, 422
+}

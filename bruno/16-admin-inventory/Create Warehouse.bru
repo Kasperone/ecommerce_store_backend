@@ -1,0 +1,30 @@
+meta {
+  name: Create Warehouse
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/warehouses/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "name": "Example",
+    "code": "EXAMPLE10"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `WarehouseCreate`:
+  - `name`: string (required)
+  - `code`: string (required)
+  - `is_active`: boolean
+  - `is_default`: boolean
+
+**Responses:** 201, 422
+}

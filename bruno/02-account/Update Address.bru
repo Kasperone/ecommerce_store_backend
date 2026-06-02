@@ -1,0 +1,41 @@
+meta {
+  name: Update Address
+  type: http
+  seq: 4
+}
+
+put {
+  url: {{baseUrl}}/api/v1/addresses/:address_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  address_id: 1
+}
+
+body:json {
+  {
+    "label": "string",
+    "recipient_name": "Example",
+    "street": "string"
+  }
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Request body** `AddressUpdate`:
+  - `label`: string|null
+  - `recipient_name`: string|null
+  - `street`: string|null
+  - `city`: string|null
+  - `postal_code`: string|null
+  - `country`: string|null
+  - `state`: string|null
+  - `phone`: string|null
+  - `is_default_shipping`: boolean|null
+  - `is_default_billing`: boolean|null
+
+**Responses:** 200, 422
+}

@@ -1,0 +1,21 @@
+meta {
+  name: List Active Banners
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/banners/
+  body: none
+  auth: none
+}
+
+params:query {
+  ~placement: home_hero
+}
+
+docs {
+**Access:** Public (no token)
+
+**Responses:** 200, 422
+}

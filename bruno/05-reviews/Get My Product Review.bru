@@ -1,0 +1,21 @@
+meta {
+  name: Get My Product Review
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/v1/products/:product_id/reviews/me
+  body: none
+  auth: inherit
+}
+
+params:path {
+  product_id: 1
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Responses:** 200, 422
+}

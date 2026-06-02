@@ -1,0 +1,23 @@
+meta {
+  name: List Categories
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/categories/
+  body: none
+  auth: none
+}
+
+params:query {
+  ~skip: 0
+  ~limit: 10
+  ~is_active: true
+}
+
+docs {
+**Access:** Public (no token)
+
+**Responses:** 200, 422
+}

@@ -1,0 +1,21 @@
+meta {
+  name: Get Campaign
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/campaigns/:campaign_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  campaign_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

@@ -1,0 +1,17 @@
+meta {
+  name: Payu Notify
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/v1/payments/payu/notify
+  body: none
+  auth: none
+}
+
+docs {
+**Access:** Public (no token)
+
+**Responses:** 200
+}

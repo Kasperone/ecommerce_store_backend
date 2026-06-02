@@ -1,0 +1,28 @@
+meta {
+  name: Resend Verification Email
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/api/v1/auth/resend-verification
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "email": "buyer@example.com"
+  }
+}
+
+docs {
+**Access:** Public (no token)
+
+**Rate limit:** 3/hour
+
+**Request body** `EmailResend`:
+  - `email`: string (required)
+
+**Responses:** 200, 422
+}

@@ -1,0 +1,27 @@
+meta {
+  name: List Product Reviews
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/products/:product_id/reviews
+  body: none
+  auth: none
+}
+
+params:path {
+  product_id: 1
+}
+
+params:query {
+  ~page: 1
+  ~page_size: 20
+  ~sort_by: newest
+}
+
+docs {
+**Access:** Public (no token)
+
+**Responses:** 200, 422
+}

@@ -1,0 +1,17 @@
+meta {
+  name: List Tags
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/tags/
+  body: none
+  auth: inherit
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200
+}

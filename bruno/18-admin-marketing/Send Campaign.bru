@@ -1,0 +1,21 @@
+meta {
+  name: Send Campaign
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/campaigns/:campaign_id/send
+  body: none
+  auth: inherit
+}
+
+params:path {
+  campaign_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

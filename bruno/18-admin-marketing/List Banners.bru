@@ -1,0 +1,24 @@
+meta {
+  name: List Banners
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/banners/
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~page: 1
+  ~page_size: 20
+  ~is_active: true
+  ~placement: home_hero
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

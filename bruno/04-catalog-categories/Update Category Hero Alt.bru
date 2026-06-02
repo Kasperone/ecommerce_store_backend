@@ -1,0 +1,30 @@
+meta {
+  name: Update Category Hero Alt
+  type: http
+  seq: 11
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/categories/:category_id/hero
+  body: json
+  auth: inherit
+}
+
+params:path {
+  category_id: 1
+}
+
+body:json {
+  {
+    "hero_image_alt": "string"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `CategoryHeroAltUpdate`:
+  - `hero_image_alt`: string|null
+
+**Responses:** 200, 422
+}

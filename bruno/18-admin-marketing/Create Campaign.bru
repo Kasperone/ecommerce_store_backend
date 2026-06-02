@@ -1,0 +1,33 @@
+meta {
+  name: Create Campaign
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/campaigns/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "name": "Example",
+    "subject": "string",
+    "audience": "all"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `CampaignCreate`:
+  - `name`: string (required)
+  - `subject`: string (required)
+  - `audience`: string (required) — one of ['all', 'customers', 'b2b']
+  - `status`: string — one of ['draft', 'scheduled', 'sent']
+  - `body`: string|null
+  - `scheduled_at`: string|null
+
+**Responses:** 201, 422
+}

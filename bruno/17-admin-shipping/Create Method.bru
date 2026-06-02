@@ -1,0 +1,30 @@
+meta {
+  name: Create Method
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/shipping/methods
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "name": "Example"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `ShippingMethodCreate`:
+  - `name`: string (required)
+  - `code`: string|null
+  - `description`: string|null
+  - `sort_order`: integer
+  - `is_active`: boolean
+
+**Responses:** 201, 422
+}

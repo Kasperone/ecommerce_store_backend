@@ -1,0 +1,22 @@
+meta {
+  name: Delete Product Image
+  type: http
+  seq: 9
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/products/:product_id/images/:image_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  product_id: 1
+  image_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 204, 422
+}
