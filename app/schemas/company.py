@@ -21,6 +21,7 @@ from typing import Annotated, Literal
 from pydantic import Field, model_validator
 
 from app.models.company import COMPANY_STATUS_VALUES
+from app.models.company_user import COMPANY_ROLE_VALUES
 from app.schemas.base import BaseSchema, TimestampSchema
 
 # Hardcoded for pyright; the cross-check below catches drift from the model.
@@ -31,6 +32,16 @@ CompanyStatusLiteral = Literal["pending", "approved", "rejected"]
 assert set(CompanyStatusLiteral.__args__) == set(COMPANY_STATUS_VALUES), (  # noqa: S101
     "CompanyStatusLiteral drifted from app.models.company.COMPANY_STATUS_VALUES: "
     f"schema={set(CompanyStatusLiteral.__args__)} vs model={set(COMPANY_STATUS_VALUES)}"
+)
+
+# The caller's B2B role on ``GET /companies/me`` (Wave D). Hardcoded for pyright;
+# cross-checked against the model's value set at import time (mirrors the status
+# literal above) so the schema, DB CHECK, and FE role helper can't drift.
+CompanyRoleLiteral = Literal["COMPANY_ADMIN", "BUYER", "APPROVER", "VIEWER"]
+
+assert set(CompanyRoleLiteral.__args__) == set(COMPANY_ROLE_VALUES), (  # noqa: S101
+    "CompanyRoleLiteral drifted from app.models.company_user.COMPANY_ROLE_VALUES: "
+    f"schema={set(CompanyRoleLiteral.__args__)} vs model={set(COMPANY_ROLE_VALUES)}"
 )
 
 
@@ -112,3 +123,15 @@ class CompanyListResponse(BaseSchema):
     page: int
     page_size: int
     pages: int
+
+
+class CompanyMeResponse(CompanyResponse):
+    """The caller's own company on ``GET /companies/me`` (Wave D).
+
+    Extends ``CompanyResponse`` with the caller's B2B ``role`` so the frontend can
+    role-gate the B2B surfaces (VIEWER read-only; BUYER request quotes + checkout;
+    COMPANY_ADMIN profile + team). Built from a ``CompanyMembership`` (the company
+    fields come from ``membership.company`` via ``from_attributes``; ``role`` is
+    set explicitly by the route)."""
+
+    role: CompanyRoleLiteral
