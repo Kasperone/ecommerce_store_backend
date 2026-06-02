@@ -1,0 +1,23 @@
+meta {
+  name: Get Top Products Report
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/reports/top-products
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~start: 2026-01-01
+  ~end: 2026-01-01
+  ~limit: 10
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

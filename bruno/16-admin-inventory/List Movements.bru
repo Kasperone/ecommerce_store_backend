@@ -1,0 +1,24 @@
+meta {
+  name: List Movements
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/inventory/movements
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~page: 1
+  ~page_size: 20
+  ~product_id: 1
+  ~warehouse_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

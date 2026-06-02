@@ -1,0 +1,48 @@
+meta {
+  name: Register
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/api/v1/auth/register
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "email": "buyer@example.com",
+    "first_name": "Example",
+    "last_name": "Example",
+    "password": "ChangeMe!2026"
+  }
+}
+
+docs {
+**Access:** Public (no token)
+
+**Rate limit:** 5/hour
+
+**Request body** `UserCreate`:
+  - `email`: string (required)
+  - `first_name`: string (required)
+  - `last_name`: string (required)
+  - `phone`: string|null
+  - `locale`: string — one of ['en', 'pl']
+  - `password`: string (required)
+  - `shipping_street`: string|null
+  - `shipping_city`: string|null
+  - `shipping_postal_code`: string|null
+  - `shipping_country`: string|null
+  - `shipping_state`: string|null
+  - `company_name`: string|null
+  - `company_tax_id`: string|null
+  - `company_address_street`: string|null
+  - `company_address_city`: string|null
+  - `company_address_postal_code`: string|null
+  - `company_address_country`: string|null
+  - `company_address_state`: string|null
+
+**Responses:** 200, 422
+}

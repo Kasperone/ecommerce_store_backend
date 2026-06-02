@@ -1,0 +1,36 @@
+meta {
+  name: Update Quote
+  type: http
+  seq: 10
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/admin/quotes/:quote_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  quote_id: 1
+}
+
+body:json {
+  {
+    "status": "string",
+    "currency": "USD",
+    "valid_until": "2026-12-31T23:59:59"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `QuoteUpdate`:
+  - `status`: string|null
+  - `currency`: string|null
+  - `valid_until`: string|null
+  - `notes`: string|null
+  - `items`: array|null
+
+**Responses:** 200, 422
+}

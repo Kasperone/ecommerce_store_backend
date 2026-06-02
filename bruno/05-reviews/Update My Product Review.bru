@@ -1,0 +1,34 @@
+meta {
+  name: Update My Product Review
+  type: http
+  seq: 5
+}
+
+put {
+  url: {{baseUrl}}/api/v1/products/:product_id/reviews/me
+  body: json
+  auth: inherit
+}
+
+params:path {
+  product_id: 1
+}
+
+body:json {
+  {
+    "rating": 1,
+    "title": "string",
+    "body": "string"
+  }
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Request body** `ReviewUpdate`:
+  - `rating`: integer|null
+  - `title`: string|null
+  - `body`: string|null
+
+**Responses:** 200, 422
+}

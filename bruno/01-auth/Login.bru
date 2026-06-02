@@ -1,0 +1,31 @@
+meta {
+  name: Login
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/auth/login
+  body: formUrlEncoded
+  auth: none
+}
+
+body:form-urlencoded {
+  username: {{email}}
+  password: {{password}}
+}
+
+script:post-response {
+  if (res.status === 200 && res.body && res.body.access_token) {
+    bru.setEnvVar("token", res.body.access_token);
+    console.log("Logged in, token stored");
+  }
+}
+
+docs {
+**Access:** Public (no token)
+
+**Rate limit:** 5/15minutes
+
+**Responses:** 200, 422
+}

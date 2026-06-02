@@ -1,0 +1,21 @@
+meta {
+  name: Convert Quote
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/quotes/:quote_id/convert
+  body: none
+  auth: inherit
+}
+
+params:path {
+  quote_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 201, 422
+}

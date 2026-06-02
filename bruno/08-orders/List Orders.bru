@@ -1,0 +1,25 @@
+meta {
+  name: List Orders
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/orders/
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~page: 1
+  ~page_size: 20
+  ~status:
+  ~date_from: 2026-01-01
+  ~date_to: 2026-01-01
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Responses:** 200, 422
+}

@@ -1,0 +1,21 @@
+meta {
+  name: Revoke Session
+  type: http
+  seq: 14
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/auth/sessions/:session_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  session_id: REPLACE_WITH_SESSION_JTI
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Responses:** 204, 422
+}

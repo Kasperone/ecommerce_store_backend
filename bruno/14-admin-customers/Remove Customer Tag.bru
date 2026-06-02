@@ -1,0 +1,22 @@
+meta {
+  name: Remove Customer Tag
+  type: http
+  seq: 11
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/admin/customers/:customer_id/tags/:tag_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  customer_id: 1
+  tag_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

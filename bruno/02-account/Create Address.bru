@@ -1,0 +1,39 @@
+meta {
+  name: Create Address
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/addresses
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "recipient_name": "Example",
+    "street": "string",
+    "city": "string",
+    "postal_code": "EXAMPLE10",
+    "country": "US"
+  }
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Request body** `AddressCreate`:
+  - `label`: string|null
+  - `recipient_name`: string (required)
+  - `street`: string (required)
+  - `city`: string (required)
+  - `postal_code`: string (required)
+  - `country`: string (required)
+  - `state`: string|null
+  - `phone`: string|null
+  - `is_default_shipping`: boolean
+  - `is_default_billing`: boolean
+
+**Responses:** 201, 422
+}

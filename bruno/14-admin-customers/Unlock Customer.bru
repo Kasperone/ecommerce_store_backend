@@ -1,0 +1,21 @@
+meta {
+  name: Unlock Customer
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/customers/:customer_id/unlock
+  body: none
+  auth: inherit
+}
+
+params:path {
+  customer_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

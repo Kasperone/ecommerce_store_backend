@@ -1,0 +1,26 @@
+meta {
+  name: List Reviews
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/reviews/
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~page: 1
+  ~page_size: 20
+  ~status:
+  ~product_id: 1
+  ~rating: 1
+  ~search:
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

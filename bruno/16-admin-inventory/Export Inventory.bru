@@ -1,0 +1,22 @@
+meta {
+  name: Export Inventory
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/inventory/export
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~status:
+  ~search:
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

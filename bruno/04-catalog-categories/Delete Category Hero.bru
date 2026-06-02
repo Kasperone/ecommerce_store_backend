@@ -1,0 +1,21 @@
+meta {
+  name: Delete Category Hero
+  type: http
+  seq: 10
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/categories/:category_id/hero
+  body: none
+  auth: inherit
+}
+
+params:path {
+  category_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 204, 422
+}

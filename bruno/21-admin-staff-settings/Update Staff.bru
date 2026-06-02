@@ -1,0 +1,32 @@
+meta {
+  name: Update Staff
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/admin/staff/:user_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  user_id: 1
+}
+
+body:json {
+  {
+    "role": {},
+    "is_active": false
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `StaffUpdate`:
+  - `role`: UserRole|null
+  - `is_active`: boolean|null
+
+**Responses:** 200, 422
+}

@@ -1,0 +1,37 @@
+meta {
+  name: Create Quote
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/quotes/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "company_id": 1,
+    "items": [
+      {
+        "description": "string",
+        "quantity": 1,
+        "unit_price": 10.0
+      }
+    ]
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `QuoteCreate`:
+  - `company_id`: integer (required)
+  - `currency`: string — one of ['USD', 'PLN', 'EUR']
+  - `valid_until`: string|null
+  - `notes`: string|null
+  - `items`: array[QuoteItemCreate] (required)
+
+**Responses:** 201, 422
+}

@@ -1,0 +1,35 @@
+meta {
+  name: Update Product Image
+  type: http
+  seq: 10
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/products/:product_id/images/:image_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  product_id: 1
+  image_id: 1
+}
+
+body:json {
+  {
+    "alt_text": "string",
+    "sort_order": 1,
+    "is_primary": false
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `ProductImageUpdate`:
+  - `alt_text`: string|null
+  - `sort_order`: integer|null
+  - `is_primary`: boolean|null
+
+**Responses:** 200, 422
+}

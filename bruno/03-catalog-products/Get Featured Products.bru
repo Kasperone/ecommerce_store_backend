@@ -1,0 +1,21 @@
+meta {
+  name: Get Featured Products
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/products/featured
+  body: none
+  auth: none
+}
+
+params:query {
+  ~limit: 10
+}
+
+docs {
+**Access:** Public (no token)
+
+**Responses:** 200, 422
+}

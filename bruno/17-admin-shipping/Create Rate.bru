@@ -1,0 +1,35 @@
+meta {
+  name: Create Rate
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/shipping/rates
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "currency": "USD",
+    "amount": 10.0,
+    "zone_id": 1,
+    "method_id": 1
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `ShippingRateCreate`:
+  - `currency`: string (required) — one of ['USD', 'PLN', 'EUR']
+  - `amount`: number (required)
+  - `free_above_subtotal`: number|null
+  - `tiers`: array|null
+  - `weight_tiers`: array|null
+  - `zone_id`: integer (required)
+  - `method_id`: integer (required)
+
+**Responses:** 201, 422
+}

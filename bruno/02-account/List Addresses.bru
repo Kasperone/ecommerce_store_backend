@@ -1,0 +1,17 @@
+meta {
+  name: List Addresses
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/addresses
+  body: none
+  auth: inherit
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Responses:** 200
+}

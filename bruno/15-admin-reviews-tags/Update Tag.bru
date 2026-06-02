@@ -1,0 +1,32 @@
+meta {
+  name: Update Tag
+  type: http
+  seq: 8
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/admin/tags/:tag_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  tag_id: 1
+}
+
+body:json {
+  {
+    "name": "Example",
+    "color": "#2563eb"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `TagUpdate`:
+  - `name`: string|null
+  - `color`: string|null
+
+**Responses:** 200, 422
+}

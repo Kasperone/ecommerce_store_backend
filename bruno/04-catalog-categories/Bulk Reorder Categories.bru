@@ -1,0 +1,31 @@
+meta {
+  name: Bulk Reorder Categories
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v1/categories/bulk-reorder
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "items": [
+      {
+        "id": 1,
+        "sort_order": 1
+      }
+    ]
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `BulkReorderRequest`:
+  - `items`: array[BulkReorderItem] (required)
+
+**Responses:** 200, 422
+}

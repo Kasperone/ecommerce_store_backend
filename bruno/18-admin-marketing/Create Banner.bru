@@ -1,0 +1,36 @@
+meta {
+  name: Create Banner
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/banners/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "title": "string",
+    "image_url": "https://example.com/image.jpg",
+    "placement": "home_hero"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `BannerCreate`:
+  - `title`: string (required)
+  - `subtitle`: string|null
+  - `image_url`: string (required)
+  - `link_url`: string|null
+  - `placement`: string (required) — one of ['home_hero', 'promo_strip']
+  - `sort_order`: integer
+  - `starts_at`: string|null
+  - `ends_at`: string|null
+  - `is_active`: boolean
+
+**Responses:** 201, 422
+}

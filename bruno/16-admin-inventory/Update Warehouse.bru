@@ -1,0 +1,35 @@
+meta {
+  name: Update Warehouse
+  type: http
+  seq: 12
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/admin/warehouses/:warehouse_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  warehouse_id: 1
+}
+
+body:json {
+  {
+    "name": "Example",
+    "code": "EXAMPLE10",
+    "is_active": false
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `WarehouseUpdate`:
+  - `name`: string|null
+  - `code`: string|null
+  - `is_active`: boolean|null
+  - `is_default`: boolean|null
+
+**Responses:** 200, 422
+}

@@ -1,0 +1,33 @@
+meta {
+  name: Restock Product
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/inventory/products/:product_id/restock
+  body: json
+  auth: inherit
+}
+
+params:path {
+  product_id: 1
+}
+
+body:json {
+  {
+    "warehouse_id": 1,
+    "quantity": 1
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `RestockRequest`:
+  - `warehouse_id`: integer (required)
+  - `quantity`: integer (required)
+  - `note`: string|null
+
+**Responses:** 200, 422
+}

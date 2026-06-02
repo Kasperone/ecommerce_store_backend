@@ -1,0 +1,33 @@
+meta {
+  name: Create Product Review
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/products/:product_id/reviews
+  body: json
+  auth: inherit
+}
+
+params:path {
+  product_id: 1
+}
+
+body:json {
+  {
+    "rating": 1,
+    "body": "string"
+  }
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Request body** `ReviewCreate`:
+  - `rating`: integer (required)
+  - `title`: string|null
+  - `body`: string (required)
+
+**Responses:** 201, 422
+}

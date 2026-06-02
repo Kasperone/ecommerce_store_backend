@@ -1,0 +1,21 @@
+meta {
+  name: Accept My Quote
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v1/quotes/:quote_id/accept
+  body: none
+  auth: inherit
+}
+
+params:path {
+  quote_id: 1
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Responses:** 200, 422
+}

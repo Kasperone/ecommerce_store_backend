@@ -1,0 +1,32 @@
+meta {
+  name: Assign Customer Tag
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/customers/:customer_id/tags
+  body: json
+  auth: inherit
+}
+
+params:path {
+  customer_id: 1
+}
+
+body:json {
+  {
+    "tag_id": 1,
+    "name": "Example"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `CustomerTagAssign`:
+  - `tag_id`: integer|null
+  - `name`: string|null
+
+**Responses:** 200, 422
+}

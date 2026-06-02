@@ -1,0 +1,49 @@
+auth {
+  mode: bearer
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+script:pre-request {
+  // Auto-login: if no token is set yet, log in as the customer and stash it.
+  // Guarded so it never burns the login rate-limit budget (5 / 15 min) on
+  // repeat runs, and skipped for /auth/* so it doesn't double-login.
+  // Credentials come from bruno/.env (process.env) — nothing secret is committed.
+  const url = (req.getUrl && req.getUrl()) || "";
+  const haveToken = bru.getEnvVar("token");
+  if (!haveToken && url.indexOf("/api/v1/auth/") === -1) {
+    const axios = require("axios");
+    const base = bru.getEnvVar("baseUrl");
+    const form = new URLSearchParams();
+    form.append("username", bru.getProcessEnv("BRUNO_EMAIL"));
+    form.append("password", bru.getProcessEnv("BRUNO_PASSWORD"));
+    const res = await axios.post(base + "/api/v1/auth/login", form, {
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    });
+    bru.setEnvVar("token", res.data.access_token);
+    console.log("Auto-logged in as", bru.getProcessEnv("BRUNO_EMAIL"));
+  }
+}
+
+docs {
+  # Ecommerce Store API
+
+  Bruno collection scaffolded from the FastAPI OpenAPI schema.
+
+  ## Quick start
+  1. `cp bruno/.env.example bruno/.env` and fill in your local dev seed creds (`.env` is gitignored).
+  2. Start the backend: `uvicorn app.main:app --reload --port 8000`
+  3. Select the **Local** environment (top-right), then fire any request — the collection-level
+     pre-request **auto-logs-in as the customer** and injects the bearer the first time.
+  4. To act as **admin**, run `01-auth > Login (admin)` once — it overwrites `token`.
+  5. On a `401` (access tokens expire in ~15-30 min), run a Login request again, or run
+     `01-auth > Refresh` (cookie-based, 30/hour — no login-budget cost).
+
+  ## Notes
+  - `login` is **form-encoded**; field `username` is the **email**.
+  - Refresh tokens ride an HttpOnly cookie (Bruno's cookie jar handles it) — not a header.
+  - `token` is a **secret var** — captured at runtime, stored locally, never written to the committed file.
+  - Path/query params and JSON bodies are pre-filled with example values; edit before sending writes.
+}

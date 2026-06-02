@@ -1,0 +1,22 @@
+meta {
+  name: Unvote Review Helpful
+  type: http
+  seq: 8
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/products/:product_id/reviews/:review_id/vote
+  body: none
+  auth: inherit
+}
+
+params:path {
+  product_id: 1
+  review_id: 1
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Responses:** 200, 422
+}

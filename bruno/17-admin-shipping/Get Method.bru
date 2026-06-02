@@ -1,0 +1,21 @@
+meta {
+  name: Get Method
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/shipping/methods/:method_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  method_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

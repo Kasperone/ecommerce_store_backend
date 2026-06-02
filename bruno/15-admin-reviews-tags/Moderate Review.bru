@@ -1,0 +1,32 @@
+meta {
+  name: Moderate Review
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/admin/reviews/:review_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  review_id: 1
+}
+
+body:json {
+  {
+    "status": "string",
+    "admin_response": "string"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `ReviewModerate`:
+  - `status`: string|null
+  - `admin_response`: string|null
+
+**Responses:** 200, 422
+}

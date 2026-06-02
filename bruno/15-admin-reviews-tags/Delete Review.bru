@@ -1,0 +1,21 @@
+meta {
+  name: Delete Review
+  type: http
+  seq: 2
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/admin/reviews/:review_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  review_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 204, 422
+}

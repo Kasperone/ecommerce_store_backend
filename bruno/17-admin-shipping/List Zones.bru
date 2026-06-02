@@ -1,0 +1,22 @@
+meta {
+  name: List Zones
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/shipping/zones
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~page: 1
+  ~page_size: 20
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

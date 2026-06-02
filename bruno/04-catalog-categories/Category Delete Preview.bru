@@ -1,0 +1,21 @@
+meta {
+  name: Category Delete Preview
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/api/v1/categories/:category_id/delete-preview
+  body: none
+  auth: inherit
+}
+
+params:path {
+  category_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

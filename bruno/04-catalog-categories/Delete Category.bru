@@ -1,0 +1,25 @@
+meta {
+  name: Delete Category
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/categories/:category_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  category_id: 1
+}
+
+params:query {
+  ~mode: reassign
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 204, 422
+}

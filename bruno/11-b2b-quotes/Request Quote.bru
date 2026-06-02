@@ -1,0 +1,33 @@
+meta {
+  name: Request Quote
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/quotes/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "items": [
+      {
+        "product_id": 1,
+        "quantity": 1
+      }
+    ]
+  }
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Request body** `QuoteRequestCreate`:
+  - `currency`: string — one of ['USD', 'PLN', 'EUR']
+  - `items`: array[QuoteRequestItem] (required)
+  - `notes`: string|null
+
+**Responses:** 201, 422
+}

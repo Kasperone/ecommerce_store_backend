@@ -1,0 +1,23 @@
+meta {
+  name: Get Sales Report
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/reports/sales
+  body: none
+  auth: inherit
+}
+
+params:query {
+  start: 2026-01-01
+  end: 2026-01-01
+  ~granularity: day
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

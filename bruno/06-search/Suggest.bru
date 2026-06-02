@@ -1,0 +1,23 @@
+meta {
+  name: Suggest
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/search/suggest
+  body: none
+  auth: none
+}
+
+params:query {
+  q: shirt
+  ~locale: en
+  ~limit: 10
+}
+
+docs {
+**Access:** Public (no token)
+
+**Responses:** 200, 422
+}
