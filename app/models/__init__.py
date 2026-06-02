@@ -1,3 +1,4 @@
+from app.models.address import Address
 from app.models.admin_audit_event import AdminAuditEvent
 from app.models.banner import BANNER_PLACEMENT_VALUES, Banner, BannerPlacement
 from app.models.base import Base
@@ -43,6 +44,7 @@ from app.models.verification_token import VerificationToken
 from app.models.warehouse import StockLevel, Warehouse
 
 __all__ = [
+    "Address",
     "AdminAuditEvent",
     "Banner",
     "BannerPlacement",

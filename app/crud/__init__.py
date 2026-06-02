@@ -1,3 +1,4 @@
+from app.crud.address import address
 from app.crud.audit_event import audit_event
 from app.crud.banner import banner
 from app.crud.campaign import campaign
@@ -28,6 +29,7 @@ from app.crud.user import user
 from app.crud.warehouse import warehouse
 
 __all__ = [
+    "address",
     "user",
     "banner",
     "campaign",

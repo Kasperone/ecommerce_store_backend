@@ -3,6 +3,12 @@ from app.schemas.account import (
     PreferencesResponse,
     PreferencesUpdate,
 )
+from app.schemas.address import (
+    AddressBase,
+    AddressCreate,
+    AddressResponse,
+    AddressUpdate,
+)
 from app.schemas.auth import (
     EmailVerification,
     PasswordChange,
@@ -126,6 +132,11 @@ __all__ = [
     "PreferencesResponse",
     "PreferencesUpdate",
     "CurrencyLiteral",
+    # Address book
+    "AddressBase",
+    "AddressCreate",
+    "AddressUpdate",
+    "AddressResponse",
     # Banner
     "BannerBase",
     "BannerCreate",
