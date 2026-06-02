@@ -4,21 +4,26 @@
 membership** (Wave D / D-D-2), plus the caller's B2B ``role``. The frontend uses
 it to show/hide and role-gate the B2B surfaces (the "Request a quote" cart CTA,
 the quotes nav, the company-profile + team sections). A caller who is no
-company's member gets a **404** — they are not a B2B account.
+company's member gets **200 with a null body** (not 404): the FE probes this on
+every authed page, and a 404 there spams the browser console on every cold load.
+404-for-non-member is reserved for the *intentional* B2B routes (team CRUD,
+profile PATCH) where it's not a per-page probe.
 
 Backward-compatible with Wave C (D-C-1/D-C-2): a company's denormalized primary
 contact (``companies.primary_user_id``) with no explicit membership row resolves
 identically as a ``COMPANY_ADMIN`` (see ``crud_company_user.get_active_membership``
-+ the migration backfill), so the contract stays "the caller's company or 404"
-and the existing quote-request flow is unaffected.
++ the migration backfill), so the resolved company is unchanged and the existing
+quote-request flow is unaffected.
 """
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_company_member, get_db, require_company_admin
+from app.core.dependencies import get_current_active_user, get_db, require_company_admin
 from app.crud import company as crud_company
+from app.crud import company_user as crud_company_user
 from app.crud.company_user import CompanyMembership
+from app.models.user import User
 from app.schemas.company import (
     CompanyMeResponse,
     CompanyProfileUpdate,
@@ -28,22 +33,33 @@ from app.schemas.company import (
 router = APIRouter()
 
 
-@router.get("/me", response_model=CompanyMeResponse)
+@router.get("/me", response_model=CompanyMeResponse | None)
 async def get_my_company(
-    membership: CompanyMembership = Depends(get_current_company_member),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
 ):
-    """The caller's company + B2B role (resolved via membership), else 404.
+    """The caller's company + B2B role, or a **null body** if they're not B2B.
 
-    404 means "you are not a B2B account" — the FE uses it to gate the B2B
-    surfaces. The response carries the caller's ``role`` so the FE can role-gate
-    (VIEWER read-only; BUYER request quotes + checkout; COMPANY_ADMIN profile +
-    team).
+    Returns 200 with the company for a B2B account and **200 with ``null``** for
+    a non-member — deliberately NOT 404. This is the caller asking about their
+    OWN membership (not resource enumeration), and the FE probes it on every
+    authed page to gate the B2B surfaces, so a 404 would spam the browser
+    console on every cold load. The FE treats a null body as "not a B2B
+    account". (Intentional routes — team CRUD, profile PATCH — keep 404 for
+    non-members via ``get_current_company_member``/``require_company_admin``.)
+
+    The response carries the caller's ``role`` so the FE can role-gate (VIEWER
+    read-only; BUYER request quotes + checkout; COMPANY_ADMIN profile + team).
+    Resolved via the active ``company_users`` membership; a denormalized primary
+    contact with no membership row still resolves as COMPANY_ADMIN (Wave-C
+    backward-compat — see ``crud_company_user.get_active_membership``).
     """
-    # The company fields come from the ORM row via ``from_attributes``; ``role`` is
-    # the resolved membership role merged in. Going through ``model_validate`` on a
-    # merged dict lets Pydantic coerce/validate the role string against the
-    # ``CompanyRoleLiteral`` at runtime (it's DB-CHECK-guaranteed, but this keeps
-    # the type honest — ``membership.role`` is a plain ``str``).
+    membership = crud_company_user.get_active_membership(db, user_id=current_user.id)
+    if membership is None:
+        return None
+    # ``role`` is merged onto the company fields via ``model_validate`` on a merged
+    # dict so Pydantic coerces/validates the role string against ``CompanyRoleLiteral``
+    # at runtime (``membership.role`` is a plain ``str``).
     base = CompanyResponse.model_validate(membership.company)
     return CompanyMeResponse.model_validate({**base.model_dump(), "role": membership.role})
 
