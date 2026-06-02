@@ -63,6 +63,16 @@ class CompanyBase(BaseSchema):
     # attributes the resulting order to). Optional; the route validates the
     # referenced user exists (422 if not).
     primary_user_id: int | None = Field(default=None)
+    # B2B company profile fields (Wave D / D-D-4). All optional; surfaced on the
+    # response (so ``GET /companies/me`` carries them) and editable by a
+    # COMPANY_ADMIN via ``PATCH /companies/me`` (see ``CompanyProfileUpdate``).
+    regon: str | None = Field(default=None, max_length=32)
+    billing_address_street: str | None = Field(default=None, max_length=255)
+    billing_address_city: str | None = Field(default=None, max_length=128)
+    billing_address_postal_code: str | None = Field(default=None, max_length=32)
+    billing_address_country: str | None = Field(default=None, max_length=128)
+    billing_address_state: str | None = Field(default=None, max_length=128)
+    default_currency: str | None = Field(default=None, max_length=3)
 
     @model_validator(mode="after")
     def _normalise_name(self) -> CompanyBase:
@@ -135,3 +145,57 @@ class CompanyMeResponse(CompanyResponse):
     set explicitly by the route)."""
 
     role: CompanyRoleLiteral
+
+
+# ===========================================================================
+# CP-be APPEND BLOCK — company-profile self-service (Wave D / D-D-4).
+# Shared file with TM-be; additions below are appended, no edits above.
+# ===========================================================================
+
+
+class CompanyProfileUpdate(BaseSchema):
+    """Request body for ``PATCH /api/v1/companies/me`` — the COMPANY_ADMIN-editable
+    company-profile fields (Wave D / D-D-4).
+
+    Deliberately a **narrow** allow-list: a COMPANY_ADMIN may edit the company's
+    own contact + billing profile, but NOT ``name`` / ``status`` /
+    ``account_manager`` / ``primary_user_id`` (those are admin-directory concerns
+    — ``status`` is the approval gate; the primary contact + account manager are
+    set by staff). All fields are optional; only those explicitly sent are
+    applied (``exclude_unset`` in the CRUD). ``default_currency`` is normalised to
+    upper-case; an empty/blank string for any field clears it to ``None``."""
+
+    tax_id: str | None = Field(default=None, max_length=64)
+    regon: str | None = Field(default=None, max_length=32)
+    email: str | None = Field(default=None, max_length=255)
+    phone: str | None = Field(default=None, max_length=32)
+    billing_address_street: str | None = Field(default=None, max_length=255)
+    billing_address_city: str | None = Field(default=None, max_length=128)
+    billing_address_postal_code: str | None = Field(default=None, max_length=32)
+    billing_address_country: str | None = Field(default=None, max_length=128)
+    billing_address_state: str | None = Field(default=None, max_length=128)
+    default_currency: Annotated[str | None, Field(default=None, max_length=3)] = None
+
+    @model_validator(mode="after")
+    def _normalise(self) -> CompanyProfileUpdate:
+        # Trim every string field; an empty result becomes ``None`` (an explicit
+        # clear). ``default_currency`` is upper-cased (ISO 4217 is upper-case).
+        for field in (
+            "tax_id",
+            "regon",
+            "email",
+            "phone",
+            "billing_address_street",
+            "billing_address_city",
+            "billing_address_postal_code",
+            "billing_address_country",
+            "billing_address_state",
+            "default_currency",
+        ):
+            value = getattr(self, field)
+            if isinstance(value, str):
+                trimmed = value.strip()
+                setattr(self, field, trimmed or None)
+        if self.default_currency:
+            self.default_currency = self.default_currency.upper()
+        return self

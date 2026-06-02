@@ -14,10 +14,16 @@ and the existing quote-request flow is unaffected.
 """
 
 from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_company_member
+from app.core.dependencies import get_current_company_member, get_db, require_company_admin
+from app.crud import company as crud_company
 from app.crud.company_user import CompanyMembership
-from app.schemas.company import CompanyMeResponse, CompanyResponse
+from app.schemas.company import (
+    CompanyMeResponse,
+    CompanyProfileUpdate,
+    CompanyResponse,
+)
 
 router = APIRouter()
 
@@ -39,4 +45,25 @@ async def get_my_company(
     # ``CompanyRoleLiteral`` at runtime (it's DB-CHECK-guaranteed, but this keeps
     # the type honest — ``membership.role`` is a plain ``str``).
     base = CompanyResponse.model_validate(membership.company)
+    return CompanyMeResponse.model_validate({**base.model_dump(), "role": membership.role})
+
+
+@router.patch("/me", response_model=CompanyMeResponse)
+async def update_my_company(
+    payload: CompanyProfileUpdate,
+    membership: CompanyMembership = Depends(require_company_admin),
+    db: Session = Depends(get_db),
+):
+    """Update the caller's company profile (Wave D / D-D-4) — **COMPANY_ADMIN only**.
+
+    ``require_company_admin`` gates this: a non-member 404s and a member who is
+    not a COMPANY_ADMIN (BUYER/APPROVER/VIEWER) gets a 403. The editable fields
+    are the narrow profile allow-list (contact + billing + ``default_currency``);
+    ``name`` / ``status`` / ``primary_user_id`` are admin-directory concerns and
+    are not exposed here. Returns the updated company with the caller's ``role``
+    (same shape as ``GET /companies/me``)."""
+    company = crud_company.update_profile(db, company=membership.company, obj_in=payload)
+    db.commit()
+    db.refresh(company)
+    base = CompanyResponse.model_validate(company)
     return CompanyMeResponse.model_validate({**base.model_dump(), "role": membership.role})
