@@ -1,0 +1,44 @@
+meta {
+  name: Create Order
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/orders/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "shipping_address": "string",
+    "shipping_city": "string",
+    "shipping_postal_code": "EXAMPLE10",
+    "shipping_country": "US",
+    "items": [
+      {
+        "product_id": 1,
+        "quantity": 1
+      }
+    ],
+    "shipping_method_id": 1
+  }
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Request body** `OrderCreate`:
+  - `shipping_address`: string (required)
+  - `shipping_city`: string (required)
+  - `shipping_postal_code`: string (required)
+  - `shipping_country`: string (required)
+  - `notes`: string|null
+  - `items`: array[OrderItemCreate] (required)
+  - `currency`: string
+  - `shipping_method_id`: integer (required)
+  - `coupon_code`: string|null
+
+**Responses:** 201, 422
+}

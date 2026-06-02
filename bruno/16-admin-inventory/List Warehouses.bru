@@ -1,0 +1,23 @@
+meta {
+  name: List Warehouses
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/warehouses/
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~page: 1
+  ~page_size: 20
+  ~is_active: true
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

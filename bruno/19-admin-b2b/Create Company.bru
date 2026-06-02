@@ -1,0 +1,40 @@
+meta {
+  name: Create Company
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/companies/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "name": "Example"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `CompanyCreate`:
+  - `name`: string (required)
+  - `tax_id`: string|null
+  - `email`: string|null
+  - `phone`: string|null
+  - `status`: string — one of ['pending', 'approved', 'rejected']
+  - `account_manager`: string|null
+  - `notes`: string|null
+  - `primary_user_id`: integer|null
+  - `regon`: string|null
+  - `billing_address_street`: string|null
+  - `billing_address_city`: string|null
+  - `billing_address_postal_code`: string|null
+  - `billing_address_country`: string|null
+  - `billing_address_state`: string|null
+  - `default_currency`: string|null
+
+**Responses:** 201, 422
+}

@@ -1,0 +1,35 @@
+meta {
+  name: Update Order
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/orders/:order_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  order_id: 1
+}
+
+body:json {
+  {
+    "status": {},
+    "payment_method": "string",
+    "payment_intent_id": "string"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `OrderUpdate`:
+  - `status`: OrderStatus|null
+  - `payment_method`: string|null
+  - `payment_intent_id`: string|null
+  - `notes`: string|null
+
+**Responses:** 200, 422
+}

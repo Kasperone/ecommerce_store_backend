@@ -1,0 +1,22 @@
+meta {
+  name: Delete Customer Note
+  type: http
+  seq: 7
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/admin/customers/:customer_id/notes/:note_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  customer_id: 1
+  note_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 204, 422
+}

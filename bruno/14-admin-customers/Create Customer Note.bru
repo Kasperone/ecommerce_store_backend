@@ -1,0 +1,30 @@
+meta {
+  name: Create Customer Note
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/customers/:customer_id/notes
+  body: json
+  auth: inherit
+}
+
+params:path {
+  customer_id: 1
+}
+
+body:json {
+  {
+    "body": "string"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `CustomerNoteCreate`:
+  - `body`: string (required)
+
+**Responses:** 201, 422
+}

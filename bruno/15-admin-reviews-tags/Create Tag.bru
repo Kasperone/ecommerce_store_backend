@@ -1,0 +1,27 @@
+meta {
+  name: Create Tag
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/tags/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "name": "Example"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `TagCreate`:
+  - `name`: string (required)
+  - `color`: string|null
+
+**Responses:** 201, 422
+}

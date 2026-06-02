@@ -1,0 +1,23 @@
+meta {
+  name: Export Orders
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/orders/export
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~status:
+  ~date_from: 2026-01-01
+  ~date_to: 2026-01-01
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

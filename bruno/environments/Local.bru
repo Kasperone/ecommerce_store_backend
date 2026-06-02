@@ -1,0 +1,11 @@
+vars {
+  baseUrl: http://localhost:8000
+  email: {{process.env.BRUNO_EMAIL}}
+  password: {{process.env.BRUNO_PASSWORD}}
+  adminEmail: {{process.env.BRUNO_ADMIN_EMAIL}}
+  adminPassword: {{process.env.BRUNO_ADMIN_PASSWORD}}
+}
+
+vars:secret [
+  token
+]

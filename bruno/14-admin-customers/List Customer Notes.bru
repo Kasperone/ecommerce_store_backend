@@ -1,0 +1,21 @@
+meta {
+  name: List Customer Notes
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/customers/:customer_id/notes
+  body: none
+  auth: inherit
+}
+
+params:path {
+  customer_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

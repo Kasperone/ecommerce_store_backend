@@ -1,0 +1,30 @@
+meta {
+  name: Update Preferences
+  type: http
+  seq: 8
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/me/preferences
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "preferred_currency": "USD",
+    "locale": "en",
+    "consents": {}
+  }
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Request body** `PreferencesUpdate`:
+  - `preferred_currency`: string|null
+  - `locale`: string|null
+  - `consents`: object|null
+
+**Responses:** 200, 422
+}

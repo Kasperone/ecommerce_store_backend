@@ -1,0 +1,49 @@
+meta {
+  name: Update Product
+  type: http
+  seq: 7
+}
+
+put {
+  url: {{baseUrl}}/api/v1/products/:product_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  product_id: 1
+}
+
+body:json {
+  {
+    "name": "Example",
+    "slug": "example-slug",
+    "description": "string"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `ProductUpdate`:
+  - `name`: string|null
+  - `slug`: string|null
+  - `description`: string|null
+  - `sku`: string|null
+  - `name_pl`: string|null
+  - `description_pl`: string|null
+  - `price_usd`: number|null
+  - `price_pln`: number|null
+  - `price_eur`: number|null
+  - `low_stock_threshold`: integer|null
+  - `allow_backorder`: boolean|null
+  - `weight_kg`: number|null
+  - `length_cm`: number|null
+  - `width_cm`: number|null
+  - `height_cm`: number|null
+  - `is_active`: boolean|null
+  - `is_featured`: boolean|null
+  - `category_id`: integer|null
+
+**Responses:** 200, 422
+}

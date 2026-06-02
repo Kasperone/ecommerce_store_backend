@@ -1,0 +1,23 @@
+meta {
+  name: Impersonate Customer
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/customers/:customer_id/impersonate
+  body: none
+  auth: inherit
+}
+
+params:path {
+  customer_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Rate limit:** 20/hour
+
+**Responses:** 200, 422
+}

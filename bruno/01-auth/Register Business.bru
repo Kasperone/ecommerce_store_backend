@@ -1,0 +1,38 @@
+meta {
+  name: Register Business
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/api/v1/auth/register-business
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "email": "buyer@example.com",
+    "password": "ChangeMe!2026",
+    "first_name": "Example",
+    "last_name": "Example",
+    "company_name": "Example"
+  }
+}
+
+docs {
+**Access:** Public (no token)
+
+**Rate limit:** 5/hour
+
+**Request body** `BusinessRegister`:
+  - `email`: string (required)
+  - `password`: string (required)
+  - `first_name`: string (required)
+  - `last_name`: string (required)
+  - `phone`: string|null
+  - `company_name`: string (required)
+  - `company_tax_id`: string|null
+
+**Responses:** 200, 422
+}

@@ -1,0 +1,42 @@
+meta {
+  name: Update Coupon
+  type: http
+  seq: 16
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/admin/coupons/:coupon_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  coupon_id: 1
+}
+
+body:json {
+  {
+    "code": "EXAMPLE10",
+    "description": "string",
+    "discount_type": "string"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `CouponUpdate`:
+  - `code`: string|null
+  - `description`: string|null
+  - `discount_type`: string|null
+  - `value`: number|null
+  - `currency`: string|null
+  - `min_order_amount`: number|null
+  - `max_uses`: integer|null
+  - `per_user_limit`: integer|null
+  - `starts_at`: string|null
+  - `ends_at`: string|null
+  - `is_active`: boolean|null
+
+**Responses:** 200, 422
+}

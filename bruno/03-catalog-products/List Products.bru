@@ -1,0 +1,31 @@
+meta {
+  name: List Products
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/products/
+  body: none
+  auth: none
+}
+
+params:query {
+  ~page: 1
+  ~page_size: 20
+  ~category_id: 1
+  ~is_active: true
+  ~is_featured: true
+  ~min_price: 10
+  ~max_price: 10
+  ~in_stock: true
+  ~search:
+  ~sort_by: newest
+  ~order: desc
+}
+
+docs {
+**Access:** Public (no token)
+
+**Responses:** 200, 422
+}

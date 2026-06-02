@@ -1,0 +1,37 @@
+meta {
+  name: Update Zone
+  type: http
+  seq: 14
+}
+
+put {
+  url: {{baseUrl}}/api/v1/admin/shipping/zones/:zone_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  zone_id: 1
+}
+
+body:json {
+  {
+    "name": "Example",
+    "description": "string",
+    "is_active": false
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `ShippingZoneUpdate`:
+  - `name`: string|null
+  - `description`: string|null
+  - `is_active`: boolean|null
+  - `sort_order`: integer|null
+  - `country_codes`: array|null
+  - `dim_divisor`: number|null
+
+**Responses:** 200, 422
+}

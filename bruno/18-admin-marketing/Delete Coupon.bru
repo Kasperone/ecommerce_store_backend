@@ -1,0 +1,21 @@
+meta {
+  name: Delete Coupon
+  type: http
+  seq: 14
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/admin/coupons/:coupon_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  coupon_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 204, 422
+}

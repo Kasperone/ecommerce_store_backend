@@ -1,0 +1,17 @@
+meta {
+  name: List Members
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/companies/me/users
+  body: none
+  auth: inherit
+}
+
+docs {
+**Access:** B2B company member (bearer; 404 if not B2B)
+
+**Responses:** 200
+}

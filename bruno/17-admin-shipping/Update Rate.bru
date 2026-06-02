@@ -1,0 +1,36 @@
+meta {
+  name: Update Rate
+  type: http
+  seq: 9
+}
+
+put {
+  url: {{baseUrl}}/api/v1/admin/shipping/rates/:rate_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  rate_id: 1
+}
+
+body:json {
+  {
+    "currency": "USD",
+    "amount": 10.0,
+    "free_above_subtotal": 1.0
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `ShippingRateUpdate`:
+  - `currency`: string|null
+  - `amount`: number|null
+  - `free_above_subtotal`: number|null
+  - `tiers`: array|null
+  - `weight_tiers`: array|null
+
+**Responses:** 200, 422
+}

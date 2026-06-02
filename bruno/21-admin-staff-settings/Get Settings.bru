@@ -1,0 +1,17 @@
+meta {
+  name: Get Settings
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/settings
+  body: none
+  auth: inherit
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200
+}

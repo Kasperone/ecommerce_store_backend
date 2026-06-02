@@ -1,0 +1,25 @@
+meta {
+  name: Upload Category Hero
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/api/v1/categories/:category_id/hero
+  body: multipartForm
+  auth: inherit
+}
+
+params:path {
+  category_id: 1
+}
+
+body:multipart-form {
+  file: @file()
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 201, 422
+}

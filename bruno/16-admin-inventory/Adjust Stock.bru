@@ -1,0 +1,33 @@
+meta {
+  name: Adjust Stock
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/admin/inventory/products/:product_id/stock
+  body: json
+  auth: inherit
+}
+
+params:path {
+  product_id: 1
+}
+
+body:json {
+  {
+    "warehouse_id": 1,
+    "new_stock": 1
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `StockAdjustRequest`:
+  - `warehouse_id`: integer (required)
+  - `new_stock`: integer (required)
+  - `note`: string|null
+
+**Responses:** 200, 422
+}

@@ -1,0 +1,25 @@
+meta {
+  name: Refresh Token
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/api/v1/auth/refresh
+  body: none
+  auth: none
+}
+
+script:post-response {
+  if (res.status === 200 && res.body && res.body.access_token) {
+    bru.setEnvVar("token", res.body.access_token);
+  }
+}
+
+docs {
+**Access:** Public (no token)
+
+**Rate limit:** 30/hour
+
+**Responses:** 200, 422
+}

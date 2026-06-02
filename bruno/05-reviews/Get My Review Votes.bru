@@ -1,0 +1,21 @@
+meta {
+  name: Get My Review Votes
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/api/v1/products/:product_id/reviews/my-votes
+  body: none
+  auth: inherit
+}
+
+params:path {
+  product_id: 1
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Responses:** 200, 422
+}

@@ -1,0 +1,21 @@
+meta {
+  name: Get Dashboard Kpis
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/dashboard/kpis
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~window_days: 30
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

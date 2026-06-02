@@ -1,0 +1,25 @@
+meta {
+  name: Download My Quote Pdf
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/api/v1/quotes/:quote_id/quote.pdf
+  body: none
+  auth: inherit
+}
+
+params:path {
+  quote_id: 1
+}
+
+params:query {
+  ~lang: en
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Responses:** 200, 422
+}

@@ -1,0 +1,21 @@
+meta {
+  name: Get Category By Slug
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/v1/categories/slug/:slug
+  body: none
+  auth: none
+}
+
+params:path {
+  slug: example-slug
+}
+
+docs {
+**Access:** Public (no token)
+
+**Responses:** 200, 422
+}

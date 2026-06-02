@@ -1,0 +1,21 @@
+meta {
+  name: List Product Levels
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/inventory/products/:product_id/levels
+  body: none
+  auth: inherit
+}
+
+params:path {
+  product_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

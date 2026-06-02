@@ -1,0 +1,21 @@
+meta {
+  name: Get Quote
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/quotes/:quote_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  quote_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

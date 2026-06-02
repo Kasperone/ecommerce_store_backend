@@ -1,0 +1,39 @@
+meta {
+  name: Update Company
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/admin/companies/:company_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  company_id: 1
+}
+
+body:json {
+  {
+    "name": "Example",
+    "tax_id": "string",
+    "email": "buyer@example.com"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `CompanyUpdate`:
+  - `name`: string|null
+  - `tax_id`: string|null
+  - `email`: string|null
+  - `phone`: string|null
+  - `status`: string|null
+  - `account_manager`: string|null
+  - `notes`: string|null
+  - `primary_user_id`: integer|null
+
+**Responses:** 200, 422
+}

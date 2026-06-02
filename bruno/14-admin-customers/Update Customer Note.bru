@@ -1,0 +1,31 @@
+meta {
+  name: Update Customer Note
+  type: http
+  seq: 8
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/admin/customers/:customer_id/notes/:note_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  customer_id: 1
+  note_id: 1
+}
+
+body:json {
+  {
+    "body": "string"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `CustomerNoteUpdate`:
+  - `body`: string (required)
+
+**Responses:** 200, 422
+}

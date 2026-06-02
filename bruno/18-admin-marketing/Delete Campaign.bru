@@ -1,0 +1,21 @@
+meta {
+  name: Delete Campaign
+  type: http
+  seq: 8
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/admin/campaigns/:campaign_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  campaign_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 204, 422
+}

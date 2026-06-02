@@ -1,0 +1,40 @@
+meta {
+  name: Update Banner
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/admin/banners/:banner_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  banner_id: 1
+}
+
+body:json {
+  {
+    "title": "string",
+    "subtitle": "string",
+    "image_url": "https://example.com/image.jpg"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `BannerUpdate`:
+  - `title`: string|null
+  - `subtitle`: string|null
+  - `image_url`: string|null
+  - `link_url`: string|null
+  - `placement`: string|null
+  - `sort_order`: integer|null
+  - `starts_at`: string|null
+  - `ends_at`: string|null
+  - `is_active`: boolean|null
+
+**Responses:** 200, 422
+}

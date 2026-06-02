@@ -1,0 +1,21 @@
+meta {
+  name: Get Zone
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/shipping/zones/:zone_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  zone_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

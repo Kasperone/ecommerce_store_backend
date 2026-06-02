@@ -1,0 +1,21 @@
+meta {
+  name: Delete Quote
+  type: http
+  seq: 8
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/admin/quotes/:quote_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  quote_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 204, 422
+}

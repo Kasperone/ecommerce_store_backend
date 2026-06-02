@@ -1,0 +1,32 @@
+meta {
+  name: Update Member
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/companies/me/users/:member_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  member_id: 1
+}
+
+body:json {
+  {
+    "role": "string",
+    "status": "string"
+  }
+}
+
+docs {
+**Access:** B2B company admin (bearer; 403 if not COMPANY_ADMIN)
+
+**Request body** `CompanyMemberUpdate`:
+  - `role`: string|null
+  - `status`: string|null
+
+**Responses:** 200, 422
+}

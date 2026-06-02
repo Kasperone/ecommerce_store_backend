@@ -1,0 +1,27 @@
+meta {
+  name: List Customers
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/customers/
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~page: 1
+  ~page_size: 20
+  ~role:
+  ~is_active: true
+  ~is_verified: true
+  ~search:
+  ~tag_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

@@ -1,0 +1,35 @@
+meta {
+  name: Issue Refund
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/api/v1/orders/:order_id/refunds
+  body: json
+  auth: inherit
+}
+
+params:path {
+  order_id: 1
+}
+
+body:json {
+  {
+    "amount": 10.0,
+    "reason": "defective"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `RefundCreate`:
+  - `amount`: number (required)
+  - `reason`: string (required) — one of ['defective', 'wrong_item', 'customer_request', 'lost_in_transit', 'damaged_in_transit', 'other']
+  - `note`: string|null
+  - `restock`: boolean
+  - `items`: array|null
+
+**Responses:** 201, 422
+}
