@@ -79,6 +79,20 @@ class Company(BaseModel):
     status: Mapped[str] = mapped_column(String(16), default="pending", server_default="pending")
     account_manager: Mapped[str | None] = mapped_column(String(255))
     notes: Mapped[str | None] = mapped_column(Text)
+    # B2B company profile fields (Wave D / D-D-4). All nullable — a company is
+    # created via the admin directory or business self-signup with just a name +
+    # tax id, then a COMPANY_ADMIN fills these in via ``PATCH /companies/me``.
+    # ``regon`` is the Polish business registry number (sits alongside ``tax_id``
+    # which holds the NIP/VAT id). ``billing_address_*`` is the invoice address
+    # (distinct from the per-user shipping address). ``default_currency`` is the
+    # company's preferred 3-letter ISO currency for quotes/orders.
+    regon: Mapped[str | None] = mapped_column(String(32))
+    billing_address_street: Mapped[str | None] = mapped_column(String(255))
+    billing_address_city: Mapped[str | None] = mapped_column(String(128))
+    billing_address_postal_code: Mapped[str | None] = mapped_column(String(32))
+    billing_address_country: Mapped[str | None] = mapped_column(String(128))
+    billing_address_state: Mapped[str | None] = mapped_column(String(128))
+    default_currency: Mapped[str | None] = mapped_column(String(3))
     # Designated primary contact customer. The user an admin picks as the company's
     # contact; a quote→order conversion attributes the resulting order to this real
     # customer (correct emails/history/invoices) rather than to the converting admin.

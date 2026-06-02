@@ -90,3 +90,37 @@ class SessionResponse(BaseSchema):
     user_agent: str | None
     current: bool
     expires_at: datetime
+
+
+class BusinessRegister(BaseSchema):
+    """Request body for ``POST /api/v1/auth/register-business`` (Wave D / D-D-5).
+
+    Open B2B self-signup: the personal account fields (mirroring the normal
+    ``register`` — email + strong password + name) plus the minimal company
+    identity (``company_name`` required, ``company_tax_id`` optional). One call
+    creates the user (``UserRole.CUSTOMER``) + a ``pending`` company + an active
+    ``COMPANY_ADMIN`` membership; the company stays ``pending`` until an admin
+    approves it. The user still goes through email verification, and the response
+    is anti-enumeration (same generic body whether the email is free or taken).
+    """
+
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=100)
+    first_name: str = Field(..., min_length=1, max_length=255)
+    last_name: str = Field(..., min_length=1, max_length=255)
+    phone: str | None = None
+    company_name: str = Field(..., min_length=1, max_length=255)
+    company_tax_id: str | None = Field(default=None, max_length=64)
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        return _validate_password_strength(v)
+
+    @field_validator("first_name", "last_name", "company_name")
+    @classmethod
+    def _strip_required(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("must not be blank")
+        return stripped
