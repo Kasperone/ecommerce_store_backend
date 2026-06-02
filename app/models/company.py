@@ -31,6 +31,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import BaseModel
 
 if TYPE_CHECKING:
+    from app.models.company_user import CompanyUser
     from app.models.user import User
 
 
@@ -91,6 +92,14 @@ class Company(BaseModel):
     # in the per-row/detail admin views). Plain (non-back_populates) — the User
     # side has no inverse company collection in the MVP.
     primary_user: Mapped[User | None] = relationship("User", lazy="joined")
+
+    # B2B membership rows (Wave D). back_populates the ``CompanyUser.company`` side;
+    # cascades on company delete so memberships don't outlive their company.
+    members: Mapped[list[CompanyUser]] = relationship(
+        "CompanyUser",
+        back_populates="company",
+        cascade="all, delete-orphan",
+    )
 
     @property
     def primary_user_email(self) -> str | None:

@@ -8,7 +8,10 @@ from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
 from app.core.security import decode_token
+from app.crud import company_user as crud_company_user
 from app.crud import user as crud_user
+from app.crud.company_user import CompanyMembership
+from app.models.company_user import CompanyRole
 from app.models.user import User, UserRole
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -103,3 +106,44 @@ async def get_current_admin(
             detail="Not enough permissions",
         )
     return current_user
+
+
+async def get_current_company_member(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> CompanyMembership:
+    """Resolve the caller's active company membership (company + B2B role).
+
+    Mirrors ``get_current_admin`` for the B2B portal: the caller must have an
+    ``active`` ``company_users`` membership (or be a company's denormalized
+    primary contact, which resolves as ``COMPANY_ADMIN`` — see
+    ``crud_company_user.get_active_membership``). A caller who is no company's
+    member gets a **404** ("you are not a B2B account") rather than a 403 — the
+    B2B surfaces don't exist for them, and we don't leak that the route is there.
+    Returns a ``CompanyMembership`` (``company`` + ``role`` + the concrete row or
+    a synthesized context) for the route to use.
+    """
+    membership = crud_company_user.get_active_membership(db, user_id=current_user.id)
+    if membership is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No company for this account",
+        )
+    return membership
+
+
+async def require_company_admin(
+    membership: CompanyMembership = Depends(get_current_company_member),
+) -> CompanyMembership:
+    """Require the caller to be a ``COMPANY_ADMIN`` of their company.
+
+    Layered on ``get_current_company_member`` (so a non-member still 404s). A
+    member whose role is not ``COMPANY_ADMIN`` (BUYER/APPROVER/VIEWER) gets a
+    **403** — they are a B2B account but lack the privilege. Used by the
+    company-profile + team-management routes (CP-be / TM-be)."""
+    if membership.role != CompanyRole.COMPANY_ADMIN.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions",
+        )
+    return membership
