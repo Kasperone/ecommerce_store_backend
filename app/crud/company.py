@@ -25,6 +25,15 @@ class CRUDCompany:
     def get(self, db: Session, id: int) -> Company | None:
         return db.get(Company, id)
 
+    def get_for_primary_user(self, db: Session, user_id: int) -> Company | None:
+        """The company whose primary contact is ``user_id`` (the B2B link, D-C-1).
+
+        Returns ``None`` when the user is no company's primary contact (the caller
+        treats that as "not a B2B account" → 403/404 on the customer routes). Wave
+        D generalizes this to ``company_users`` membership.
+        """
+        return db.query(Company).filter(Company.primary_user_id == user_id).first()
+
     def user_exists(self, db: Session, user_id: int) -> bool:
         """True if a user with ``user_id`` exists (route 422s on False when a
         ``primary_user_id`` is supplied)."""

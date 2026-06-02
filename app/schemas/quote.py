@@ -28,7 +28,7 @@ from app.models.quote import QUOTE_STATUS_VALUES
 from app.schemas.base import BaseSchema, TimestampSchema
 
 # Hardcoded for pyright; the cross-check below catches drift from the model.
-QuoteStatusLiteral = Literal["draft", "sent", "accepted", "rejected", "expired"]
+QuoteStatusLiteral = Literal["draft", "requested", "sent", "accepted", "rejected", "expired"]
 
 # Import-time drift catch: a status added to one side without the other fails
 # the import (and so every dependent route/test) with a clear message.
@@ -135,3 +135,41 @@ class QuoteListResponse(BaseSchema):
     page: int
     page_size: int
     pages: int
+
+
+# ---------------------------------------------------------------------------
+# Customer-facing quote-request schemas (Wave C / B2B-1).
+#
+# A B2B customer (a company's primary contact) requests a quote from their cart.
+# The client sends ONLY the currency + a list of {product_id, quantity}; the
+# server prices each line from the CURRENT product price in that currency (mirrors
+# the coupon re-pricing discipline — a client-sent price is never trusted, so
+# there is no ``unit_price`` field here). The admin ``QuoteResponse`` is reused for
+# the customer read shape — it carries no admin-only/PII fields (company id/name,
+# status, currency, totals, line items, and the conversion marker), all of which
+# the requesting customer is entitled to see for their own company's quotes.
+# ---------------------------------------------------------------------------
+
+
+class QuoteRequestItem(BaseSchema):
+    """A single requested line: a catalog product + a quantity.
+
+    No price — the server prices the line from the live product in the requested
+    currency (``unit_price`` is deliberately absent so a client cannot inject one).
+    """
+
+    product_id: int
+    quantity: int = Field(..., gt=0)
+
+
+class QuoteRequestCreate(BaseSchema):
+    """Request body for ``POST /api/v1/quotes`` (customer quote request).
+
+    ``items`` must be non-empty (min_length=1 → 422). ``currency`` selects which
+    per-currency product price the server uses for every line. ``notes`` is an
+    optional free-form message to the seller.
+    """
+
+    currency: CurrencyLiteral = "USD"
+    items: list[QuoteRequestItem] = Field(..., min_length=1)
+    notes: str | None = Field(default=None, max_length=5000)
