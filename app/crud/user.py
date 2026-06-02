@@ -368,6 +368,54 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         db.add(user)
         return user
 
+    def anonymize(self, db: Session, *, user: User) -> User:
+        """Soft-delete a user by scrubbing PII in place (D-B-4 / D-ACCT-1).
+
+        Stamps ``deletion_requested_at`` (if not already set) and ``anonymized_at``,
+        overwrites every PII column with a placeholder, deletes the address-book
+        rows, and revokes all refresh tokens so existing sessions can't be used.
+        Order/invoice rows are deliberately KEPT — only their FK to this now-scrubbed
+        user remains, which is what tax retention requires. The account is also
+        deactivated so it can no longer be logged into. Caller commits.
+
+        Idempotent-ish: re-running overwrites with the same placeholders; the
+        unique ``deleted-user-<id>@anon.invalid`` email keeps the unique index happy.
+        """
+        now = _utcnow_naive()
+        if user.deletion_requested_at is None:
+            user.deletion_requested_at = now
+        user.anonymized_at = now
+
+        user.email = f"deleted-user-{user.id}@anon.invalid"
+        user.first_name = "deleted"
+        user.last_name = "user"
+        user.phone = None
+        user.is_active = False
+
+        # Inline shipping snapshot on the user row.
+        user.shipping_street = None
+        user.shipping_city = None
+        user.shipping_postal_code = None
+        user.shipping_country = None
+        user.shipping_state = None
+
+        # Company / invoice data.
+        user.company_name = None
+        user.company_tax_id = None
+        user.company_address_street = None
+        user.company_address_city = None
+        user.company_address_postal_code = None
+        user.company_address_country = None
+        user.company_address_state = None
+
+        # Address-book rows are pure PII — drop them entirely (cascade-managed).
+        user.addresses.clear()
+
+        db.add(user)
+        # Revoke every active refresh token so no live session survives the scrub.
+        crud_refresh_token.revoke_all_for_user(db, user_id=user.id)
+        return user
+
     def count_active_admins(self, db: Session, *, exclude_id: int | None = None) -> int:
         """Number of active ADMIN-role accounts, optionally excluding one user.
 
