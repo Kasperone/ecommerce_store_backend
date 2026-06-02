@@ -9,6 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import BaseModel, _utcnow
 
 if TYPE_CHECKING:
+    from app.models.address import Address
     from app.models.customer_note import CustomerNote
     from app.models.order import Order
     from app.models.refresh_token import RefreshToken
@@ -111,6 +112,11 @@ class User(BaseModel):
     # Reusable admin labels attached to this customer (many-to-many).
     tags: Mapped[list["Tag"]] = relationship(
         "Tag", secondary="customer_tags", back_populates="customers"
+    )
+    # Saved address-book entries (one default-shipping + one default-billing flag
+    # enforced in the CRUD layer). Cascade-deletes with the user.
+    addresses: Mapped[list["Address"]] = relationship(
+        "Address", back_populates="user", cascade="all, delete-orphan"
     )
 
     def __repr__(self):
