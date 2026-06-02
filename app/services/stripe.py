@@ -151,8 +151,16 @@ class StripeService:
                 sig_header=signature_header,
                 secret=self.webhook_secret,
             )
-        except (ValueError, stripe.SignatureVerificationError) as exc:
+        except stripe.SignatureVerificationError as exc:
             raise StripeError("Invalid Stripe webhook signature") from exc
+        except Exception as exc:
+            # The signature is already verified above, so any failure here is a
+            # malformed / unexpectedly-shaped (but correctly-signed) body — e.g. the
+            # SDK reads ``event.object`` and the payload omits it (AttributeError), or
+            # bad JSON (ValueError). Degrade to StripeError so the route returns 400,
+            # never a 500 (a 500 would also make Stripe retry). Safe to catch broadly:
+            # construct_event only parses + verifies — no I/O, no DB.
+            raise StripeError("Malformed Stripe webhook payload") from exc
 
 
 def get_stripe_service() -> StripeService:

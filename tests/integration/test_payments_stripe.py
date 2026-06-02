@@ -351,6 +351,22 @@ async def test_webhook_rejects_invalid_signature(
     assert OrderStatus(order.status) == OrderStatus.PENDING
 
 
+async def test_webhook_malformed_but_signed_payload_returns_400(client, configured_stripe):
+    # A signature-VALID body missing the top-level ``object`` field makes the Stripe SDK's
+    # construct_event read event.object -> AttributeError. The route must degrade to 400,
+    # never 500 (a 500 would also make Stripe retry). Regression for the 2026-06-02 finding
+    # notes/plans/test/to-fix/2026-06-02-stripe-webhook-500-malformed-signed-payload-backend.md
+    body = json.dumps({"type": "checkout.session.completed", "data": {"object": {}}}).encode(
+        "utf-8"
+    )
+    resp = await client.post(
+        "/api/v1/payments/stripe/webhook",
+        content=body,
+        headers={"Stripe-Signature": _stripe_sig(body)},
+    )
+    assert resp.status_code == 400
+
+
 async def test_webhook_ignores_unpaid_session(
     client, user_factory, product_factory, db_session, configured_stripe, test_shipping_method_id
 ):
