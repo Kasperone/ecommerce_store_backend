@@ -223,14 +223,16 @@ assert set(CompanyMemberStatusLiteral.__args__) == set(COMPANY_MEMBER_STATUS_VAL
 class CompanyMemberResponse(TimestampSchema):
     """A ``company_users`` row as the team API returns it.
 
-    ``user_id`` is the linked account; ``user_email`` / ``user_name`` are read-only
-    denormalised display values from the linked ``User`` (resolved by the route so
-    the FE roster doesn't need a second fetch). ``invited_email`` / ``invited_at``
+    ``user_id`` is the linked account, or ``None`` for a **pending email-invite**
+    to an address with no account yet (bound when that address registers).
+    ``user_email`` / ``user_name`` are read-only denormalised display values from
+    the linked ``User`` (resolved by the route so the FE roster doesn't need a
+    second fetch; ``None`` for a pending invite). ``invited_email`` / ``invited_at``
     are populated for rows created via an invite, ``None`` otherwise.
     """
 
     company_id: int
-    user_id: int
+    user_id: int | None = None
     role: CompanyRoleLiteral
     status: CompanyMemberStatusLiteral
     invited_email: str | None = None
