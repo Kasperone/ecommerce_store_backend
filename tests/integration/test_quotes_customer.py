@@ -285,6 +285,118 @@ async def test_accept_cross_company_404(client, user_factory, company_factory, q
 
 
 # ---------------------------------------------------------------------------
+# POST /quotes/{id}/convert — customer self-serve conversion
+# ---------------------------------------------------------------------------
+
+
+def _quote_with_product(
+    quote_factory, company, product, *, status="accepted", quantity=2, unit_price=15.0
+):
+    """A quote for ``company`` with one product-backed line (default accepted, 2 at 15.0)."""
+    total = round(unit_price * quantity, 2)
+    quote = quote_factory(company=company, status=status, subtotal=total, total=total)
+    QuoteItemFactory(
+        quote=quote,
+        product_id=product.id,
+        description="Line",
+        quantity=quantity,
+        unit_price=unit_price,
+        line_total=total,
+    )
+    return quote
+
+
+async def test_convert_requires_auth(client):
+    assert (await client.post("/api/v1/quotes/1/convert")).status_code == 401
+
+
+async def test_convert_accepted_quote_creates_order(
+    client, user_factory, company_factory, product_factory, quote_factory, db_session
+):
+    user, company = _b2b_user(user_factory, company_factory, email="conv-ok@example.com")
+    product = product_factory(stock=10, name="ConvProd", sku="CVC-1")
+    quote = _quote_with_product(quote_factory, company, product)
+
+    resp = await client.post(f"/api/v1/quotes/{quote.id}/convert", headers=_headers(user))
+    assert resp.status_code == 201
+    body = resp.json()
+    # Owned by the caller (the company primary contact), pending, quoted price honoured.
+    assert body["user_id"] == user.id
+    assert body["status"] == "pending"
+    assert body["currency"] == "USD"
+    assert body["subtotal"] == 30.0
+    assert body["total"] == 30.0
+    assert len(body["items"]) == 1
+    assert body["items"][0]["unit_price"] == 15.0
+    assert body["items"][0]["product_name"] == "ConvProd"
+
+    db_session.refresh(quote)
+    assert quote.converted_order_id == body["id"]
+    assert quote.status == "accepted"
+
+
+async def test_convert_non_b2b_404(client, user_factory):
+    user = user_factory(email="conv-nonb2b@example.com", role=UserRole.CUSTOMER)
+    resp = await client.post("/api/v1/quotes/1/convert", headers=_headers(user))
+    assert resp.status_code == 404
+
+
+async def test_convert_cross_company_404(
+    client, user_factory, company_factory, product_factory, quote_factory
+):
+    user, _ = _b2b_user(user_factory, company_factory, email="conv-cross@example.com")
+    other_company = company_factory(name="Other Conv Co")
+    product = product_factory(stock=10)
+    other_quote = _quote_with_product(quote_factory, other_company, product)
+    resp = await client.post(f"/api/v1/quotes/{other_quote.id}/convert", headers=_headers(user))
+    assert resp.status_code == 404
+
+
+@pytest.mark.parametrize("bad_status", ["draft", "requested", "sent", "rejected", "expired"])
+async def test_convert_not_accepted_422(
+    client, user_factory, company_factory, product_factory, quote_factory, bad_status
+):
+    user, company = _b2b_user(user_factory, company_factory, email=f"conv-{bad_status}@example.com")
+    product = product_factory(stock=10)
+    quote = _quote_with_product(quote_factory, company, product, status=bad_status)
+    resp = await client.post(f"/api/v1/quotes/{quote.id}/convert", headers=_headers(user))
+    assert resp.status_code == 422
+
+
+async def test_convert_double_convert_409(
+    client, user_factory, company_factory, product_factory, quote_factory
+):
+    user, company = _b2b_user(user_factory, company_factory, email="conv-double@example.com")
+    product = product_factory(stock=10)
+    quote = _quote_with_product(quote_factory, company, product)
+    assert (
+        await client.post(f"/api/v1/quotes/{quote.id}/convert", headers=_headers(user))
+    ).status_code == 201
+    second = await client.post(f"/api/v1/quotes/{quote.id}/convert", headers=_headers(user))
+    assert second.status_code == 409
+
+
+async def test_convert_insufficient_stock_422(
+    client, user_factory, company_factory, product_factory, quote_factory
+):
+    user, company = _b2b_user(user_factory, company_factory, email="conv-nostock@example.com")
+    product = product_factory(stock=1, allow_backorder=False)
+    quote = _quote_with_product(quote_factory, company, product, quantity=5, unit_price=10.0)
+    resp = await client.post(f"/api/v1/quotes/{quote.id}/convert", headers=_headers(user))
+    assert resp.status_code == 422
+
+
+async def test_convert_free_text_line_422(client, user_factory, company_factory, quote_factory):
+    user, company = _b2b_user(user_factory, company_factory, email="conv-freetext@example.com")
+    quote = quote_factory(company=company, status="accepted", subtotal=10.0, total=10.0)
+    QuoteItemFactory(
+        quote=quote, description="Free text", quantity=1, unit_price=10.0, line_total=10.0
+    )
+    resp = await client.post(f"/api/v1/quotes/{quote.id}/convert", headers=_headers(user))
+    assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
 # GET /quotes/{id}/quote.pdf
 # ---------------------------------------------------------------------------
 
