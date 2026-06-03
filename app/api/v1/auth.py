@@ -145,6 +145,15 @@ async def register(
 
     user = crud_user.create(db, obj_in=user_in)
 
+    # Bind any pending company email-invites addressed to this email (best-effort;
+    # a failure must not break registration). See company_team invite flow.
+    try:
+        if crud_company_user.link_pending_invites(db, user_id=user.id, email=user.email):
+            db.commit()
+    except Exception:
+        db.rollback()
+        logger.warning("Linking pending company invites failed: user_id=%s", user.id, exc_info=True)
+
     try:
         token = verification_token.create_for_user(db, user_id=user.id)
         send_verification_email(
@@ -236,6 +245,10 @@ async def register_business(
 
     # Active COMPANY_ADMIN membership (reuses CU-be's helper — flush, no commit).
     crud_company_user.create(db, company_id=company.id, user_id=user.id)
+
+    # Also bind any pending email-invites this address had to OTHER companies
+    # (the guard in link_pending_invites skips the just-created own membership).
+    crud_company_user.link_pending_invites(db, user_id=user.id, email=user.email)
 
     db.commit()
     db.refresh(user)

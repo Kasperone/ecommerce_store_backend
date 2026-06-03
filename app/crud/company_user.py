@@ -134,7 +134,7 @@ class CRUDCompanyUser:
         db: Session,
         *,
         company_id: int,
-        user_id: int,
+        user_id: int | None,
         role: str = CompanyRole.COMPANY_ADMIN.value,
         status: str = CompanyMemberStatus.ACTIVE.value,
         invited_email: str | None = None,
@@ -142,7 +142,8 @@ class CRUDCompanyUser:
         """Stage a new membership (id populated via flush; caller commits).
 
         Used by the business-signup flow (CP-be) and team invites (TM-be). The
-        unique ``(company_id, user_id)`` constraint guards duplicates at the DB."""
+        unique ``(company_id, user_id)`` constraint guards duplicates at the DB.
+        ``user_id`` may be ``None`` for a pending email-invite (no account yet)."""
         membership = CompanyUser(
             company_id=company_id,
             user_id=user_id,
@@ -165,27 +166,24 @@ class CRUDCompanyUser:
         db: Session,
         *,
         company_id: int,
-        user_id: int,
+        user_id: int | None,
         email: str,
         role: str,
     ) -> CompanyUser:
-        """Stage an ``invited`` membership linking ``user_id`` to a company.
+        """Stage an ``invited`` membership for a company (no commit; caller owns txn).
 
         The membership is created in the ``invited`` status (it grants no access
         until accepted/activated). ``invited_email`` records the address the
         invite was issued to and ``invited_at`` is stamped (naive UTC, project
-        convention). ``user_id`` is required and must reference an existing user
-        — the ``company_users.user_id`` column is NOT NULL (see the note below),
-        so an invite is always **linked** to a concrete account; the route
-        resolves ``email`` to that account before calling this. The unique
-        ``(company_id, user_id)`` constraint plus the route's pre-check guard
-        against re-inviting an existing member.
+        convention).
 
-        NOTE (boundary): D-D-1 / the merged ``company_users`` schema make
-        ``user_id`` NOT NULL, so a "pending invite for an address with no account
-        yet" is not representable without a migration (out of TM-be scope). This
-        invite therefore covers the existing-account case; see ESCALATION in
-        ``status/TM-be.md`` for the rationale.
+        ``user_id`` is the invited account when one already exists; it is ``None``
+        for a **pending email-invite to an address with no account yet** — that
+        row is bound to the account later, when the address registers, via
+        ``link_pending_invites``. The unique ``(company_id, user_id)`` constraint
+        (plus the route's pre-checks) guards against re-inviting an existing
+        member; NULL ``user_id`` values are distinct in Postgres, so multiple
+        pending email-invites coexist.
         """
         membership = CompanyUser(
             company_id=company_id,
@@ -199,6 +197,45 @@ class CRUDCompanyUser:
         db.flush()
         db.refresh(membership)
         return membership
+
+    def get_email_invite(self, db: Session, *, company_id: int, email: str) -> CompanyUser | None:
+        """A pending (``user_id IS NULL``) email-invite for ``email`` at ``company_id``.
+
+        Lets the invite route 409 a duplicate pending invite — the unique
+        ``(company_id, user_id)`` constraint can't catch it because every pending
+        invite carries a NULL ``user_id``."""
+        return (
+            db.query(CompanyUser)
+            .filter(
+                CompanyUser.company_id == company_id,
+                CompanyUser.user_id.is_(None),
+                CompanyUser.invited_email == email.lower(),
+            )
+            .first()
+        )
+
+    def link_pending_invites(self, db: Session, *, user_id: int, email: str) -> int:
+        """Bind any pending email-invites for ``email`` to a now-registered ``user_id``.
+
+        Called from the registration flow. Sets ``user_id`` on every pending
+        (``user_id IS NULL``) invite addressed to ``email``, skipping a company
+        where the user is somehow already a member (so the unique
+        ``(company_id, user_id)`` constraint can't be violated). Status is left
+        ``invited`` — activation stays a separate step. Returns the number linked.
+        No commit (caller owns the txn)."""
+        pending = (
+            db.query(CompanyUser)
+            .filter(CompanyUser.user_id.is_(None), CompanyUser.invited_email == email.lower())
+            .all()
+        )
+        linked = 0
+        for row in pending:
+            if self.get_membership(db, company_id=row.company_id, user_id=user_id) is not None:
+                continue
+            row.user_id = user_id
+            db.add(row)
+            linked += 1
+        return linked
 
     def update_member(
         self,
