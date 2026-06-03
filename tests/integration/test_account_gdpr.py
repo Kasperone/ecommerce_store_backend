@@ -142,7 +142,6 @@ async def test_deletion_request_sets_flag_and_anonymizes(client, db_session, use
         last_name="Nowak",
         phone="+48111222333",
     )
-    user.shipping_city = "Warsaw"
     user.company_name = "Acme Sp. z o.o."
     db_session.add(user)
     db_session.commit()
@@ -165,7 +164,6 @@ async def test_deletion_request_sets_flag_and_anonymizes(client, db_session, use
     assert user.anonymized_at is not None
     assert user.email == f"deleted-user-{user.id}@anon.invalid"
     assert user.phone is None
-    assert user.shipping_city is None
     assert user.company_name is None
     assert user.is_active is False
     assert user.addresses == []

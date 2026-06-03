@@ -26,13 +26,6 @@ class UserCreate(UserBase):
 
     password: str = Field(..., min_length=8, max_length=100)
 
-    # Optional shipping address
-    shipping_street: str | None = None
-    shipping_city: str | None = None
-    shipping_postal_code: str | None = None
-    shipping_country: str | None = None
-    shipping_state: str | None = None
-
     # Optional company/invoice data
     company_name: str | None = None
     company_tax_id: str | None = None
@@ -61,13 +54,6 @@ class UserUpdate(BaseSchema):
     phone: str | None = None
     locale: Locale | None = None
 
-    # Optional shipping address
-    shipping_street: str | None = None
-    shipping_city: str | None = None
-    shipping_postal_code: str | None = None
-    shipping_country: str | None = None
-    shipping_state: str | None = None
-
     # Optional company/invoice data
     company_name: str | None = None
     company_tax_id: str | None = None
@@ -84,13 +70,6 @@ class UserResponse(UserBase, TimestampSchema):
     is_active: bool
     is_verified: bool
     role: UserRole
-
-    # Optional shipping address
-    shipping_street: str | None = None
-    shipping_city: str | None = None
-    shipping_postal_code: str | None = None
-    shipping_country: str | None = None
-    shipping_state: str | None = None
 
     # Optional company/invoice data
     company_name: str | None = None

@@ -113,7 +113,6 @@ async def list_customers(
             is_verified=u.is_verified,
             is_locked=u.is_locked,
             company_name=u.company_name,
-            shipping_country=u.shipping_country,
             order_count=counts.get(u.id, 0),
             note_count=note_counts.get(u.id, 0),
             tags=[TagChip.model_validate(t) for t in u.tags],
