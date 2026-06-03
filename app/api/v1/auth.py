@@ -198,7 +198,8 @@ async def register_business(
 
     - **email**, **password**, **first_name**, **last_name**, **phone**: the
       personal account (same rules as ``/register``).
-    - **company_name** (required), **company_tax_id** (optional): the company.
+    - **company_name** (required), **company_tax_id** + **company_address_*** (optional):
+      the company. The address is persisted on the user for invoice rendering.
     """
     existing_user = crud_user.get_by_email(db, email=payload.email)
 
@@ -230,6 +231,11 @@ async def register_business(
         phone=payload.phone or None,
         company_name=payload.company_name,
         company_tax_id=payload.company_tax_id or None,
+        company_address_street=payload.company_address_street or None,
+        company_address_city=payload.company_address_city or None,
+        company_address_postal_code=payload.company_address_postal_code or None,
+        company_address_country=payload.company_address_country or None,
+        company_address_state=payload.company_address_state or None,
     )
     db.add(user)
     db.flush()  # populate user.id without committing
