@@ -26,15 +26,6 @@ class UserCreate(UserBase):
 
     password: str = Field(..., min_length=8, max_length=100)
 
-    # Optional company/invoice data
-    company_name: str | None = None
-    company_tax_id: str | None = None
-    company_address_street: str | None = None
-    company_address_city: str | None = None
-    company_address_postal_code: str | None = None
-    company_address_country: str | None = None
-    company_address_state: str | None = None
-
     @field_validator("password")
     @classmethod
     def validate_password(cls, v: str) -> str:
