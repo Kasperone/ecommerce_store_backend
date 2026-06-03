@@ -8,8 +8,12 @@ Wave C / B2B-1. A B2B customer (a company's primary contact — see D-C-1) can:
 - **list / view** their company's quotes (company-scoped — another company's quote
   is a 404, existence not leaked);
 - **accept** a ``sent`` quote (``POST /quotes/{id}/accept`` → ``accepted``; any other
-  source state → 409, D-C-5). Conversion stays admin-only (D-ACCT-8) — there is no
-  customer self-convert here;
+  source state → 409, D-C-5);
+- **convert** an ``accepted`` quote into a pending order (``POST /quotes/{id}/convert``).
+  Self-service for the owning customer (the order is owned by the company's primary
+  contact — the caller), mirroring the admin convert: quoted prices honoured, stock
+  decremented, ``shipping``/``discount``/``tax`` are 0. Wrong state → 422, already
+  converted → 409;
 - **download** a quote PDF (``GET /quotes/{id}/quote.pdf?lang=en|pl``).
 
 Every route requires the caller to be a B2B account: their company is resolved via
@@ -27,9 +31,12 @@ from app.core.config import settings
 from app.core.dependencies import get_current_active_user, get_db
 from app.crud import company as crud_company
 from app.crud import quote as crud_quote
-from app.crud.quote import QuoteNotAcceptableError, QuoteRequestError
+from app.crud.order import InsufficientStockError, ProductUnavailableError
+from app.crud.order import order as crud_order
+from app.crud.quote import QuoteNotAcceptableError, QuoteNotConvertibleError, QuoteRequestError
 from app.models.company import Company
 from app.models.user import User
+from app.schemas.order import OrderResponse
 from app.schemas.quote import QuoteRequestCreate, QuoteResponse
 from app.services import invoice as invoice_service
 from app.services import quote_pdf
@@ -119,7 +126,8 @@ async def accept_my_quote(
     """Accept a ``sent`` quote (→ ``accepted``).
 
     Only a ``sent`` quote may be accepted (409 otherwise). Cross-company/unknown →
-    404. Conversion stays admin-only — accepting does not create an order.
+    404. Accepting does not create an order — convert separately via
+    ``POST /quotes/{id}/convert``.
     """
     company = crud_company.get_for_primary_user(db, current_user.id)
     if company is None:
@@ -133,6 +141,53 @@ async def accept_my_quote(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=exc.message) from exc
     db.commit()
     return crud_quote.get_for_company(db, quote_id=quote_id, company_id=company.id)
+
+
+@router.post(
+    "/{quote_id}/convert",
+    response_model=OrderResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def convert_my_quote(
+    quote_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Convert one of the caller's company's **accepted** quotes into a pending order.
+
+    Self-service counterpart to the admin convert. The order is owned by the company's
+    primary contact — the caller — so order history, emails and invoices attribute
+    correctly. Line items honour the **quoted** unit price + quantity (no re-pricing);
+    stock is decremented from the default warehouse like a normal order;
+    ``shipping``/``discount``/``tax`` are 0 and no shipping method is set (set at
+    fulfilment).
+
+    Cross-company / unknown quote → 404. ``status != 'accepted'`` → 422; already
+    converted → 409; no items / any free-text line / insufficient stock → 422.
+    """
+    company = crud_company.get_for_primary_user(db, current_user.id)
+    if company is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote not found")
+    quote = crud_quote.get_for_company(db, quote_id=quote_id, company_id=company.id)
+    if quote is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote not found")
+
+    try:
+        order = crud_quote.convert_to_order(db, quote=quote, actor_user_id=current_user.id)
+    except QuoteNotConvertibleError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    except ProductUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Product {exc.product_id} is unavailable",
+        ) from exc
+    except InsufficientStockError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+    db.commit()
+    return crud_order.get_scoped(db, order_id=order.id, user=current_user)
 
 
 @router.get(
