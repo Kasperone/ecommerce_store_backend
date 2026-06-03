@@ -8,8 +8,9 @@ Covers:
 - A company's denormalized primary contact (no explicit membership row) still
   resolves — as COMPANY_ADMIN (the Wave-C backward-compat path; the existing
   ``test_quotes_customer.py`` suite relies on this and must stay green).
-- A non-member (neither membership nor primary contact) → 404.
-- An ``invited`` / ``suspended`` membership does NOT grant access → 404.
+- A non-member (neither membership nor primary contact) → 200 with a null body
+  (the FE probes this per-page, so it must not 404-spam the console).
+- An ``invited`` / ``suspended`` membership does NOT grant access → 200 null.
 - Auth required (401).
 
 Plus a backfill-logic test: the migration's INSERT...SELECT creates exactly one
@@ -101,16 +102,24 @@ async def test_me_primary_contact_resolves_as_company_admin(client, user_factory
     assert body["role"] == "COMPANY_ADMIN"
 
 
-async def test_me_404_for_non_member(client, user_factory):
+async def test_me_returns_null_for_non_member(client, user_factory):
+    """A non-member gets 200 with a null body (not 404).
+
+    The FE probes this endpoint on every authed page to gate the B2B surfaces;
+    a 404 would spam the browser console on every cold load. Returning null is
+    safe here — the caller is asking about their OWN membership, not enumerating
+    someone else's resource.
+    """
     user = user_factory(email="me-none@example.com", role=UserRole.CUSTOMER)
     resp = await client.get("/api/v1/companies/me", headers=_headers(user))
-    assert resp.status_code == 404
+    assert resp.status_code == 200
+    assert resp.json() is None
 
 
 @pytest.mark.parametrize(
     "bad_status", [CompanyMemberStatus.INVITED.value, CompanyMemberStatus.SUSPENDED.value]
 )
-async def test_me_404_for_non_active_membership(
+async def test_me_returns_null_for_non_active_membership(
     client, user_factory, company_factory, company_user_factory, bad_status
 ):
     user = user_factory(email=f"me-{bad_status}@example.com", role=UserRole.CUSTOMER)
@@ -118,7 +127,8 @@ async def test_me_404_for_non_active_membership(
     company_user_factory(company_id=company.id, user_id=user.id, status=bad_status)
 
     resp = await client.get("/api/v1/companies/me", headers=_headers(user))
-    assert resp.status_code == 404
+    assert resp.status_code == 200
+    assert resp.json() is None
 
 
 async def test_me_membership_role_wins_over_primary_pointer(
