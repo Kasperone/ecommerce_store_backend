@@ -1,7 +1,8 @@
+import hmac
 import logging
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from jwt import PyJWTError
 from sqlalchemy.orm import Session
@@ -437,6 +438,66 @@ async def refresh_token(
         user_agent=user_agent(request),
     )
     _set_refresh_cookie(response, new_refresh, new_exp)
+
+    access_token, _, _ = create_access_token(subject=user.id)
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.post("/refresh/ssr", response_model=Token, include_in_schema=False)
+async def refresh_token_ssr(
+    db: Session = Depends(get_db),
+    refresh_cookie: str | None = Cookie(default=None, alias=REFRESH_COOKIE_NAME),
+    x_ssr_secret: str | None = Header(default=None, alias="X-SSR-Secret"),
+):
+    """Server-to-server session validation for SSR — mint an access token from a
+    valid refresh cookie **without rotating** it.
+
+    The Nuxt SSR server calls this on every server-rendered cold load so route
+    middleware can resolve the visitor before paint (no flash-of-forbidden
+    content). Unlike ``/refresh`` it is *read-only*: no rotation, no
+    ``Set-Cookie``, no DB writes. That removes the rotation + Set-Cookie-replay
+    race that surfaced as a hydration mismatch (and spurious ``/login``
+    redirects) on hard reloads, and it sidesteps the user-facing ``30/hour``
+    refresh limit a per-cold-load SSR refresh would otherwise burn — which is
+    why this route is deliberately *not* IP-rate-limited (a single SSR origin
+    fans out every visitor's refresh through one IP).
+
+    Gated by ``SSR_SHARED_SECRET`` (sent as ``X-SSR-Secret``) so an ordinary
+    client — even one holding a stolen cookie — cannot reach this non-rotating
+    path and mint access tokens indefinitely. An empty secret disables the
+    endpoint (403), failing closed.
+
+    A revoked/expired cookie returns 401 but, unlike ``/refresh``, does **not**
+    trigger family-wide reuse-detection revocation: at SSR time a stale cookie
+    is far likelier a benign rotation race (the client just rotated in another
+    tab) than theft, and nuking the family would log the user out everywhere.
+    """
+    expected = settings.SSR_SHARED_SECRET
+    if not expected or not x_ssr_secret or not hmac.compare_digest(x_ssr_secret, expected):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+
+    invalid = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate refresh token",
+    )
+    if not refresh_cookie:
+        raise invalid
+    try:
+        decoded = decode_token(refresh_cookie, expected_type="refresh")
+    except PyJWTError:
+        raise invalid from None
+
+    row = crud_refresh_token.get_by_jti(db, jti=decoded.jti)
+    if row is None or not crud_refresh_token.matches(row, token=refresh_cookie):
+        raise invalid
+    # Read-only path: treat a revoked/expired cookie as "logged out for this
+    # render" without touching the refresh family (see docstring).
+    if crud_refresh_token.is_revoked(row) or crud_refresh_token.is_expired(row):
+        raise invalid
+
+    user = crud_user.get(db, id=row.user_id)
+    if user is None or not user.is_active:
+        raise invalid
 
     access_token, _, _ = create_access_token(subject=user.id)
     return {"access_token": access_token, "token_type": "bearer"}

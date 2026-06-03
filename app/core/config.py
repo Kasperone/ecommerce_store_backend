@@ -43,6 +43,16 @@ class Settings(BaseSettings):
     JWT_ISSUER: str = "ecommerce-store"
     JWT_AUDIENCE: str = "ecommerce-store-clients"
 
+    # Shared secret gating the server-to-server SSR session-validation endpoint
+    # (`POST /auth/refresh/ssr`). Known only to the trusted Nuxt SSR server, which
+    # sends it as the `X-SSR-Secret` header. That endpoint validates the refresh
+    # cookie and mints an access token WITHOUT rotating — so it must never be
+    # reachable by an ordinary client (a stolen cookie could otherwise mint access
+    # tokens indefinitely, bypassing rotation/reuse-detection). Empty = disabled
+    # (the endpoint 403s), which fails closed: SSR simply falls back to rendering
+    # the logged-out shell and the client restores the session after hydration.
+    SSR_SHARED_SECRET: str = ""
+
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
 
