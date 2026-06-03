@@ -10,6 +10,12 @@ post {
   auth: none
 }
 
+headers {
+  X-SSR-Secret: {{ssrSecret}}
+}
+
 docs {
-**Access:** Public (no token)
+**Access:** Internal (X-SSR-Secret shared-secret header; not user-facing)
+
+**Secret header:** `X-SSR-Secret: {{ssrSecret}}` — set `BRUNO_SSR_SECRET` in `bruno/.env`.
 }
