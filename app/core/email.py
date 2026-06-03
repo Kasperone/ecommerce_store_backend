@@ -282,6 +282,42 @@ def send_welcome_email(
     )
 
 
+def send_company_invite_email(
+    *,
+    email_to: str,
+    company_name: str,
+    role: str,
+) -> dict:
+    """Invite an unregistered address to join a company's B2B team.
+
+    Sent best-effort when a COMPANY_ADMIN invites an email that has no account
+    yet — it prompts them to register, at which point the pending membership is
+    bound to the new account (``link_pending_invites``).
+    """
+    register_url = f"{settings.FRONTEND_URL}/register"
+    subject = f"You've been invited to {company_name} on {settings.EMAIL_FROM_NAME}"
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head><meta charset="utf-8"><title>Team invitation</title></head>
+    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background:#fff;border-radius:8px;padding:40px;box-shadow:0 2px 4px rgba(0,0,0,0.1);">
+            <h1 style="color:#2563eb;text-align:center;">You're invited 🎉</h1>
+            <p>You've been invited to join <strong>{html_escape(company_name)}</strong> as
+               <strong>{html_escape(role)}</strong> on {settings.EMAIL_FROM_NAME}.</p>
+            <p>Create an account with this email address to accept — the invitation is
+               linked to your new account automatically.</p>
+            <div style="text-align:center;">
+                <a href="{register_url}" style="display:inline-block;padding:14px 32px;background:#2563eb;color:#fff !important;text-decoration:none;border-radius:6px;margin:20px 0;">Create your account</a>
+            </div>
+            <p style="color:#666;font-size:14px;">If you weren't expecting this, you can safely ignore this email.</p>
+        </div>
+    </body>
+    </html>
+    """
+    return send_email(email_to=email_to, subject=subject, html_content=html_content)
+
+
 def send_password_reset_email(
     *,
     email_to: str,

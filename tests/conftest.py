@@ -235,6 +235,7 @@ def captured_emails(monkeypatch) -> list[dict]:
     monkeypatch.setattr(email_mod, "send_account_locked_email", _make("account_locked"))
     monkeypatch.setattr(email_mod, "send_already_registered_email", _make("already_registered"))
     monkeypatch.setattr(email_mod, "send_order_email", _make("order_email"))
+    monkeypatch.setattr(email_mod, "send_company_invite_email", _make("company_invite"))
 
     # Also patch the names re-imported into auth.py at module load time.
     import app.api.v1.auth as auth_mod

@@ -92,11 +92,14 @@ class CompanyUser(BaseModel):
     ``company_id`` and ``user_id`` both ON DELETE CASCADE — a membership is
     meaningless without its company or its user, so deleting either takes the
     membership row with it. A user can belong to a company **at most once**
-    (unique ``(company_id, user_id)``). ``role`` / ``status`` are CHECK-guarded
-    to their enum value sets. ``invited_email`` / ``invited_at`` capture an
-    invitation that has not yet been bound to a concrete user account (team
-    management, Wave D slice 5) — both nullable; a directly-created (e.g.
-    backfilled or business-signup) membership leaves them ``None``.
+    (unique ``(company_id, user_id)``; NULL ``user_id`` values are distinct in
+    Postgres, so multiple pending email-invites coexist). ``role`` / ``status``
+    are CHECK-guarded to their enum value sets. ``invited_email`` / ``invited_at``
+    capture an invitation; a **pending email-invite to an address with no account
+    yet** has ``user_id IS NULL`` + ``invited_email`` set, and is bound to a
+    concrete account when that address registers (``link_pending_invites``). A
+    directly-created (e.g. backfilled or business-signup) membership leaves the
+    invite fields ``None``.
     """
 
     __tablename__ = "company_users"
@@ -115,7 +118,9 @@ class CompanyUser(BaseModel):
     company_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("companies.id", ondelete="CASCADE"), index=True
     )
-    user_id: Mapped[int] = mapped_column(
+    # Nullable: a pending email-invite (no account yet) has ``user_id IS NULL``
+    # until the invited address registers (see the class docstring).
+    user_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
     role: Mapped[str] = mapped_column(String(16))
@@ -126,7 +131,7 @@ class CompanyUser(BaseModel):
     # Relationships. ``company.members`` is the inverse collection (back_populates).
     # ``user`` is plain (the User side has no membership collection in the MVP).
     company: Mapped[Company] = relationship("Company", back_populates="members")
-    user: Mapped[User] = relationship("User")
+    user: Mapped[User | None] = relationship("User")
 
     def __repr__(self) -> str:
         return (

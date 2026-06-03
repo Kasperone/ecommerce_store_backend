@@ -25,15 +25,20 @@ Two integrity guards on mutations:
   is refused — mirrors the admin Staff last-active-admin guard so a company can't
   be orphaned with no one able to manage it.
 
-Invites link to an **existing user account** (the ``company_users.user_id``
-column is NOT NULL — a pending invite for an address with no account yet would
-need a migration, which is out of this slice's scope; see ``status/TM-be.md``).
-An unknown email → 404.
+Invites work whether or not the address already has an account. An **existing
+account** is linked directly; an address with **no account yet** gets a *pending
+email-invite* (``company_users.user_id`` NULL + ``invited_email`` set) plus a
+best-effort invite email, and is bound to the account when that address registers
+(``link_pending_invites``, from the registration flow). A duplicate invite
+(already a member, or an already-pending email) → 409.
 """
+
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core import email as email_service
 from app.core.dependencies import (
     get_current_company_member,
     get_db,
@@ -49,6 +54,7 @@ from app.schemas.company import (
     CompanyMemberUpdate,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -132,38 +138,59 @@ async def invite_member(
     db: Session = Depends(get_db),
     membership: CompanyMembership = Depends(require_company_admin),
 ):
-    """Invite a user (by email) to the caller's company with a B2B role (COMPANY_ADMIN only).
+    """Invite someone (by email) to the caller's company with a B2B role (COMPANY_ADMIN only).
 
-    The email must resolve to an existing user account (the membership links to
-    it) → otherwise 404. A user who is already a member of this company → 409. On
-    success a membership is created in the ``invited`` status (no access until
-    accepted/activated) and returned (201).
+    Two cases, both creating an ``invited``-status membership (no access until
+    activated) and returning it (201):
+
+    - **Existing account** → the membership links to it. Already a member of this
+      company → 409.
+    - **No account yet** → a *pending email-invite* is staged (``user_id`` NULL,
+      ``invited_email`` set) and an invite email is sent best-effort; the row is
+      bound to the account when that address registers. A pending invite for the
+      same email already exists → 409.
     """
     company_id = membership.company.id
 
     user = crud_user.get_by_email(db, email=payload.email)
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No user with that email",
+    if user is not None:
+        existing = crud_company_user.get_membership(db, company_id=company_id, user_id=user.id)
+        if existing is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="User is already a member of this company",
+            )
+        member = crud_company_user.invite(
+            db, company_id=company_id, user_id=user.id, email=payload.email, role=payload.role
         )
+        db.commit()
+        db.refresh(member)
+        return _serialize(member)
 
-    existing = crud_company_user.get_membership(db, company_id=company_id, user_id=user.id)
-    if existing is not None:
+    # No account yet → stage a pending email-invite, bound to the account on signup.
+    if crud_company_user.get_email_invite(db, company_id=company_id, email=payload.email):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="User is already a member of this company",
+            detail="An invite for that email is already pending",
         )
-
     member = crud_company_user.invite(
-        db,
-        company_id=company_id,
-        user_id=user.id,
-        email=payload.email,
-        role=payload.role,
+        db, company_id=company_id, user_id=None, email=payload.email, role=payload.role
     )
     db.commit()
     db.refresh(member)
+    try:
+        email_service.send_company_invite_email(
+            email_to=payload.email,
+            company_name=membership.company.name,
+            role=payload.role,
+        )
+    except Exception:
+        logger.warning(
+            "Email send failed: kind=%s company_id=%s",
+            "company_invite",
+            company_id,
+            exc_info=True,
+        )
     return _serialize(member)
 
 
