@@ -1,0 +1,15 @@
+meta {
+  name: Refresh Token Ssr
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/api/v1/auth/refresh/ssr
+  body: none
+  auth: none
+}
+
+docs {
+**Access:** Public (no token)
+}
