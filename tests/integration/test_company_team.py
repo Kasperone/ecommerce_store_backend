@@ -10,7 +10,9 @@ Covers the spec's acceptance contract:
 - the last active COMPANY_ADMIN can't be demoted / suspended / removed → 409;
 - a cross-company ``member_id`` → 404 (never act on another company's row);
 - suspending a member revokes their access (they 404 on the B2B surfaces);
-- invite of an unknown email → 404; invite of an existing member → 409.
+- invite of an address with no account yet → 201 pending email-invite, bound to
+  the account on registration; invite of an existing member / already-pending
+  email → 409.
 """
 
 from __future__ import annotations
@@ -19,7 +21,8 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
-from app.models.company_user import CompanyMemberStatus, CompanyRole
+from app.crud import user as crud_user
+from app.models.company_user import CompanyMemberStatus, CompanyRole, CompanyUser
 from app.models.user import UserRole
 from tests.factories.company import CompanyFactory
 from tests.factories.company_user import CompanyUserFactory
@@ -157,9 +160,12 @@ async def test_invite_normalises_email_case(
     assert resp.json()["user_id"] == invitee.id
 
 
-async def test_invite_unknown_email_404(
-    client, user_factory, company_factory, company_user_factory
+async def test_invite_unregistered_email_creates_pending(
+    client, user_factory, company_factory, company_user_factory, captured_emails
 ):
+    """An address with no account yet → 201 pending email-invite (``user_id`` NULL,
+    ``invited_email`` set) + a best-effort invite email; bound to the account when
+    that address later registers."""
     admin = user_factory(email="u404-admin@example.com", role=UserRole.CUSTOMER)
     company = company_factory(name="Unknown Co")
     company_user_factory(
@@ -171,7 +177,65 @@ async def test_invite_unknown_email_404(
         headers=_headers(admin),
         json={"email": "nobody@example.com", "role": "BUYER"},
     )
-    assert resp.status_code == 404
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["user_id"] is None
+    assert body["invited_email"] == "nobody@example.com"
+    assert body["status"] == CompanyMemberStatus.INVITED.value
+    assert body["role"] == CompanyRole.BUYER.value
+    assert any(e["kind"] == "company_invite" for e in captured_emails)
+
+
+async def test_invite_unregistered_duplicate_pending_409(
+    client, user_factory, company_factory, company_user_factory
+):
+    admin = user_factory(email="dup-pending-admin@example.com", role=UserRole.CUSTOMER)
+    company = company_factory(name="Dup Pending Co")
+    company_user_factory(
+        company_id=company.id, user_id=admin.id, role=CompanyRole.COMPANY_ADMIN.value
+    )
+    body = {"email": "pending@example.com", "role": "BUYER"}
+    first = await client.post(BASE, headers=_headers(admin), json=body)
+    assert first.status_code == 201
+    second = await client.post(BASE, headers=_headers(admin), json=body)
+    assert second.status_code == 409
+
+
+async def test_registering_binds_pending_invite(
+    client, user_factory, company_factory, company_user_factory, db_session, reset_limiter
+):
+    """Registering with an invited address binds the pending membership to the new
+    account (``user_id`` set; status stays ``invited`` until activated)."""
+    admin = user_factory(email="bind-admin@example.com", role=UserRole.CUSTOMER)
+    company = company_factory(name="Bind Co")
+    company_user_factory(
+        company_id=company.id, user_id=admin.id, role=CompanyRole.COMPANY_ADMIN.value
+    )
+
+    invite = await client.post(
+        BASE, headers=_headers(admin), json={"email": "joiner@example.com", "role": "BUYER"}
+    )
+    assert invite.status_code == 201
+    member_id = invite.json()["id"]
+    assert invite.json()["user_id"] is None
+
+    reg = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "joiner@example.com",
+            "password": "Str0ngPass1",
+            "first_name": "Joiner",
+            "last_name": "Person",
+        },
+    )
+    assert reg.status_code == 200
+
+    db_session.expire_all()
+    joined = crud_user.get_by_email(db_session, email="joiner@example.com")
+    assert joined is not None
+    member = db_session.query(CompanyUser).filter(CompanyUser.id == member_id).one()
+    assert member.user_id == joined.id
+    assert member.status == CompanyMemberStatus.INVITED.value
 
 
 async def test_invite_existing_member_409(
