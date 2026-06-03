@@ -82,10 +82,13 @@ async def test_companies_me_returns_b2b_company(client, user_factory, company_fa
     assert body["status"] == "pending"
 
 
-async def test_companies_me_404_for_non_b2b(client, user_factory):
+async def test_companies_me_null_for_non_b2b(client, user_factory):
+    """Non-B2B caller → 200 with a null body (not 404): the FE probes this per
+    authed page, so it must not 404-spam the browser console."""
     user = user_factory(email="not-b2b@example.com", role=UserRole.CUSTOMER)
     resp = await client.get("/api/v1/companies/me", headers=_headers(user))
-    assert resp.status_code == 404
+    assert resp.status_code == 200
+    assert resp.json() is None
 
 
 # ---------------------------------------------------------------------------
