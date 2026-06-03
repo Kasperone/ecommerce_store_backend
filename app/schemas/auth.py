@@ -97,7 +97,8 @@ class BusinessRegister(BaseSchema):
 
     Open B2B self-signup: the personal account fields (mirroring the normal
     ``register`` — email + strong password + name) plus the minimal company
-    identity (``company_name`` required, ``company_tax_id`` optional). One call
+    identity (``company_name`` required; ``company_tax_id`` + an optional company
+    address). One call
     creates the user (``UserRole.CUSTOMER``) + a ``pending`` company + an active
     ``COMPANY_ADMIN`` membership; the company stays ``pending`` until an admin
     approves it. The user still goes through email verification, and the response
@@ -111,6 +112,14 @@ class BusinessRegister(BaseSchema):
     phone: str | None = None
     company_name: str = Field(..., min_length=1, max_length=255)
     company_tax_id: str | None = Field(default=None, max_length=64)
+    # Optional company address — persisted on the user (the invoice PDF reads
+    # ``users.company_address_*``); the company billing address lives separately
+    # on ``companies.billing_address_*``, managed via the company portal.
+    company_address_street: str | None = Field(default=None, max_length=255)
+    company_address_city: str | None = Field(default=None, max_length=100)
+    company_address_postal_code: str | None = Field(default=None, max_length=20)
+    company_address_country: str | None = Field(default=None, max_length=100)
+    company_address_state: str | None = Field(default=None, max_length=100)
 
     @field_validator("password")
     @classmethod

@@ -32,6 +32,11 @@ def _payload(
         "last_name": "Owner",
         "company_name": company_name,
         "company_tax_id": "PL9999999999",
+        "company_address_street": "1 Commerce St",
+        "company_address_city": "Warsaw",
+        "company_address_postal_code": "00-001",
+        "company_address_country": "PL",
+        "company_address_state": "Mazowieckie",
     }
 
 
@@ -47,6 +52,10 @@ async def test_new_business_creates_user_company_membership_atomically(
     assert user.role == UserRole.CUSTOMER
     assert user.is_verified is False
     assert user.company_name == "New Biz LLC"
+    # Company address persisted on the user (the invoice PDF reads these columns).
+    assert user.company_address_street == "1 Commerce St"
+    assert user.company_address_city == "Warsaw"
+    assert user.company_address_country == "PL"
 
     # Company: pending, name + tax_id from the payload, primary contact = the user.
     company = db_session.query(Company).filter(Company.primary_user_id == user.id).one()
