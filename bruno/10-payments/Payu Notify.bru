@@ -10,8 +10,14 @@ post {
   auth: none
 }
 
+headers {
+  ~OpenPayU-Signature: REPLACE_WITH_VALID_PROVIDER_SIGNATURE
+}
+
 docs {
 **Access:** Public (no token)
+
+**Signature:** needs a valid `OpenPayU-Signature` header — generate via the provider sandbox (`stripe listen` / PayU sandbox); it can't be hand-forged.
 
 **Responses:** 200
 }
