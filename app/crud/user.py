@@ -392,13 +392,6 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         user.phone = None
         user.is_active = False
 
-        # Inline shipping snapshot on the user row.
-        user.shipping_street = None
-        user.shipping_city = None
-        user.shipping_postal_code = None
-        user.shipping_country = None
-        user.shipping_state = None
-
         # Company / invoice data.
         user.company_name = None
         user.company_tax_id = None

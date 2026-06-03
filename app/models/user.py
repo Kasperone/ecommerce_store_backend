@@ -55,13 +55,6 @@ class User(BaseModel):
     totp_secret_enc: Mapped[str | None] = mapped_column(String(255))
     totp_enabled_at: Mapped[datetime | None] = mapped_column(DateTime)
 
-    # Shipping Address (optional)
-    shipping_street: Mapped[str | None] = mapped_column(String(255))
-    shipping_city: Mapped[str | None] = mapped_column(String(100))
-    shipping_postal_code: Mapped[str | None] = mapped_column(String(20))
-    shipping_country: Mapped[str | None] = mapped_column(String(100))
-    shipping_state: Mapped[str | None] = mapped_column(String(100))
-
     # Company/Invoice Data (optional)
     company_name: Mapped[str | None] = mapped_column(String(255))
     company_tax_id: Mapped[str | None] = mapped_column(String(50))

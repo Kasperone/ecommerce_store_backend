@@ -37,7 +37,6 @@ class CustomerListItem(TimestampSchema):
     is_verified: bool
     is_locked: bool
     company_name: str | None = None
-    shipping_country: str | None = None
     order_count: int = 0
     note_count: int = 0
     tags: list[TagChip] = Field(default_factory=list)
