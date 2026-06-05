@@ -574,7 +574,13 @@ BLOCK_SCHEMAS: dict[str, dict[str, Any]] = {
                 ],
             }
         },
-        "presets": [{"name": "Slideshow", "settings": {}}],
+        "presets": [
+            {
+                "name": "Slideshow",
+                "settings": {},
+                "blocks": [{"type": "slide", "id": "slide-0", "settings": {}}],
+            }
+        ],
     },
     "promo-strip": {
         "name": "Promo strip",
@@ -705,7 +711,13 @@ BLOCK_SCHEMAS: dict[str, dict[str, Any]] = {
                 ],
             }
         },
-        "presets": [{"name": "Collection list", "settings": {}}],
+        "presets": [
+            {
+                "name": "Collection list",
+                "settings": {},
+                "blocks": [{"type": "tile", "id": "tile-0", "settings": {}}],
+            }
+        ],
     },
     "rich-text": {
         "name": "Rich text",
@@ -778,7 +790,13 @@ BLOCK_SCHEMAS: dict[str, dict[str, Any]] = {
                 ],
             }
         },
-        "presets": [{"name": "Image gallery", "settings": {}}],
+        "presets": [
+            {
+                "name": "Image gallery",
+                "settings": {},
+                "blocks": [{"type": "image", "id": "image-0", "settings": {}}],
+            }
+        ],
     },
     "faq": {
         "name": "FAQ",
@@ -794,7 +812,13 @@ BLOCK_SCHEMAS: dict[str, dict[str, Any]] = {
                 ],
             }
         },
-        "presets": [{"name": "FAQ", "settings": {}}],
+        "presets": [
+            {
+                "name": "FAQ",
+                "settings": {},
+                "blocks": [{"type": "faq-item", "id": "faq-item-0", "settings": {}}],
+            }
+        ],
     },
     "coupon-callout": {
         "name": "Coupon callout",
