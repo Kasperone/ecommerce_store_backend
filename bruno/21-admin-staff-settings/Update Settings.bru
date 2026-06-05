@@ -13,8 +13,8 @@ patch {
 body:json {
   {
     "store_name": "Example",
-    "address_line": "string",
-    "postal_city": "string"
+    "legal_name": "Example",
+    "address_line": "string"
   }
 }
 
@@ -23,11 +23,21 @@ docs {
 
 **Request body** `StoreConfigUpdate`:
   - `store_name`: string|null
+  - `legal_name`: string|null
   - `address_line`: string|null
+  - `address_line2`: string|null
   - `postal_city`: string|null
   - `country`: string|null
   - `tax_id`: string|null
+  - `nip`: string|null
+  - `regon`: string|null
+  - `krs`: string|null
   - `email`: string|null
+  - `phone`: string|null
+  - `social_instagram`: string|null
+  - `social_facebook`: string|null
+  - `social_tiktok`: string|null
+  - `social_youtube`: string|null
   - `invoice_vat_rate`: integer|null
 
 **Responses:** 200, 422

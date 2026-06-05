@@ -1,0 +1,22 @@
+meta {
+  name: Rollback Version
+  type: http
+  seq: 25
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/pages/:page_id/versions/:version_id/rollback
+  body: none
+  auth: inherit
+}
+
+params:path {
+  page_id: 1
+  version_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

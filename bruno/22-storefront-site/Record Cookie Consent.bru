@@ -1,0 +1,37 @@
+meta {
+  name: Record Cookie Consent
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v1/cookie-consent
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "anon_id": "string",
+    "categories": {
+      "necessary": false,
+      "analytics": false,
+      "marketing": false
+    },
+    "gpc": false
+  }
+}
+
+docs {
+**Access:** Public (no token)
+
+**Rate limit:** 30/minute
+
+**Request body** `CookieConsentRequest`:
+  - `anon_id`: string|null
+  - `categories`: CookieConsentCategories
+  - `gpc`: boolean
+  - `policy_version`: string|null
+
+**Responses:** 200, 422
+}
