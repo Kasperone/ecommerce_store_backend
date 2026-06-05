@@ -18,6 +18,7 @@ from app.models.company_user import (
     CompanyRole,
     CompanyUser,
 )
+from app.models.cookie_consent import CookieConsent
 from app.models.corrective_invoice import CorrectiveInvoice, CorrectiveInvoiceCounter
 from app.models.coupon import (
     COUPON_DISCOUNT_TYPE_VALUES,
@@ -79,6 +80,7 @@ __all__ = [
     "Company",
     "CompanyStatus",
     "COMPANY_STATUS_VALUES",
+    "CookieConsent",
     "CompanyUser",
     "CompanyRole",
     "CompanyMemberStatus",

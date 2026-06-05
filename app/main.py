@@ -98,6 +98,7 @@ from app.api.v1 import (  # noqa: E402
     companies,
     company_team,
     contact,
+    cookie_consent,
     coupons,
     newsletter,
     orders,
@@ -171,3 +172,4 @@ app.include_router(companies.router, prefix="/api/v1/companies", tags=["Companie
 # /companies/me (this is /companies/me/users/...); kept in its own router file.
 app.include_router(company_team.router, prefix="/api/v1/companies/me/users", tags=["Company Team"])
 app.include_router(store_config.router, prefix="/api/v1/store-config", tags=["Store Config"])
+app.include_router(cookie_consent.router, prefix="/api/v1", tags=["Cookie Consent"])
