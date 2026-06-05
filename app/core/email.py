@@ -760,3 +760,56 @@ def send_order_email(
         text_content=text_content,
         attachments=attachments,
     )
+
+
+def send_contact_email(
+    *,
+    email_to: str,
+    name: str,
+    reply_to: str,
+    subject: str,
+    message: str,
+) -> dict:
+    """Forward a public contact-form submission to the store inbox.
+
+    ``email_to`` is the store inbox (from config); ``reply_to`` / ``name`` are
+    the submitter's address + name so staff can reply directly. All
+    user-supplied values are HTML-escaped before going into the body. Reuses
+    the configured Resend client via ``send_email``; the caller swallows
+    provider errors (best-effort, like the other sends).
+    """
+    full_subject = f"[Contact] {subject}"
+    safe_name = html_escape(name)
+    safe_email = html_escape(reply_to)
+    safe_subject = html_escape(subject)
+    safe_message = html_escape(message).replace("\n", "<br>")
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head><meta charset="utf-8"><title>Contact form submission</title></head>
+    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <div style="background:#fff;border-radius:8px;padding:40px;box-shadow:0 2px 4px rgba(0,0,0,0.1);">
+            <h1 style="color:#2563eb;font-size:20px;margin-top:0;">New contact form submission</h1>
+            <p style="margin:0;"><strong>From:</strong> {safe_name} &lt;{safe_email}&gt;</p>
+            <p style="margin:0;"><strong>Subject:</strong> {safe_subject}</p>
+            <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0;">
+            <p style="white-space:pre-wrap;">{safe_message}</p>
+        </div>
+    </body>
+    </html>
+    """
+
+    text_content = (
+        f"New contact form submission\n\n"
+        f"From: {name} <{reply_to}>\n"
+        f"Subject: {subject}\n\n"
+        f"{message}\n"
+    )
+
+    return send_email(
+        email_to=email_to,
+        subject=full_subject,
+        html_content=html_content,
+        text_content=text_content,
+    )
