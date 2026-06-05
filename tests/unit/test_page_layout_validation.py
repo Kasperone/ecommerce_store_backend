@@ -119,6 +119,52 @@ def test_slideshow_subblocks():
     assert len(section.blocks) == 2  # type: ignore[union-attr]
 
 
+# --------------------------------------------------------------------------- #
+# Container-block presets seed one starter child (F1 "Presets" sub-task)        #
+# --------------------------------------------------------------------------- #
+# Each of the 4 container blocks must ship a preset whose ``blocks`` carries
+# exactly one blank starter child of the right ``type``, so a freshly-added
+# container renders (storefront guards ``v-if="items.length"``).
+
+CONTAINER_PRESET_CHILD_TYPE = {
+    "slideshow": "slide",
+    "collection-list": "tile",
+    "image-gallery": "image",
+    "faq": "faq-item",
+}
+
+
+@pytest.mark.parametrize(("block_type", "child_type"), CONTAINER_PRESET_CHILD_TYPE.items())
+def test_container_preset_seeds_one_starter_child(block_type: str, child_type: str):
+    presets = BLOCK_SCHEMAS[block_type]["presets"]
+    assert len(presets) == 1, block_type
+    children = presets[0]["blocks"]
+    assert len(children) == 1, block_type
+    child = children[0]
+    assert child["type"] == child_type
+    assert isinstance(child["id"], str) and child["id"], block_type
+
+
+@pytest.mark.parametrize(("block_type", "child_type"), CONTAINER_PRESET_CHILD_TYPE.items())
+def test_container_preset_child_validates(block_type: str, child_type: str):
+    preset = BLOCK_SCHEMAS[block_type]["presets"][0]
+    layout = PageLayout.model_validate(
+        {
+            "sections": [
+                {
+                    "type": block_type,
+                    "settings": preset["settings"],
+                    "blocks": preset["blocks"],
+                }
+            ]
+        }
+    )
+    section = layout.sections[0]
+    children = section.blocks  # type: ignore[union-attr]
+    assert len(children) == 1
+    assert children[0].type == child_type
+
+
 def test_faq_subblocks_and_defaults():
     layout = PageLayout.model_validate(
         {
