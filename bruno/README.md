@@ -1,6 +1,6 @@
 # Bruno API collection — Ecommerce Store backend
 
-A [Bruno](https://www.usebruno.com/) collection covering **all 170 `/api/v1` endpoints**, scaffolded from the
+A [Bruno](https://www.usebruno.com/) collection covering **all `/api/v1` endpoints**, scaffolded from the
 FastAPI OpenAPI schema. Collections are plain-text `.bru` files, so this lives in-repo and diffs like code.
 
 ## Requirements
@@ -40,11 +40,11 @@ FastAPI OpenAPI schema. Collections are plain-text `.bru` files, so this lives i
 | `04-catalog-categories` | category tree + SEO + hero | `15-admin-reviews-tags` | moderation + tag taxonomy |
 | `05-reviews` | public read + customer write/vote | `16-admin-inventory` | levels, ledger, restock/transfer |
 | `06-search` | Meili search + suggest | `17-admin-shipping` | zones/methods/rates |
-| `07-storefront-misc` | banners, shipping quote | `18-admin-marketing` | coupons/banners/campaigns |
+| `07-storefront-misc` | banners, shipping quote | `18-admin-marketing` | coupons/banners/campaigns/pages |
 | `08-orders` | create/list/cancel/invoice/refunds | `19-admin-b2b` | companies + quotes + convert |
 | `09-coupons` | validate (preview) | `20-admin-reports` | sales/top/category/refunds |
 | `10-payments` | PayU/Stripe + webhooks | `21-admin-staff-settings` | staff + store config |
-| `11-b2b-quotes` | request/accept/PDF | | |
+| `11-b2b-quotes` | request/accept/PDF | `22-storefront-site` | store-config, newsletter, cookie-consent, contact, CMS pages/blocks |
 
 ## Conventions baked in
 - **Path params** appear as `:param` with example values in a `params:path` block.

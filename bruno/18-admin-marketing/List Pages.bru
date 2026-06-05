@@ -1,0 +1,25 @@
+meta {
+  name: List Pages
+  type: http
+  seq: 17
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/pages/
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~page: 1
+  ~page_size: 20
+  ~locale: en
+  ~status:
+  ~type:
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

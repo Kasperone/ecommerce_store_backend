@@ -1,0 +1,32 @@
+meta {
+  name: Create Page
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/pages/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "slug": "example-slug"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `PageCreate`:
+  - `slug`: string (required)
+  - `type`: string — one of ['home', 'standard', 'landing']
+  - `locale`: string — one of ['en', 'pl']
+  - `draft_layout`: PageLayout-Input
+  - `seo_title`: string|null
+  - `seo_description`: string|null
+  - `seo_image_url`: string|null
+
+**Responses:** 201, 422
+}

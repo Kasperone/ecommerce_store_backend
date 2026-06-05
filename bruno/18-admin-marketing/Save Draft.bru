@@ -1,0 +1,37 @@
+meta {
+  name: Save Draft
+  type: http
+  seq: 21
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/admin/pages/:page_id/draft
+  body: json
+  auth: inherit
+}
+
+params:path {
+  page_id: 1
+}
+
+body:json {
+  {
+    "draft_layout": {
+      "sections": []
+    },
+    "seo_title": "string",
+    "seo_description": "string"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `PageDraftUpdate`:
+  - `draft_layout`: PageLayout-Input|null
+  - `seo_title`: string|null
+  - `seo_description`: string|null
+  - `seo_image_url`: string|null
+
+**Responses:** 200, 422
+}

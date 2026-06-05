@@ -1,0 +1,21 @@
+meta {
+  name: Create Preview Token
+  type: http
+  seq: 22
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/pages/:page_id/preview-token
+  body: none
+  auth: inherit
+}
+
+params:path {
+  page_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 201, 422
+}
