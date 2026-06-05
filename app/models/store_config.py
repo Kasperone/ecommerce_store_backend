@@ -47,11 +47,21 @@ class StoreConfig(BaseModel):
     )
 
     store_name: Mapped[str] = mapped_column(String(255), server_default="")
+    legal_name: Mapped[str] = mapped_column(String(255), server_default="")
     address_line: Mapped[str] = mapped_column(String(255), server_default="")
+    address_line2: Mapped[str] = mapped_column(String(255), server_default="")
     postal_city: Mapped[str] = mapped_column(String(255), server_default="")
     country: Mapped[str] = mapped_column(String(255), server_default="")
     tax_id: Mapped[str] = mapped_column(String(64), server_default="")
+    nip: Mapped[str] = mapped_column(String(64), server_default="")
+    regon: Mapped[str] = mapped_column(String(64), server_default="")
+    krs: Mapped[str] = mapped_column(String(64), server_default="")
     email: Mapped[str] = mapped_column(String(255), server_default="")
+    phone: Mapped[str] = mapped_column(String(64), server_default="")
+    social_instagram: Mapped[str] = mapped_column(String(255), server_default="")
+    social_facebook: Mapped[str] = mapped_column(String(255), server_default="")
+    social_tiktok: Mapped[str] = mapped_column(String(255), server_default="")
+    social_youtube: Mapped[str] = mapped_column(String(255), server_default="")
     invoice_vat_rate: Mapped[int] = mapped_column(Integer, server_default="23")
 
     def __repr__(self) -> str:
