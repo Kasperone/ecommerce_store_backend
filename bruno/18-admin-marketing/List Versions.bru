@@ -1,0 +1,21 @@
+meta {
+  name: List Versions
+  type: http
+  seq: 24
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/pages/:page_id/versions
+  body: none
+  auth: inherit
+}
+
+params:path {
+  page_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

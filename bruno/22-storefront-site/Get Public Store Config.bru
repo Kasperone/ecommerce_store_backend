@@ -1,0 +1,17 @@
+meta {
+  name: Get Public Store Config
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/api/v1/store-config
+  body: none
+  auth: none
+}
+
+docs {
+**Access:** Public (no token)
+
+**Responses:** 200
+}

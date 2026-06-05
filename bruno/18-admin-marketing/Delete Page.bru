@@ -1,0 +1,21 @@
+meta {
+  name: Delete Page
+  type: http
+  seq: 19
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/admin/pages/:page_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  page_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 204, 422
+}

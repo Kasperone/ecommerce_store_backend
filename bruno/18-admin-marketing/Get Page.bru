@@ -1,0 +1,21 @@
+meta {
+  name: Get Page
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/pages/:page_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  page_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

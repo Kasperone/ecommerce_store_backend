@@ -1,0 +1,17 @@
+meta {
+  name: Get Block Schemas
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/blocks/schema
+  body: none
+  auth: none
+}
+
+docs {
+**Access:** Public (no token)
+
+**Responses:** 200
+}

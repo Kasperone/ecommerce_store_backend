@@ -1,0 +1,26 @@
+meta {
+  name: Preview Page
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/api/v1/pages/:slug/preview
+  body: none
+  auth: none
+}
+
+params:path {
+  slug: example-slug
+}
+
+params:query {
+  token:
+  ~locale: en
+}
+
+docs {
+**Access:** Public (no token)
+
+**Responses:** 200, 422
+}
