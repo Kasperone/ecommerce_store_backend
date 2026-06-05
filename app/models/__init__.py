@@ -29,6 +29,16 @@ from app.models.customer_note import CustomerNote
 from app.models.inventory_movement import InventoryMovement, InventoryMovementReason
 from app.models.invoice import Invoice, InvoiceCounter
 from app.models.order import Order, OrderItem
+from app.models.page import (
+    PAGE_LOCALE_VALUES,
+    PAGE_STATUS_VALUES,
+    PAGE_TYPE_VALUES,
+    Page,
+    PageLocale,
+    PageStatus,
+    PageType,
+    PageVersion,
+)
 from app.models.price_history import SUPPORTED_CURRENCIES, PriceHistory
 from app.models.product import Product
 from app.models.product_image import ProductImage
@@ -88,6 +98,14 @@ __all__ = [
     "QUOTE_STATUS_VALUES",
     "Order",
     "OrderItem",
+    "Page",
+    "PageVersion",
+    "PageType",
+    "PageLocale",
+    "PageStatus",
+    "PAGE_TYPE_VALUES",
+    "PAGE_LOCALE_VALUES",
+    "PAGE_STATUS_VALUES",
     "PriceHistory",
     "SUPPORTED_CURRENCIES",
     "InventoryMovement",
