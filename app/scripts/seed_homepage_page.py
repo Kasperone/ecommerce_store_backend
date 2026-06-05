@@ -12,35 +12,53 @@ The slideshow seeds three localized hero slides whose images live in R2 under
 portable across buckets); promo-strip + hero-banners are empty CMS blocks (they
 render nothing until an admin adds content). On rerun, existing pages are LEFT
 UNTOUCHED so an admin's edits survive — only a missing locale row is inserted.
-Exits 0 on success; non-zero on error.
+
+The hero images are **uploaded-if-missing** on seed: the bytes are bundled under
+``app/scripts/assets/home/hero/`` and pushed to R2 only when the object isn't
+already there (best-effort; skipped entirely when R2 isn't configured). So a
+first seed on a fresh bucket is self-contained. Exits 0 on success; non-zero on
+error.
 """
 
 from __future__ import annotations
 
 import logging
 import sys
+from pathlib import Path
 from typing import Any
 
+from botocore.exceptions import ClientError
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import SessionLocal
-from app.core.storage import build_public_url
+from app.core.storage import build_public_url, get_r2_client
 from app.crud import page as crud_page
 from app.models.page import PageStatus, PageType
 from app.schemas.page import PageLayout
+from app.services.image import upload_to_r2
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger("seed_homepage_page")
 
 
-# Hero slide images, stored in R2 under ``cms/home/hero/``. The public URL is
-# resolved from ``R2_PUBLIC_URL`` at seed time so the same keys work in any
-# environment with R2 configured.
-_HERO_IMAGE = {
-    "summer": build_public_url("cms/home/hero/summer-banner.jpg"),
-    "sprayer": build_public_url("cms/home/hero/sprayer-banner.jpg"),
-    "vegetables": build_public_url("cms/home/hero/vegetables-banner.jpg"),
+# Hero slide images: bundled bytes (``app/scripts/assets/home/hero/``) uploaded
+# to R2 under ``cms/home/hero/`` if missing; the public URL is resolved from
+# ``R2_PUBLIC_URL`` so the same keys work in any R2-configured environment.
+_HERO_ASSET_DIR = Path(__file__).parent / "assets" / "home" / "hero"
+_HERO_FILENAMES = {
+    "summer": "summer-banner.jpg",
+    "sprayer": "sprayer-banner.jpg",
+    "vegetables": "vegetables-banner.jpg",
 }
+
+
+def _hero_key(filename: str) -> str:
+    return f"cms/home/hero/{filename}"
+
+
+_HERO_IMAGE = {name: build_public_url(_hero_key(fn)) for name, fn in _HERO_FILENAMES.items()}
 
 
 # Localized hero slides.
@@ -175,9 +193,40 @@ def _seed_locale(db: Session, *, locale: str) -> bool:
     return True
 
 
+def _ensure_hero_images() -> None:
+    """Upload each bundled hero image to R2 if the object is missing.
+
+    Best-effort and idempotent: an object that already exists is left untouched,
+    so reruns don't re-upload. Skipped silently when R2 isn't configured — the
+    page is still seeded with the URLs (they just won't resolve until R2 is set
+    up and the images land)."""
+    try:
+        client = get_r2_client()
+    except HTTPException:
+        logger.info("R2 not configured — skipping hero image upload")
+        return
+
+    bucket = settings.R2_BUCKET_NAME
+    for filename in _HERO_FILENAMES.values():
+        key = _hero_key(filename)
+        try:
+            client.head_object(Bucket=bucket, Key=key)
+            logger.info("hero image already in R2: %s", key)
+            continue
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code not in ("404", "NoSuchKey", "NotFound"):
+                raise  # a real error (auth/network) — don't mask it
+
+        body = (_HERO_ASSET_DIR / filename).read_bytes()
+        upload_to_r2(client, bucket=bucket, key=key, body=body, content_type="image/jpeg")
+        logger.info("uploaded hero image to R2: %s (%d bytes)", key, len(body))
+
+
 def main() -> int:
     db = SessionLocal()
     try:
+        _ensure_hero_images()
         for locale in ("en", "pl"):
             _seed_locale(db, locale=locale)
         return 0
