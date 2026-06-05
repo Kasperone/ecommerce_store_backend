@@ -12,6 +12,7 @@ from app.crud.dashboard import dashboard
 from app.crud.inventory import inventory
 from app.crud.invoice import invoice
 from app.crud.order import order
+from app.crud.page import page
 from app.crud.price_history import price_history
 from app.crud.product import product
 from app.crud.product_image import product_image
@@ -46,6 +47,7 @@ __all__ = [
     "quote",
     "category",
     "order",
+    "page",
     "inventory",
     "invoice",
     "price_history",
