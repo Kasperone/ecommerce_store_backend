@@ -1,77 +1,40 @@
-"""Unit tests for the homepage seed's upload-if-missing hero-image logic.
+"""Unit tests for the homepage seed layout.
 
-``_ensure_hero_images`` pushes the bundled hero images to R2 only when the object
-is absent, skips ones that already exist, and no-ops when R2 isn't configured.
-The R2 client is a plain ``MagicMock`` monkeypatched onto the seed module — the
-branch logic is what's under test, not boto3 itself.
+The seed ships an image-free, minimal homepage: no hero/slideshow and no image
+URLs at all (the storefront renders generated placeholders for empty image
+slots, and an admin builds the hero from the editor).
 """
 
-from unittest.mock import MagicMock
+import json
 
 import pytest
-from botocore.exceptions import ClientError
-from fastapi import HTTPException
 
 from app.scripts import seed_homepage_page as seed
 
 
-def _not_found() -> ClientError:
-    return ClientError({"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject")
+@pytest.mark.parametrize("locale", ["en", "pl"])
+def test_layout_has_no_slideshow_section(locale):
+    layout = seed._build_layout(locale)
+    types = [s["type"] for s in layout["sections"]]
+    assert "slideshow" not in types
+    assert types == ["promo-strip", "collection-list", "product-grid"]
 
 
-def test_ensure_hero_images_uploads_each_missing_object(monkeypatch):
-    client = MagicMock()
-    client.head_object.side_effect = _not_found()
-    monkeypatch.setattr(seed, "get_r2_client", lambda: client)
-    monkeypatch.setattr("app.core.config.settings.R2_BUCKET_NAME", "test-bucket")
-
-    seed._ensure_hero_images()
-
-    assert client.put_object.call_count == len(seed._HERO_FILENAMES)
-    keys = {c.kwargs["Key"] for c in client.put_object.call_args_list}
-    assert keys == {seed._hero_key(fn) for fn in seed._HERO_FILENAMES.values()}
-    for call in client.put_object.call_args_list:
-        assert call.kwargs["ContentType"] == "image/jpeg"
-        assert len(call.kwargs["Body"]) > 0  # real bundled bytes
+@pytest.mark.parametrize("locale", ["en", "pl"])
+def test_layout_ships_no_image_urls(locale):
+    layout = seed._build_layout(locale)
+    blob = json.dumps(layout)
+    # No seeded image references of any kind — nothing pre-existing in the system.
+    assert "image_url" not in blob
+    assert "cms/home/hero" not in blob
+    assert ".jpg" not in blob
 
 
-def test_ensure_hero_images_skips_existing_objects(monkeypatch):
-    client = MagicMock()
-    client.head_object.return_value = {"ContentLength": 123}
-    monkeypatch.setattr(seed, "get_r2_client", lambda: client)
-    monkeypatch.setattr("app.core.config.settings.R2_BUCKET_NAME", "test-bucket")
+def test_seed_module_has_no_bundled_image_assets():
+    """The seed must not ship image bytes in the repo."""
+    assets = seed.__file__.rsplit("/", 1)[0] + "/assets"
+    import os
 
-    seed._ensure_hero_images()
-
-    client.put_object.assert_not_called()
-
-
-def test_ensure_hero_images_noops_when_r2_unconfigured(monkeypatch):
-    def _raise() -> None:
-        raise HTTPException(status_code=503)
-
-    monkeypatch.setattr(seed, "get_r2_client", _raise)
-
-    seed._ensure_hero_images()  # must not raise
-
-
-def test_ensure_hero_images_reraises_non_404_errors(monkeypatch):
-    client = MagicMock()
-    client.head_object.side_effect = ClientError(
-        {"Error": {"Code": "403", "Message": "Forbidden"}}, "HeadObject"
-    )
-    monkeypatch.setattr(seed, "get_r2_client", lambda: client)
-    monkeypatch.setattr("app.core.config.settings.R2_BUCKET_NAME", "test-bucket")
-
-    with pytest.raises(ClientError):
-        seed._ensure_hero_images()
-    client.put_object.assert_not_called()
-
-
-def test_bundled_hero_assets_exist_and_are_git_sized():
-    """The bundled bytes must ship with the repo and stay under the 1 MB
-    large-file hook ceiling."""
-    for filename in seed._HERO_FILENAMES.values():
-        path = seed._HERO_ASSET_DIR / filename
-        assert path.is_file(), f"missing bundled asset: {path}"
-        assert path.stat().st_size < 1_000_000, f"{filename} exceeds 1 MB git ceiling"
+    if os.path.isdir(assets):
+        found = [f for _, _, files in os.walk(assets) for f in files]
+        assert not found, f"unexpected bundled seed assets: {found}"
