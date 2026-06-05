@@ -5,6 +5,7 @@ from app.crud.campaign import campaign
 from app.crud.category import category
 from app.crud.company import company
 from app.crud.company_user import company_user
+from app.crud.cookie_consent import cookie_consent
 from app.crud.corrective_invoice import corrective_invoice
 from app.crud.coupon import coupon
 from app.crud.customer_note import customer_note
@@ -39,6 +40,7 @@ __all__ = [
     "campaign",
     "company",
     "company_user",
+    "cookie_consent",
     "corrective_invoice",
     "coupon",
     "customer_note",
