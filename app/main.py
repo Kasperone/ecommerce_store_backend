@@ -99,6 +99,7 @@ from app.api.v1 import (  # noqa: E402
     company_team,
     contact,
     coupons,
+    newsletter,
     orders,
     pages,
     payments,
@@ -120,6 +121,7 @@ app.include_router(contact.router, prefix="/api/v1", tags=["Contact"])
 app.include_router(banners.router, prefix="/api/v1/banners", tags=["Banners"])
 app.include_router(pages.router, prefix="/api/v1/pages", tags=["Pages"])
 app.include_router(blocks.router, prefix="/api/v1/blocks", tags=["Blocks"])
+app.include_router(newsletter.router, prefix="/api/v1/newsletter", tags=["Newsletter"])
 app.include_router(payments.router, prefix="/api/v1/payments", tags=["Payments"])
 app.include_router(search.router, prefix="/api/v1/search", tags=["Search"])
 app.include_router(shipping.router, prefix="/api/v1/shipping", tags=["Shipping"])
