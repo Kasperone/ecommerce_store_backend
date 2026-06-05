@@ -82,6 +82,7 @@ from app.api.v1 import (  # noqa: E402
     admin_customers,
     admin_dashboard,
     admin_inventory,
+    admin_pages,
     admin_quotes,
     admin_reports,
     admin_reviews,
@@ -92,11 +93,13 @@ from app.api.v1 import (  # noqa: E402
     admin_warehouses,
     auth,
     banners,
+    blocks,
     categories,
     companies,
     company_team,
     coupons,
     orders,
+    pages,
     payments,
     products,
     quotes,
@@ -112,6 +115,8 @@ app.include_router(categories.router, prefix="/api/v1/categories", tags=["Catego
 app.include_router(orders.router, prefix="/api/v1/orders", tags=["Orders"])
 app.include_router(coupons.router, prefix="/api/v1/coupons", tags=["Coupons"])
 app.include_router(banners.router, prefix="/api/v1/banners", tags=["Banners"])
+app.include_router(pages.router, prefix="/api/v1/pages", tags=["Pages"])
+app.include_router(blocks.router, prefix="/api/v1/blocks", tags=["Blocks"])
 app.include_router(payments.router, prefix="/api/v1/payments", tags=["Payments"])
 app.include_router(search.router, prefix="/api/v1/search", tags=["Search"])
 app.include_router(shipping.router, prefix="/api/v1/shipping", tags=["Shipping"])
@@ -132,6 +137,7 @@ app.include_router(admin_reports.router, prefix="/api/v1/admin/reports", tags=["
 app.include_router(admin_reviews.router, prefix="/api/v1/admin/reviews", tags=["Admin Reviews"])
 app.include_router(admin_tags.router, prefix="/api/v1/admin/tags", tags=["Admin Tags"])
 app.include_router(admin_banners.router, prefix="/api/v1/admin/banners", tags=["Admin Banners"])
+app.include_router(admin_pages.router, prefix="/api/v1/admin/pages", tags=["Admin Pages"])
 app.include_router(
     admin_campaigns.router, prefix="/api/v1/admin/campaigns", tags=["Admin Campaigns"]
 )
