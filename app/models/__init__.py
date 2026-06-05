@@ -28,6 +28,7 @@ from app.models.coupon import (
 from app.models.customer_note import CustomerNote
 from app.models.inventory_movement import InventoryMovement, InventoryMovementReason
 from app.models.invoice import Invoice, InvoiceCounter
+from app.models.newsletter_subscriber import NewsletterSubscriber
 from app.models.order import Order, OrderItem
 from app.models.page import (
     PAGE_LOCALE_VALUES,
@@ -110,6 +111,7 @@ __all__ = [
     "SUPPORTED_CURRENCIES",
     "InventoryMovement",
     "InventoryMovementReason",
+    "NewsletterSubscriber",
     "Invoice",
     "InvoiceCounter",
     "Refund",

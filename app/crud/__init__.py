@@ -11,6 +11,7 @@ from app.crud.customer_note import customer_note
 from app.crud.dashboard import dashboard
 from app.crud.inventory import inventory
 from app.crud.invoice import invoice
+from app.crud.newsletter import newsletter
 from app.crud.order import order
 from app.crud.page import page
 from app.crud.price_history import price_history
@@ -50,6 +51,7 @@ __all__ = [
     "page",
     "inventory",
     "invoice",
+    "newsletter",
     "price_history",
     "audit_event",
     "refresh_token",
