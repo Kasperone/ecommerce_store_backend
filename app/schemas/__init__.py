@@ -58,6 +58,10 @@ from app.schemas.coupon import (
     CouponResponse,
     CouponUpdate,
 )
+from app.schemas.newsletter import (
+    NewsletterSubscribeRequest,
+    NewsletterSubscribeResponse,
+)
 from app.schemas.order import (
     OrderBase,
     OrderCreate,
@@ -232,6 +236,9 @@ __all__ = [
     "QuoteListItem",
     "QuoteListResponse",
     "QuoteStatusLiteral",
+    # Newsletter
+    "NewsletterSubscribeRequest",
+    "NewsletterSubscribeResponse",
     # Order
     "OrderItemBase",
     "OrderItemCreate",
