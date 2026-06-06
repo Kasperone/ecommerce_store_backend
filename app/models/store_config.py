@@ -47,6 +47,8 @@ class StoreConfig(BaseModel):
     )
 
     store_name: Mapped[str] = mapped_column(String(255), server_default="")
+    brand_tagline: Mapped[str] = mapped_column(String(255), server_default="")
+    logo_url: Mapped[str] = mapped_column(String(1024), server_default="")
     legal_name: Mapped[str] = mapped_column(String(255), server_default="")
     address_line: Mapped[str] = mapped_column(String(255), server_default="")
     address_line2: Mapped[str] = mapped_column(String(255), server_default="")
