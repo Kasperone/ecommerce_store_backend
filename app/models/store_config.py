@@ -11,11 +11,11 @@ behaviour is identical to today) and ``crud_store_config.get_singleton`` always
 returns/creates that row. There is no create/delete in the admin CRUD; only
 GET + PATCH.
 
-**MVP manage-only:** the invoice renderer and the transactional emails still read
-from ``app/core/config.py`` — wiring them to consume this row instead is a
-deliberate, separate follow-up (mirrors how the coupons vertical shipped the
-data + admin UI before the redemption layer). Nothing here touches the
-invoice/email code path yet.
+**Consumed at render time:** the invoice PDF and the transactional order emails
+read this row via ``StoreIdentity.from_store_config`` (each field used when
+non-blank, else falling back to the ``app/core/config.py`` env default), so an
+admin's edits flow through to invoices/emails without a redeploy. See
+``app/services/invoice.py`` and ``app/services/order_email.py``.
 """
 
 from __future__ import annotations

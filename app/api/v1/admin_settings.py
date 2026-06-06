@@ -7,10 +7,10 @@ create/list/delete — just GET (the current values) and PATCH (a partial update
 ``invoice_vat_rate`` is validated 0-100 by the request schema (422 on a bad
 value), matching the DB CHECK constraint.
 
-**MVP manage-only:** the invoice renderer and transactional emails still read
-these values from ``app/core/config.py``; wiring them to consume this row is a
-deliberate, separate follow-up (same staging the coupons vertical used). This
-router only manages the data.
+The invoice renderer and the transactional order emails consume this row at
+render time via ``StoreIdentity.from_store_config`` (each field used when
+non-blank, else falling back to the ``app/core/config.py`` env default), so edits
+made here flow through to invoices/emails without a redeploy.
 """
 
 from fastapi import APIRouter, Depends

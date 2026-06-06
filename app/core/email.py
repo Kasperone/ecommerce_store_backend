@@ -175,7 +175,7 @@ def send_verification_email(
             </div>
 
             <div class="footer">
-                <p>© 2024 {settings.EMAIL_FROM_NAME}. All rights reserved.</p>
+                <p>© {settings.EMAIL_FROM_NAME}. All rights reserved.</p>
                 <p>If you have any questions, feel free to contact our support team.</p>
             </div>
         </div>
@@ -197,7 +197,7 @@ def send_verification_email(
 
     If you didn't create an account with us, you can safely ignore this email.
 
-    © 2024 {settings.EMAIL_FROM_NAME}
+    © {settings.EMAIL_FROM_NAME}
     """
 
     return send_email(
