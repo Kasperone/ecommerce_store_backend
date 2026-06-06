@@ -23,6 +23,8 @@ class StoreConfigBase(BaseSchema):
     """Shared store-config fields (response shape)."""
 
     store_name: Annotated[str, Field(max_length=255)]
+    brand_tagline: Annotated[str, Field(max_length=255)]
+    logo_url: Annotated[str, Field(max_length=1024)]
     legal_name: Annotated[str, Field(max_length=255)]
     address_line: Annotated[str, Field(max_length=255)]
     address_line2: Annotated[str, Field(max_length=255)]
@@ -49,6 +51,8 @@ class StoreConfigUpdate(BaseSchema):
     """
 
     store_name: Annotated[str | None, Field(max_length=255)] = None
+    brand_tagline: Annotated[str | None, Field(max_length=255)] = None
+    logo_url: Annotated[str | None, Field(max_length=1024)] = None
     legal_name: Annotated[str | None, Field(max_length=255)] = None
     address_line: Annotated[str | None, Field(max_length=255)] = None
     address_line2: Annotated[str | None, Field(max_length=255)] = None
@@ -81,6 +85,8 @@ class StoreConfigPublic(BaseSchema):
     """
 
     store_name: str
+    brand_tagline: str
+    logo_url: str
     legal_name: str
     address_line: str
     address_line2: str

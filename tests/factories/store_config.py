@@ -21,6 +21,8 @@ class StoreConfigFactory(SQLAlchemyModelFactory):
         sqlalchemy_session_persistence = "commit"
 
     store_name = "E-commerce Store"
+    brand_tagline = ""
+    logo_url = ""
     address_line = ""
     postal_city = ""
     country = ""
