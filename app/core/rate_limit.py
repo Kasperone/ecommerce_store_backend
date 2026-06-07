@@ -34,9 +34,14 @@ def get_email_or_ip_key(request: Request) -> str:
     return f"ip:{get_remote_address(request)}"
 
 
+# ``enabled`` is the slowapi-native kill-switch: every ``@limiter.limit`` and
+# the SlowAPIMiddleware short-circuit before touching storage. It is False only
+# under the double gate (ENVIRONMENT=development AND E2E_DISABLE_RATE_LIMIT) —
+# see ``Settings.rate_limit_enabled``. Limit values and decorators are untouched.
 limiter = Limiter(
     key_func=get_ip_key,
     storage_uri=settings.RATE_LIMIT_STORAGE_URL,
+    enabled=settings.rate_limit_enabled,
 )
 
 
