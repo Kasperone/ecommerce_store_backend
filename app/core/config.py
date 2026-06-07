@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     # Rate limiting (slowapi). Use ``memory://`` for single-instance dev,
     # ``redis://host:port/db`` for multi-worker / production deployments.
     RATE_LIMIT_STORAGE_URL: str = "memory://"
+    # E2E escape hatch: disables ALL slowapi rate limiting so back-to-back
+    # E2E runs don't trip the /auth/login 5/15min budget. Double-gated — it
+    # only takes effect when ENVIRONMENT=development, so production can never
+    # disable rate limiting by accident. Off by default.
+    E2E_DISABLE_RATE_LIMIT: bool = False
 
     # Cloudflare R2
     R2_ACCOUNT_ID: str = ""
@@ -128,6 +133,13 @@ class Settings(BaseSettings):
         """Effective SQLAlchemy ``echo``: explicit ``SQL_ECHO`` else ``DEBUG``."""
         return self.DEBUG if self.SQL_ECHO is None else self.SQL_ECHO
 
+    @property
+    def rate_limit_enabled(self) -> bool:
+        """Effective slowapi state: disabled only when BOTH gates hold —
+        ``ENVIRONMENT=development`` AND the explicit ``E2E_DISABLE_RATE_LIMIT``
+        opt-in. Any other combination keeps rate limiting on."""
+        return not (self.ENVIRONMENT == "development" and self.E2E_DISABLE_RATE_LIMIT)
+
     @model_validator(mode="after")
     def _no_debug_in_production(self) -> "Settings":
         # A prod deploy that forgets DEBUG=false would log SQL (incl. bound PII)
@@ -147,6 +159,15 @@ class Settings(BaseSettings):
                 "RATE_LIMIT_STORAGE_URL is memory:// in production — rate limits "
                 "are per-process and will not hold across multiple uvicorn workers. "
                 "Set a redis:// URL for a multi-worker deploy."
+            )
+        # The E2E rate-limit kill-switch is double-gated on development; setting
+        # it anywhere else is a no-op. Warn so a misconfigured staging/CI env
+        # ("why is my flag not working?") is diagnosable from the startup log.
+        if self.E2E_DISABLE_RATE_LIMIT and self.ENVIRONMENT != "development":
+            logger.warning(
+                "E2E_DISABLE_RATE_LIMIT is set but ENVIRONMENT=%s — the flag only "
+                "takes effect in development; rate limiting stays ENABLED.",
+                self.ENVIRONMENT,
             )
         return self
 

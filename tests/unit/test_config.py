@@ -132,3 +132,41 @@ def test_production_with_redis_rate_limit_does_not_warn(captured_warnings):
 def test_development_with_memory_rate_limit_does_not_warn(captured_warnings):
     _build(ENVIRONMENT="development", RATE_LIMIT_STORAGE_URL="memory://")
     assert not any("memory://" in m for m in captured_warnings)
+
+
+# --- E2E rate-limit kill-switch (double-gated on development) ---
+
+
+def test_rate_limit_enabled_by_default():
+    assert _build().rate_limit_enabled is True
+
+
+def test_rate_limit_disabled_only_with_flag_in_development():
+    settings = _build(ENVIRONMENT="development", E2E_DISABLE_RATE_LIMIT=True)
+    assert settings.rate_limit_enabled is False
+
+
+def test_rate_limit_flag_ignored_outside_development():
+    # The double gate: the explicit opt-in alone is not enough — staging and
+    # production keep rate limiting on no matter what.
+    assert _build(ENVIRONMENT="staging", E2E_DISABLE_RATE_LIMIT=True).rate_limit_enabled is True
+    assert (
+        _build(
+            ENVIRONMENT="production", DEBUG=False, E2E_DISABLE_RATE_LIMIT=True
+        ).rate_limit_enabled
+        is True
+    )
+
+
+def test_rate_limit_stays_enabled_in_development_without_flag():
+    assert _build(ENVIRONMENT="development").rate_limit_enabled is True
+
+
+def test_rate_limit_flag_outside_development_warns(captured_warnings):
+    _build(ENVIRONMENT="staging", E2E_DISABLE_RATE_LIMIT=True)
+    assert any("E2E_DISABLE_RATE_LIMIT" in m for m in captured_warnings)
+
+
+def test_rate_limit_flag_in_development_does_not_warn(captured_warnings):
+    _build(ENVIRONMENT="development", E2E_DISABLE_RATE_LIMIT=True)
+    assert not any("E2E_DISABLE_RATE_LIMIT" in m for m in captured_warnings)

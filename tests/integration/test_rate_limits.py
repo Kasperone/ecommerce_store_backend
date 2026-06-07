@@ -121,3 +121,67 @@ async def test_password_reset_request_per_email_limit_isolates_buckets_by_email(
 
     other = await client.post(RESET_REQUEST_PATH, json={"email": "rl-bucket-b@example.com"})
     assert other.status_code == 200, "different email must have its own budget"
+
+
+# ---------------------------------------------------------------------------
+# E2E kill-switch — Limiter(enabled=False).
+#
+# The module-level ``limiter`` is constructed once at import with
+# ``enabled=settings.rate_limit_enabled`` (the double gate:
+# ENVIRONMENT=development AND E2E_DISABLE_RATE_LIMIT — unit-tested in
+# tests/unit/test_config.py). Re-importing the module under a mutated
+# settings would orphan the instance the route decorators captured, so here
+# we flip ``limiter.enabled`` directly to prove the slowapi seam is a true
+# no-op end to end: a burst past every budget must pass straight through.
+# ---------------------------------------------------------------------------
+
+
+async def test_login_burst_passes_when_limiter_disabled(
+    client, reset_limiter, user_factory, monkeypatch
+):
+    """With the limiter disabled, 8 same-email wrong-password attempts —
+    well past the 5/15min per-IP and per-email budgets — all reach the
+    route (401), never 429."""
+    from app.core.rate_limit import limiter
+
+    monkeypatch.setattr(limiter, "enabled", False)
+    user_factory(email="rl-disabled@example.com")
+    for i in range(8):
+        r = await client.post(
+            LOGIN_PATH,
+            data={"username": "rl-disabled@example.com", "password": "wrong-password"},
+        )
+        assert r.status_code == 401, f"call {i} must bypass the limiter when disabled"
+
+
+async def test_password_reset_burst_passes_when_limiter_disabled(
+    client, reset_limiter, user_factory, monkeypatch
+):
+    """Same contract on an email-keyed JSON route: 5 requests past the
+    3/hour budget all succeed when the limiter is disabled."""
+    from app.core.rate_limit import limiter
+
+    monkeypatch.setattr(limiter, "enabled", False)
+    user_factory(email="rl-disabled-reset@example.com")
+    for i in range(5):
+        r = await client.post(RESET_REQUEST_PATH, json={"email": "rl-disabled-reset@example.com"})
+        assert r.status_code == 200, f"call {i} must bypass the limiter when disabled"
+
+
+async def test_limiter_reenabled_after_disabled_burst(client, reset_limiter, user_factory):
+    """Regression guard: the disabled-burst tests above must not leak state —
+    with the limiter back on (monkeypatch restored), the normal 5/15min
+    budget applies again from a clean slate."""
+    user_factory(email="rl-reenabled@example.com")
+    for i in range(5):
+        r = await client.post(
+            LOGIN_PATH,
+            data={"username": "rl-reenabled@example.com", "password": "wrong-password"},
+        )
+        assert r.status_code == 401, f"call {i} should pass through to 401"
+
+    sixth = await client.post(
+        LOGIN_PATH,
+        data={"username": "rl-reenabled@example.com", "password": "wrong-password"},
+    )
+    assert sixth.status_code == 429
