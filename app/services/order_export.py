@@ -66,10 +66,14 @@ def _status_value(order: Order) -> str:
 
 
 def _pack_items(order: Order) -> str:
-    """``"2× Widget (WD-1); 1× Gadget"`` — qty × name, SKU in parens when present."""
+    """``"2× Widget — Red / XL (WD-1); 1× Gadget"`` — qty × name (variant title
+    appended when the line was ordered as a variant), SKU in parens when present
+    (``product_sku`` already snapshots the variant SKU on variant lines)."""
     parts: list[str] = []
     for item in order.items:
         label = f"{item.quantity}× {item.product_name}"
+        if item.variant_title:
+            label += f" — {item.variant_title}"
         if item.product_sku:
             label += f" ({item.product_sku})"
         parts.append(label)

@@ -20,13 +20,21 @@ from __future__ import annotations
 from sqlalchemy.orm import Query, Session, selectinload
 
 from app.crud.inventory import inventory as crud_inventory
-from app.crud.order import InsufficientStockError, ProductUnavailableError
+from app.crud.order import (
+    InsufficientStockError,
+    ProductUnavailableError,
+    VariantRequiredError,
+    VariantUnavailableError,
+    load_variants_for_lines,
+    resolve_line_variant,
+)
 from app.crud.order import order as crud_order
 from app.crud.warehouse import warehouse as crud_warehouse
 from app.models.company import Company
 from app.models.inventory_movement import InventoryMovementReason
 from app.models.order import Order, OrderItem, OrderStatus
 from app.models.product import Product
+from app.models.product_variant import ProductVariant
 from app.models.quote import Quote, QuoteItem, QuoteStatus
 from app.schemas.quote import QuoteCreate, QuoteItemCreate, QuoteRequestCreate, QuoteUpdate
 
@@ -87,6 +95,7 @@ def _build_items(lines: list[QuoteItemCreate]) -> tuple[list[QuoteItem], float]:
         items.append(
             QuoteItem(
                 product_id=line.product_id,
+                variant_id=line.variant_id,
                 description=line.description,
                 quantity=line.quantity,
                 unit_price=line.unit_price,
@@ -204,14 +213,29 @@ class CRUDQuote:
         via ``Product.get_price`` — a client never supplies a price. Each
         ``product_id`` must reference an existing, active product (else
         ``QuoteRequestError`` → 422); the line ``description`` is snapshotted from
-        the live product name. Reuses ``_build_items`` after server pricing so the
-        ``line_total`` / ``subtotal`` math is shared with the admin path.
+        the live product name. Variant lines follow the order-create rules
+        (``resolve_line_variant``): a product with active variants requires a
+        ``variant_id`` (→ 422 ``variant_required``), the variant must be this
+        product's and active (→ 422 ``variant_unavailable``); pricing comes from
+        ``variant.get_price`` (NULL inherits the product) and the description
+        gets the variant title appended (``"Widget — Red / XL"``). Reuses
+        ``_build_items`` after server pricing so the ``line_total`` /
+        ``subtotal`` math is shared with the admin path.
 
         Sets ``status='requested'``, ``company_id`` (the caller's company), and
         ``requested_by_user_id`` (the caller). Flushes so the ``id`` is populated.
         """
         product_ids = [line.product_id for line in obj_in.items]
-        products = {p.id: p for p in db.query(Product).filter(Product.id.in_(product_ids)).all()}
+        products = {
+            p.id: p
+            for p in db.query(Product)
+            .options(selectinload(Product.variants))
+            .filter(Product.id.in_(product_ids))
+            .all()
+        }
+        variants = load_variants_for_lines(
+            db, [line.variant_id for line in obj_in.items if line.variant_id is not None]
+        )
 
         priced_lines: list[QuoteItemCreate] = []
         for line in obj_in.items:
@@ -221,13 +245,27 @@ class CRUDQuote:
                     reason="product_unavailable",
                     message=f"Product {line.product_id} is unavailable",
                 )
-            unit_price = product.get_price(obj_in.currency)
+            # Re-raise the shared variant rules as QuoteRequestError so the
+            # customer route stays a thin status_code mapper.
+            try:
+                variant = resolve_line_variant(product, line.variant_id, variants)
+            except VariantRequiredError as exc:
+                raise QuoteRequestError(reason="variant_required", message=str(exc)) from exc
+            except VariantUnavailableError as exc:
+                raise QuoteRequestError(reason="variant_unavailable", message=str(exc)) from exc
+            if variant is not None:
+                unit_price = variant.get_price(obj_in.currency)
+                description = f"{product.name} — {variant.title}"
+            else:
+                unit_price = product.get_price(obj_in.currency)
+                description = product.name
             priced_lines.append(
                 QuoteItemCreate(
-                    description=product.name,
+                    description=description,
                     quantity=line.quantity,
                     unit_price=unit_price,
                     product_id=product.id,
+                    variant_id=variant.id if variant is not None else None,
                 )
             )
 
@@ -301,6 +339,9 @@ class CRUDQuote:
         - any line with ``product_id IS NULL`` → 422 ``free_text_line``
         - company ``primary_user_id IS NULL`` → 422 ``no_primary_contact``
         - product missing/inactive → 422 ``product_unavailable``
+        - variant missing/inactive/another product's, or the product has
+          active variants but the line carries no ``variant_id`` (a
+          since-deleted variant's SET NULL) → 422 ``variant_unavailable``
         - insufficient stock (no backorder) → 422 ``insufficient_stock``
 
         Sets ``shipping=0`` / ``shipping_method_id=NULL`` (quotes carry no shipping
@@ -348,9 +389,19 @@ class CRUDQuote:
         # warehouse with a local running remainder (duplicate lines decrement
         # cumulatively) — mirrors crud_order.create_with_items' first loop.
         product_ids = [item.product_id for item in quote.items]
-        products = {p.id: p for p in db.query(Product).filter(Product.id.in_(product_ids)).all()}
-        remaining: dict[int, int] = {}
+        products = {
+            p.id: p
+            for p in db.query(Product)
+            .options(selectinload(Product.variants))
+            .filter(Product.id.in_(product_ids))
+            .all()
+        }
+        variants = load_variants_for_lines(
+            db, [line.variant_id for line in quote.items if line.variant_id is not None]
+        )
+        remaining: dict[tuple[int, int | None], int] = {}
         order_items: list[OrderItem] = []
+        line_variants: dict[int, ProductVariant | None] = {}
         for line in quote.items:
             # product_id is guaranteed non-None by the free_text_line guard above;
             # bind a non-Optional local so the lookups/error are typed cleanly.
@@ -359,20 +410,39 @@ class CRUDQuote:
             product = products.get(product_id)
             if product is None or not product.is_active:
                 raise ProductUnavailableError(product_id)
+            # Variant eligibility — a stale line (variant deleted → SET NULL on
+            # a product that still has active variants) or a missing/inactive/
+            # foreign variant must fail with a clear reason rather than
+            # silently converting at product grain (plan §7 risk 9).
+            try:
+                variant = resolve_line_variant(product, line.variant_id, variants)
+            except (VariantRequiredError, VariantUnavailableError) as exc:
+                raise QuoteNotConvertibleError(
+                    reason="variant_unavailable",
+                    message=str(exc),
+                    status_code=422,
+                ) from exc
+            line_variants[line.id] = variant
+            key = (product.id, variant.id if variant is not None else None)
             available = remaining.get(
-                product.id,
+                key,
                 crud_inventory.get_level_quantity(
-                    db, product=product, warehouse_id=default_warehouse.id
+                    db, product=product, warehouse_id=default_warehouse.id, variant=variant
                 ),
             )
             if available < line.quantity and not product.allow_backorder:
-                raise InsufficientStockError(product.id, product.name, line.quantity, available)
-            remaining[product.id] = available - line.quantity
+                name = product.name if variant is None else f"{product.name} — {variant.title}"
+                raise InsufficientStockError(product.id, name, line.quantity, available)
+            remaining[key] = available - line.quantity
             order_items.append(
                 OrderItem(
                     product_id=product.id,
+                    variant_id=variant.id if variant is not None else None,
                     product_name=product.name,
-                    product_sku=product.sku,
+                    variant_title=variant.title if variant is not None else None,
+                    product_sku=(variant.sku or product.sku)
+                    if variant is not None
+                    else product.sku,
                     quantity=line.quantity,
                     unit_price=line.unit_price,  # honour the quoted price — do NOT re-price
                     total_price=round(line.unit_price * line.quantity, 2),
@@ -414,6 +484,7 @@ class CRUDQuote:
                 delta=-line.quantity,
                 reason=InventoryMovementReason.ORDER_PLACED,
                 warehouse_id=default_warehouse.id,
+                variant=line_variants.get(line.id),
                 actor_user_id=actor_user_id,
                 order_id=order.id,
                 allow_negative=product.allow_backorder,

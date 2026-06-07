@@ -578,3 +578,169 @@ async def test_convert_insufficient_stock_422(
     )
     resp = await client.post(f"/api/v1/admin/quotes/{qid}/convert", headers=_headers(admin))
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Variant lines (PR-B2) — admin-authored quote with a variant ref + convert
+# ---------------------------------------------------------------------------
+
+
+def _add_one_variant(db_session, product, *, initial_stock=5):
+    """Author a single Red variant on ``product``; return it."""
+    from app.crud import product_variant as crud_product_variant
+    from app.schemas.product_variant import ProductOptionsMatrixUpdate
+
+    matrix = ProductOptionsMatrixUpdate.model_validate(
+        {
+            "options": [
+                {"name": "Color", "position": 0, "values": [{"value": "Red", "position": 0}]}
+            ],
+            "variants": [
+                {
+                    "option_values": ["Red"],
+                    "sku": f"VA-RED-{product.id}",
+                    "initial_stock": initial_stock,
+                    "position": 0,
+                }
+            ],
+        }
+    )
+    crud_product_variant.apply_matrix(db_session, product=product, matrix=matrix)
+    db_session.commit()
+    db_session.refresh(product)
+    return crud_product_variant.get_for_product(db_session, product_id=product.id)[0]
+
+
+async def _make_variant_quote(
+    client, admin, company_id, *, product_id, variant_id, quantity, unit_price, status=None
+):
+    """Create a quote with one variant-backed line via the admin API; return its id."""
+    created = await client.post(
+        "/api/v1/admin/quotes/",
+        json=_body(
+            company_id,
+            items=[
+                {
+                    "description": "Variant line",
+                    "quantity": quantity,
+                    "unit_price": unit_price,
+                    "product_id": product_id,
+                    "variant_id": variant_id,
+                }
+            ],
+        ),
+        headers=_headers(admin),
+    )
+    assert created.status_code == 201, created.text
+    qid = created.json()["id"]
+    if status is not None:
+        await client.patch(
+            f"/api/v1/admin/quotes/{qid}", json={"status": status}, headers=_headers(admin)
+        )
+    return qid
+
+
+async def test_create_stores_variant_id_on_line(
+    client, user_factory, company_factory, product_factory, db_session
+):
+    admin = user_factory(email="qt-var-admin@example.com", role=UserRole.ADMIN)
+    company = company_factory(name="VarCo")
+    product = product_factory(stock=0, price_usd=20.0)
+    red = _add_one_variant(db_session, product)
+
+    qid = await _make_variant_quote(
+        client,
+        admin,
+        company.id,
+        product_id=product.id,
+        variant_id=red.id,
+        quantity=1,
+        unit_price=18.0,
+    )
+    detail = await client.get(f"/api/v1/admin/quotes/{qid}", headers=_headers(admin))
+    assert detail.status_code == 200
+    assert detail.json()["items"][0]["variant_id"] == red.id
+
+
+async def test_convert_variant_quote_happy_path(
+    client, user_factory, company_factory, product_factory, db_session
+):
+    admin = user_factory(email="qt-var-conv-admin@example.com", role=UserRole.ADMIN)
+    contact = user_factory(email="qt-var-conv-contact@example.com", role=UserRole.CUSTOMER)
+    company = company_factory(name="VarConvCo", primary_user_id=contact.id)
+    product = product_factory(stock=0, name="VarProd", price_usd=20.0)
+    red = _add_one_variant(db_session, product)
+
+    qid = await _make_variant_quote(
+        client,
+        admin,
+        company.id,
+        product_id=product.id,
+        variant_id=red.id,
+        quantity=2,
+        unit_price=15.0,
+        status="accepted",
+    )
+    resp = await client.post(f"/api/v1/admin/quotes/{qid}/convert", headers=_headers(admin))
+    assert resp.status_code == 201
+    line = resp.json()["items"][0]
+    assert line["variant_id"] == red.id
+    assert line["variant_title"] == "Red"
+    assert line["product_sku"] == f"VA-RED-{product.id}"
+    assert line["unit_price"] == 15.0  # quoted price honoured
+
+    db_session.refresh(red)
+    db_session.refresh(product)
+    assert red.stock == 3
+    assert product.stock == 3
+
+
+async def test_convert_deleted_variant_line_422_variant_unavailable(
+    client, user_factory, company_factory, product_factory, db_session
+):
+    """§7 risk 9: a quote line whose variant was deleted (SET NULL) fails
+    conversion with a clear 422 — never a silent product-grain convert."""
+    from app.crud import product_variant as crud_product_variant
+
+    admin = user_factory(email="qt-var-del-admin@example.com", role=UserRole.ADMIN)
+    contact = user_factory(email="qt-var-del-contact@example.com", role=UserRole.CUSTOMER)
+    company = company_factory(name="VarDelCo", primary_user_id=contact.id)
+    product = product_factory(stock=0, price_usd=20.0)
+    red = _add_one_variant(db_session, product)
+
+    qid = await _make_variant_quote(
+        client,
+        admin,
+        company.id,
+        product_id=product.id,
+        variant_id=red.id,
+        quantity=1,
+        unit_price=15.0,
+        status="accepted",
+    )
+    # Delete the variant out from under the quote — quote_items.variant_id SET NULL.
+    # A second variant keeps the product a variant product (the stale line's
+    # product still *requires* a variant → variant_unavailable on convert).
+    from app.schemas.product_variant import ProductOptionsMatrixUpdate
+
+    matrix = ProductOptionsMatrixUpdate.model_validate(
+        {
+            "options": [
+                {"name": "Color", "position": 0, "values": [{"value": "Blue", "position": 0}]}
+            ],
+            "variants": [
+                {
+                    "option_values": ["Blue"],
+                    "sku": f"VA-BLUE-{product.id}",
+                    "initial_stock": 5,
+                    "position": 0,
+                }
+            ],
+        }
+    )
+    crud_product_variant.apply_matrix(db_session, product=product, matrix=matrix)
+    db_session.commit()
+
+    resp = await client.post(f"/api/v1/admin/quotes/{qid}/convert", headers=_headers(admin))
+    assert resp.status_code == 422
+    assert "variant" in resp.json()["detail"].lower()

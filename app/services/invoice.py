@@ -41,7 +41,7 @@ from app.crud import invoice as crud_invoice
 
 if TYPE_CHECKING:
     from app.core.config import Settings
-    from app.models.order import Order
+    from app.models.order import Order, OrderItem
     from app.models.refund import Refund
 
 _FONTS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
@@ -75,6 +75,15 @@ def _ensure_fonts_registered() -> None:
 def _esc(value: str) -> str:
     """Escape the characters ReportLab's mini-markup parser treats specially."""
     return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _item_label(item: OrderItem) -> str:
+    """Line label: product name, with the variant title appended when present
+    (``"Widget — Red / XL"``). Shared by the invoice and the corrective-invoice
+    item tables so variant lines render identically on both documents."""
+    if item.variant_title:
+        return f"{item.product_name} — {item.variant_title}"
+    return item.product_name
 
 
 @dataclass(frozen=True)
@@ -390,7 +399,7 @@ def build_invoice_pdf(
     for it in order.items:
         item_rows.append(
             [
-                Paragraph(_esc(it.product_name), base),
+                Paragraph(_esc(_item_label(it)), base),
                 Paragraph(_esc(it.product_sku) if it.product_sku else "—", base),
                 str(it.quantity),
                 money(it.unit_price),
@@ -674,7 +683,7 @@ def build_corrective_invoice_pdf(
     for it in order.items:
         item_rows.append(
             [
-                Paragraph(_esc(it.product_name), base),
+                Paragraph(_esc(_item_label(it)), base),
                 Paragraph(_esc(it.product_sku) if it.product_sku else "—", base),
                 str(it.quantity),
                 money(it.unit_price),

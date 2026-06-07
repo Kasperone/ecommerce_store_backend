@@ -637,3 +637,162 @@ async def test_customer_sees_tracking_on_detail_and_list(
     assert row["shipping_carrier"] == "DHL"
     assert row["tracking_number"] == "JD014600003SE28X"
     assert row["tracking_url"] == "https://track.example.com/JD014600003SE28X"
+
+
+# ---------------------------------------------------------------------------
+# POST /  (create — variant lines, PR-B2)
+# ---------------------------------------------------------------------------
+
+
+def _add_variants(db_session, product, *, stocks=(4, 6), price_usd=(None, None)):
+    """Author a one-option (Red|Blue) matrix on ``product``; see the unit-test twin."""
+    from app.crud import product_variant as crud_product_variant
+    from app.schemas.product_variant import ProductOptionsMatrixUpdate
+
+    matrix = ProductOptionsMatrixUpdate.model_validate(
+        {
+            "options": [
+                {
+                    "name": "Color",
+                    "position": 0,
+                    "values": [
+                        {"value": "Red", "position": 0},
+                        {"value": "Blue", "position": 1},
+                    ],
+                }
+            ],
+            "variants": [
+                {
+                    "option_values": ["Red"],
+                    "sku": f"VI-RED-{product.id}",
+                    "initial_stock": stocks[0],
+                    "price_usd": price_usd[0],
+                    "position": 0,
+                },
+                {
+                    "option_values": ["Blue"],
+                    "sku": f"VI-BLUE-{product.id}",
+                    "initial_stock": stocks[1],
+                    "price_usd": price_usd[1],
+                    "position": 1,
+                },
+            ],
+        }
+    )
+    crud_product_variant.apply_matrix(db_session, product=product, matrix=matrix)
+    db_session.commit()
+    db_session.refresh(product)
+    return crud_product_variant.get_for_product(db_session, product_id=product.id)
+
+
+def _variant_order_body(
+    product_id: int, variant_id: int | None, *, shipping_method_id: int, quantity: int = 1
+) -> dict:
+    body = _order_body(product_id, shipping_method_id=shipping_method_id, quantity=quantity)
+    body["items"][0]["variant_id"] = variant_id
+    return body
+
+
+async def test_create_order_variant_line_happy_path(
+    client, user_factory, product_factory, db_session, test_shipping_method_id
+):
+    user = user_factory()
+    product = product_factory(stock=0, price_usd=20.0)
+    red, _blue = _add_variants(db_session, product, price_usd=(25.0, None))
+
+    resp = await client.post(
+        "/api/v1/orders/",
+        json=_variant_order_body(
+            product.id, red.id, quantity=2, shipping_method_id=test_shipping_method_id
+        ),
+        headers=_headers(user),
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    line = body["items"][0]
+    # The response carries the additive variant fields (reorder contract).
+    assert line["variant_id"] == red.id
+    assert line["variant_title"] == "Red"
+    assert line["product_sku"] == f"VI-RED-{product.id}"
+    assert line["unit_price"] == 25.0
+    assert body["subtotal"] == 50.0
+
+    db_session.refresh(red)
+    db_session.refresh(product)
+    assert red.stock == 2
+    assert product.stock == 8
+    movement = (
+        db_session.query(InventoryMovement)
+        .filter_by(product_id=product.id, reason="order_placed")
+        .one()
+    )
+    assert movement.variant_id == red.id
+    assert movement.delta == -2
+
+
+async def test_create_order_variant_required_422(
+    client, user_factory, product_factory, db_session, test_shipping_method_id
+):
+    user = user_factory()
+    product = product_factory(stock=0, price_usd=20.0)
+    _add_variants(db_session, product)
+
+    resp = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=1, shipping_method_id=test_shipping_method_id),
+        headers=_headers(user),
+    )
+    assert resp.status_code == 422
+    assert "variant" in resp.json()["detail"].lower()
+
+
+async def test_create_order_variant_unavailable_422(
+    client, user_factory, product_factory, db_session, test_shipping_method_id
+):
+    from app.crud import product_variant as crud_product_variant
+    from app.schemas.product_variant import ProductVariantUpdate
+
+    user = user_factory()
+    product = product_factory(stock=0, price_usd=20.0)
+    red, _blue = _add_variants(db_session, product)
+    crud_product_variant.update_variant(
+        db_session, variant=red, obj_in=ProductVariantUpdate(is_active=False)
+    )
+    db_session.commit()
+
+    resp = await client.post(
+        "/api/v1/orders/",
+        json=_variant_order_body(
+            product.id, red.id, quantity=1, shipping_method_id=test_shipping_method_id
+        ),
+        headers=_headers(user),
+    )
+    assert resp.status_code == 422
+    assert f"Variant {red.id} is unavailable" in resp.json()["detail"]
+
+
+async def test_customer_cancel_restores_variant_stock(
+    client, user_factory, product_factory, db_session, test_shipping_method_id
+):
+    user = user_factory()
+    product = product_factory(stock=0, price_usd=20.0)
+    red, _blue = _add_variants(db_session, product)
+
+    placed = await client.post(
+        "/api/v1/orders/",
+        json=_variant_order_body(
+            product.id, red.id, quantity=3, shipping_method_id=test_shipping_method_id
+        ),
+        headers=_headers(user),
+    )
+    assert placed.status_code == 201
+    order_id = placed.json()["id"]
+    db_session.refresh(red)
+    assert red.stock == 1
+
+    resp = await client.post(f"/api/v1/orders/{order_id}/cancel", headers=_headers(user))
+    assert resp.status_code == 200
+    db_session.refresh(red)
+    db_session.refresh(product)
+    assert red.stock == 4
+    assert product.stock == 10

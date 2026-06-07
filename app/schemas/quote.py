@@ -52,6 +52,10 @@ class QuoteItemCreate(BaseSchema):
     quantity: int = Field(..., gt=0)
     unit_price: float = Field(..., ge=0)
     product_id: int | None = None
+    # Optional variant link (stored as-is on admin-authored quotes, like
+    # ``product_id``). Conversion validates it — a stale/inactive/foreign
+    # variant fails convert with ``variant_unavailable``.
+    variant_id: int | None = None
 
 
 class QuoteItemResponse(TimestampSchema):
@@ -59,6 +63,8 @@ class QuoteItemResponse(TimestampSchema):
 
     quote_id: int
     product_id: int | None
+    # Additive variant link — null on variantless / free-text lines.
+    variant_id: int | None = None
     description: str
     quantity: int
     unit_price: float
@@ -156,9 +162,12 @@ class QuoteRequestItem(BaseSchema):
 
     No price — the server prices the line from the live product in the requested
     currency (``unit_price`` is deliberately absent so a client cannot inject one).
+    ``variant_id`` follows the order-create rules: required when the product has
+    active variants, rejected when missing/inactive/another product's (422).
     """
 
     product_id: int
+    variant_id: int | None = None
     quantity: int = Field(..., gt=0)
 
 

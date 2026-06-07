@@ -430,3 +430,126 @@ async def test_quote_pdf_cross_company_404(client, user_factory, company_factory
     other_quote = quote_factory(company=other_company, status="sent")
     resp = await client.get(f"/api/v1/quotes/{other_quote.id}/quote.pdf", headers=_headers(user))
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Variant lines (PR-B2) — request + convert
+# ---------------------------------------------------------------------------
+
+
+def _add_variants(db_session: Session, product, *, stocks=(4, 6), price_usd=(None, None)):
+    """Author a one-option (Red|Blue) matrix on ``product`` (unit-test twin)."""
+    from app.crud import product_variant as crud_product_variant
+    from app.schemas.product_variant import ProductOptionsMatrixUpdate
+
+    matrix = ProductOptionsMatrixUpdate.model_validate(
+        {
+            "options": [
+                {
+                    "name": "Color",
+                    "position": 0,
+                    "values": [
+                        {"value": "Red", "position": 0},
+                        {"value": "Blue", "position": 1},
+                    ],
+                }
+            ],
+            "variants": [
+                {
+                    "option_values": ["Red"],
+                    "sku": f"VC-RED-{product.id}",
+                    "initial_stock": stocks[0],
+                    "price_usd": price_usd[0],
+                    "position": 0,
+                },
+                {
+                    "option_values": ["Blue"],
+                    "sku": f"VC-BLUE-{product.id}",
+                    "initial_stock": stocks[1],
+                    "price_usd": price_usd[1],
+                    "position": 1,
+                },
+            ],
+        }
+    )
+    crud_product_variant.apply_matrix(db_session, product=product, matrix=matrix)
+    db_session.commit()
+    db_session.refresh(product)
+    return crud_product_variant.get_for_product(db_session, product_id=product.id)
+
+
+async def test_request_quote_variant_line_priced_from_variant(
+    client, user_factory, company_factory, product_factory, db_session
+):
+    user, _company = _b2b_user(user_factory, company_factory, email="var-req@example.com")
+    product = product_factory(name="VarThing", price_usd=20.0)
+    red, _blue = _add_variants(db_session, product, price_usd=(25.0, None))
+
+    resp = await client.post(
+        "/api/v1/quotes/",
+        json={
+            "currency": "USD",
+            "items": [{"product_id": product.id, "variant_id": red.id, "quantity": 2}],
+        },
+        headers=_headers(user),
+    )
+    assert resp.status_code == 201
+    line = resp.json()["items"][0]
+    assert line["variant_id"] == red.id
+    assert line["unit_price"] == 25.0
+    assert line["description"] == "VarThing — Red"
+
+
+async def test_request_quote_missing_variant_422(
+    client, user_factory, company_factory, product_factory, db_session
+):
+    """A product with active variants requires a variant per line (422)."""
+    user, _company = _b2b_user(user_factory, company_factory, email="var-req-422@example.com")
+    product = product_factory(price_usd=20.0)
+    _add_variants(db_session, product)
+
+    resp = await client.post(
+        "/api/v1/quotes/",
+        json={"currency": "USD", "items": [{"product_id": product.id, "quantity": 1}]},
+        headers=_headers(user),
+    )
+    assert resp.status_code == 422
+    assert "variant" in resp.json()["detail"].lower()
+
+
+async def test_convert_variant_quote_decrements_variant_stock(
+    client, user_factory, company_factory, product_factory, db_session
+):
+    from app.crud import quote as crud_quote
+    from app.models.quote import QuoteStatus
+
+    user, _company = _b2b_user(user_factory, company_factory, email="var-conv@example.com")
+    product = product_factory(name="VarConvThing", price_usd=20.0)
+    red, _blue = _add_variants(db_session, product)
+
+    requested = await client.post(
+        "/api/v1/quotes/",
+        json={
+            "currency": "USD",
+            "items": [{"product_id": product.id, "variant_id": red.id, "quantity": 2}],
+        },
+        headers=_headers(user),
+    )
+    assert requested.status_code == 201
+    quote_id = requested.json()["id"]
+    quote = crud_quote.get(db_session, quote_id)
+    assert quote is not None
+    quote.status = QuoteStatus.ACCEPTED.value
+    db_session.commit()
+
+    resp = await client.post(f"/api/v1/quotes/{quote_id}/convert", headers=_headers(user))
+    assert resp.status_code == 201
+    line = resp.json()["items"][0]
+    assert line["variant_id"] == red.id
+    assert line["variant_title"] == "Red"
+    assert line["product_sku"] == f"VC-RED-{product.id}"
+
+    db_session.refresh(red)
+    db_session.refresh(product)
+    assert red.stock == 2
+    assert product.stock == 8

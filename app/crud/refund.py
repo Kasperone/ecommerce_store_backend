@@ -41,6 +41,7 @@ from app.crud.invoice import invoice as crud_invoice
 from app.models.inventory_movement import InventoryMovementReason
 from app.models.order import Order, OrderStatus
 from app.models.product import Product
+from app.models.product_variant import ProductVariant
 from app.models.refund import Refund
 from app.models.refund_item import RefundItem
 
@@ -285,20 +286,30 @@ class CRUDRefund:
 
         if restock and items_list:
             # Restock only picked quantities (NOT the original line qty — v2
-            # may refund fewer units than were sold).
+            # may refund fewer units than were sold). Variant lines restock at
+            # variant grain; a since-deleted variant (variant_id SET NULL,
+            # variant_title snapshot kept) restocks at product grain with a note.
             line_by_id = {item.id: item for item in order.items}
             for order_item_id, qty in items_list:
                 line = line_by_id[order_item_id]
                 product = db.get(Product, line.product_id)
                 if product is None:
                     continue
+                variant = (
+                    db.get(ProductVariant, line.variant_id) if line.variant_id is not None else None
+                )
+                note = None
+                if variant is None and line.variant_title is not None:
+                    note = f"variant '{line.variant_title}' deleted; restocked at product grain"
                 crud_inventory.apply_delta(
                     db,
                     product=product,
                     delta=qty,
                     reason=InventoryMovementReason.ORDER_REFUNDED,
+                    variant=variant,
                     actor_user_id=actor_user_id,
                     order_id=order.id,
+                    note=note,
                 )
 
         original_invoice = crud_invoice.get_by_order_id(db, order.id)

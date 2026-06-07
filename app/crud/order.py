@@ -31,6 +31,7 @@ from app.crud.warehouse import warehouse as crud_warehouse
 from app.models.inventory_movement import InventoryMovementReason
 from app.models.order import Order, OrderItem, OrderStatus
 from app.models.product import Product
+from app.models.product_variant import ProductVariant
 from app.models.user import User, UserRole
 from app.schemas.order import OrderCreate, OrderUpdate
 from app.services.dimensional_weight import billable_weight_kg, line_volume_cm3
@@ -76,6 +77,22 @@ class ProductUnavailableError(Exception):
         super().__init__(f"Product {product_id} is unavailable")
 
 
+class VariantRequiredError(Exception):
+    """A line's product has active variants but the line carries no ``variant_id``."""
+
+    def __init__(self, product_id: int) -> None:
+        self.product_id = product_id
+        super().__init__(f"Product {product_id} requires a variant selection")
+
+
+class VariantUnavailableError(Exception):
+    """A line references a variant that is missing, inactive, or another product's."""
+
+    def __init__(self, variant_id: int) -> None:
+        self.variant_id = variant_id
+        super().__init__(f"Variant {variant_id} is unavailable")
+
+
 class InsufficientStockError(Exception):
     """A line requests more units than the product has in stock."""
 
@@ -87,6 +104,40 @@ class InsufficientStockError(Exception):
         super().__init__(
             f"Insufficient stock for '{name}': requested {requested}, available {available}"
         )
+
+
+def resolve_line_variant(
+    product: Product,
+    variant_id: int | None,
+    variants: dict[int, ProductVariant],
+) -> ProductVariant | None:
+    """Resolve a line's variant against the variant-selection rules.
+
+    Returns ``None`` for a plain line on a variantless product. Raises
+    ``VariantRequiredError`` when the product has active variants but the line
+    carries no ``variant_id``, and ``VariantUnavailableError`` when the given
+    variant is missing / inactive / another product's. Shared by the order
+    create path and the quote request path (``crud_quote.request_from_cart``)
+    so the rules can't drift.
+    """
+    if variant_id is None:
+        if any(variant.is_active for variant in product.variants):
+            raise VariantRequiredError(product.id)
+        return None
+    variant = variants.get(variant_id)
+    if variant is None or variant.product_id != product.id or not variant.is_active:
+        raise VariantUnavailableError(variant_id)
+    return variant
+
+
+def load_variants_for_lines(db: Session, variant_ids: list[int]) -> dict[int, ProductVariant]:
+    """Load every referenced variant in one query (``{id: ProductVariant}``)."""
+    if not variant_ids:
+        return {}
+    return {
+        variant.id: variant
+        for variant in db.query(ProductVariant).filter(ProductVariant.id.in_(variant_ids)).all()
+    }
 
 
 def status_transition_error(current: OrderStatus, target: OrderStatus) -> str | None:
@@ -132,13 +183,29 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         """Create an order from posted line items.
 
         Validates availability + stock, snapshots product fields, decrements
-        stock, and computes pricing. Raises ``ProductUnavailableError`` /
-        ``InsufficientStockError`` (the route maps these to 422). Flushes so the
-        ``id`` is populated; does not commit.
+        stock, and computes pricing. Variant lines follow the variant grain
+        throughout: a product with active variants requires a ``variant_id``
+        per line (else ``VariantRequiredError``), the variant must be this
+        product's and active (else ``VariantUnavailableError``), availability
+        is checked against the variant-scoped default-warehouse level, pricing
+        comes from ``variant.get_price`` (NULL inherits the product), and the
+        snapshot carries ``variant_title`` + the variant SKU. Raises
+        ``ProductUnavailableError`` / ``InsufficientStockError`` /
+        ``VariantRequiredError`` / ``VariantUnavailableError`` (the route maps
+        all four to 422). Flushes so the ``id`` is populated; does not commit.
         """
         currency = obj_in.currency
         product_ids = [line.product_id for line in obj_in.items]
-        products = {p.id: p for p in db.query(Product).filter(Product.id.in_(product_ids)).all()}
+        products = {
+            p.id: p
+            for p in db.query(Product)
+            .options(selectinload(Product.variants))
+            .filter(Product.id.in_(product_ids))
+            .all()
+        }
+        variants = load_variants_for_lines(
+            db, [line.variant_id for line in obj_in.items if line.variant_id is not None]
+        )
 
         # Orders fulfil from the default warehouse, so availability is checked
         # against that warehouse's level (not the product total, which may include
@@ -150,31 +217,40 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         items: list[OrderItem] = []
         subtotal = 0.0
         # Validate against a local running remainder so duplicate lines for the
-        # same product are checked against the not-yet-committed default-warehouse
-        # level. The real decrement + ledger write happens after the flush
-        # (apply_delta needs order.id) — see the second loop below.
-        remaining: dict[int, int] = {}
+        # same (product, variant) pair are checked against the not-yet-committed
+        # default-warehouse level. The real decrement + ledger write happens
+        # after the flush (apply_delta needs order.id) — see the second loop below.
+        remaining: dict[tuple[int, int | None], int] = {}
         for line in obj_in.items:
             product = products.get(line.product_id)
             if product is None or not product.is_active:
                 raise ProductUnavailableError(line.product_id)
+            variant = resolve_line_variant(product, line.variant_id, variants)
+            key = (product.id, variant.id if variant is not None else None)
             available = remaining.get(
-                product.id,
+                key,
                 crud_inventory.get_level_quantity(
-                    db, product=product, warehouse_id=default_warehouse.id
+                    db, product=product, warehouse_id=default_warehouse.id, variant=variant
                 ),
             )
             if available < line.quantity and not product.allow_backorder:
-                raise InsufficientStockError(product.id, product.name, line.quantity, available)
-            remaining[product.id] = available - line.quantity
-            unit_price = product.get_price(currency)
+                name = product.name if variant is None else f"{product.name} — {variant.title}"
+                raise InsufficientStockError(product.id, name, line.quantity, available)
+            remaining[key] = available - line.quantity
+            unit_price = (
+                variant.get_price(currency) if variant is not None else product.get_price(currency)
+            )
             line_total = round(unit_price * line.quantity, 2)
             subtotal += line_total
             items.append(
                 OrderItem(
                     product_id=product.id,
+                    variant_id=variant.id if variant is not None else None,
                     product_name=product.name,
-                    product_sku=product.sku,
+                    variant_title=variant.title if variant is not None else None,
+                    product_sku=(variant.sku or product.sku)
+                    if variant is not None
+                    else product.sku,
                     quantity=line.quantity,
                     unit_price=unit_price,
                     total_price=line_total,
@@ -285,6 +361,8 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
 
         # Decrement stock + append the ledger now that order.id exists; one
         # ORDER_PLACED movement per line (duplicate lines decrement cumulatively).
+        # Variant lines decrement at variant grain (apply_delta maintains
+        # variant.stock + product.stock + the level in lock-step).
         for line in obj_in.items:
             crud_inventory.apply_delta(
                 db,
@@ -292,6 +370,7 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
                 delta=-line.quantity,
                 reason=InventoryMovementReason.ORDER_PLACED,
                 warehouse_id=default_warehouse.id,
+                variant=variants.get(line.variant_id) if line.variant_id is not None else None,
                 actor_user_id=user_id,
                 order_id=order.id,
                 allow_negative=products[line.product_id].allow_backorder,
@@ -311,20 +390,31 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         ``crud_inventory.apply_delta``; ``actor_user_id`` attributes the movement
         to the cancelling user (None when called outside a request, e.g. tests).
         Stock is restored to the default warehouse (where orders are fulfilled
-        from). Caller is responsible for the cancellable-status check and the commit.
+        from). Variant lines restore at variant grain; a since-deleted variant
+        (``variant_id`` SET NULL, ``variant_title`` snapshot kept) restores at
+        product grain with an explanatory note. Caller is responsible for the
+        cancellable-status check and the commit.
         """
         default_warehouse = crud_warehouse.get_default(db)
         for item in order.items:
             product = db.get(Product, item.product_id)
             if product is not None:
+                variant = (
+                    db.get(ProductVariant, item.variant_id) if item.variant_id is not None else None
+                )
+                note = None
+                if variant is None and item.variant_title is not None:
+                    note = f"variant '{item.variant_title}' deleted; restored at product grain"
                 crud_inventory.apply_delta(
                     db,
                     product=product,
                     delta=item.quantity,
                     reason=InventoryMovementReason.ORDER_CANCELLED,
                     warehouse_id=default_warehouse.id if default_warehouse else None,
+                    variant=variant,
                     actor_user_id=actor_user_id,
                     order_id=order.id,
+                    note=note,
                 )
         order.status = OrderStatus.CANCELLED
         db.add(order)
