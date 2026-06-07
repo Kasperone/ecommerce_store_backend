@@ -57,6 +57,26 @@ def _make_pending_order(
     return order
 
 
+def _make_guest_pending_order(
+    db, product, *, shipping_method_id: int, quantity: int = 2, currency: str = "USD"
+):
+    """A pending guest order (user_id NULL, guest_token issued)."""
+    obj_in = OrderCreate(
+        items=[OrderItemCreate(product_id=product.id, quantity=quantity)],
+        currency=currency,
+        shipping_address="1 Guest St",
+        shipping_city="Town",
+        shipping_postal_code="00-001",
+        shipping_country="US",
+        shipping_method_id=shipping_method_id,
+        guest_email="guest@example.com",
+    )
+    order = crud_order.create_with_items(db, user_id=None, obj_in=obj_in)
+    db.commit()
+    db.refresh(order)
+    return order
+
+
 def _completed_event(
     order_number: str,
     payment_status: str = "paid",
@@ -202,6 +222,93 @@ async def test_create_checkout_404_for_other_users_order(
     product = product_factory(stock=5, price_usd=10.0)
     order = _make_pending_order(
         db_session, owner, product, shipping_method_id=test_shipping_method_id
+    )
+
+    resp = await client.post(
+        f"/api/v1/payments/stripe/checkout/{order.id}", headers=_headers(other)
+    )
+    assert resp.status_code == 404
+
+
+async def test_create_checkout_guest_token_ok(
+    client,
+    product_factory,
+    db_session,
+    configured_stripe,
+    fake_session,
+    test_shipping_method_id,
+):
+    """An anonymous caller starts payment for a guest order with its guest_token."""
+    product = product_factory(stock=5, price_usd=10.0)
+    order = _make_guest_pending_order(
+        db_session, product, shipping_method_id=test_shipping_method_id
+    )
+
+    resp = await client.post(
+        f"/api/v1/payments/stripe/checkout/{order.id}",
+        params={"guest_token": order.guest_token},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["checkout_url"] == "https://checkout.stripe.com/c/pay/cs_test_1"
+
+
+async def test_create_checkout_guest_wrong_token_404(
+    client,
+    product_factory,
+    db_session,
+    configured_stripe,
+    fake_session,
+    test_shipping_method_id,
+):
+    product = product_factory(stock=5, price_usd=10.0)
+    order = _make_guest_pending_order(
+        db_session, product, shipping_method_id=test_shipping_method_id
+    )
+
+    resp = await client.post(
+        f"/api/v1/payments/stripe/checkout/{order.id}",
+        params={"guest_token": "wrong-token-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    )
+    assert resp.status_code == 404
+
+
+async def test_create_checkout_guest_token_cannot_reach_authed_order_404(
+    client,
+    user_factory,
+    product_factory,
+    db_session,
+    configured_stripe,
+    fake_session,
+    test_shipping_method_id,
+):
+    # An authed user's order has guest_token NULL — no token value matches.
+    owner = user_factory()
+    product = product_factory(stock=5, price_usd=10.0)
+    order = _make_pending_order(
+        db_session, owner, product, shipping_method_id=test_shipping_method_id
+    )
+
+    resp = await client.post(
+        f"/api/v1/payments/stripe/checkout/{order.id}",
+        params={"guest_token": "any-guess-at-all-aaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    )
+    assert resp.status_code == 404
+
+
+async def test_create_checkout_404_for_other_customers_guest_order(
+    client,
+    user_factory,
+    product_factory,
+    db_session,
+    configured_stripe,
+    fake_session,
+    test_shipping_method_id,
+):
+    # An authed customer (no token) can't pay a guest order — it isn't theirs.
+    other = user_factory()
+    product = product_factory(stock=5, price_usd=10.0)
+    order = _make_guest_pending_order(
+        db_session, product, shipping_method_id=test_shipping_method_id
     )
 
     resp = await client.post(
@@ -441,9 +548,12 @@ async def test_stripe_config_reports_unconfigured(client, user_factory, unconfig
     assert resp.json()["configured"] is False
 
 
-async def test_stripe_config_requires_auth(client):
+async def test_stripe_config_public_for_guests(client, configured_stripe_full):
+    # Public since guest checkout: a guest's payment-method picker needs the
+    # (browser-safe) publishable key to mount the wallet widget. Was a 401.
     resp = await client.get("/api/v1/payments/stripe/config")
-    assert resp.status_code == 401
+    assert resp.status_code == 200
+    assert resp.json() == {"configured": True, "publishable_key": "pk_test_x"}
 
 
 # ---------------------------------------------------------------------------
@@ -492,6 +602,48 @@ async def test_create_payment_intent_503_when_unconfigured(
 async def test_create_payment_intent_401_without_auth(client):
     resp = await client.post("/api/v1/payments/stripe/payment-intent/1")
     assert resp.status_code == 401
+
+
+async def test_create_payment_intent_guest_token_ok(
+    client,
+    product_factory,
+    db_session,
+    configured_stripe,
+    fake_payment_intent,
+    test_shipping_method_id,
+):
+    """The wallet (PaymentIntent) path accepts the guest_token the same way."""
+    product = product_factory(stock=5, price_usd=10.0)
+    order = _make_guest_pending_order(
+        db_session, product, shipping_method_id=test_shipping_method_id
+    )
+
+    resp = await client.post(
+        f"/api/v1/payments/stripe/payment-intent/{order.id}",
+        params={"guest_token": order.guest_token},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["client_secret"] == "pi_test_1_secret_abc"
+
+
+async def test_create_payment_intent_guest_wrong_token_404(
+    client,
+    product_factory,
+    db_session,
+    configured_stripe,
+    fake_payment_intent,
+    test_shipping_method_id,
+):
+    product = product_factory(stock=5, price_usd=10.0)
+    order = _make_guest_pending_order(
+        db_session, product, shipping_method_id=test_shipping_method_id
+    )
+
+    resp = await client.post(
+        f"/api/v1/payments/stripe/payment-intent/{order.id}",
+        params={"guest_token": "wrong-token-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    )
+    assert resp.status_code == 404
 
 
 async def test_create_payment_intent_404_for_other_users_order(

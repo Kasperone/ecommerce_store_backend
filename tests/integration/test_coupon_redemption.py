@@ -68,13 +68,16 @@ async def test_validate_percent_returns_discount(client, user_factory, coupon_fa
     assert body["currency"] == "USD"
 
 
-async def test_validate_requires_auth(client, coupon_factory):
-    coupon_factory(code="SAVE10")
+async def test_validate_anonymous_ok(client, coupon_factory):
+    # Optional auth since guest checkout: an anonymous preview works (the
+    # per-user cap is simply skipped — user_id=None). Was a 401.
+    coupon_factory(code="SAVE10", discount_type="percent", value=10, currency=None)
     resp = await client.post(
         "/api/v1/coupons/validate",
         json={"code": "SAVE10", "subtotal": 200.0, "currency": "USD"},
     )
-    assert resp.status_code == 401
+    assert resp.status_code == 200
+    assert resp.json()["discount_amount"] == 20.0
 
 
 async def test_validate_min_order_not_met_400(client, user_factory, coupon_factory):

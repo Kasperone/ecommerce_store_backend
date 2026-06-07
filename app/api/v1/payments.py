@@ -11,19 +11,27 @@ idempotent (``crud_order.mark_paid`` no-ops unless the order is still pending).
 - ``POST /payments/stripe/checkout/{order_id}`` → Stripe Checkout ``checkout_url``;
   ``POST /payments/stripe/webhook`` verifies ``Stripe-Signature``, settles on a
   ``checkout.session.completed`` event whose ``payment_status == "paid"``.
+
+Guest checkout: the three checkout-start endpoints take **optional** auth plus
+an optional ``guest_token`` query param. An authed caller resolves their own
+order via ``get_scoped`` exactly as before; an anonymous caller must present
+the order's ``guest_token`` (constant-time compared; any miss is a plain 404 —
+no enumeration signal; neither bearer nor token → 401). Webhooks are untouched
+(already unauthenticated + signature-verified).
 """
 
 import json
 import logging
+import secrets
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.dependencies import get_current_active_user, get_db
+from app.core.dependencies import get_db, get_optional_user
 from app.crud import order as crud_order
-from app.models.order import OrderStatus
+from app.models.order import Order, OrderStatus
 from app.models.user import User
 from app.schemas.payment import (
     PayUCheckoutResponse,
@@ -70,17 +78,37 @@ def _paid_amount_matches(
     return False
 
 
-@router.post("/payu/orders/{order_id}", response_model=PayUCheckoutResponse)
-async def create_payu_checkout(
+def _resolve_payable_order(
+    db: Session,
+    *,
     order_id: int,
-    request: Request,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
-):
-    """Create a PayU payment for the caller's pending order."""
-    client = get_payu_client()  # 503 when PayU is unconfigured
+    current_user: User | None,
+    guest_token: str | None,
+) -> Order:
+    """Resolve the order a checkout-start call may pay for.
 
-    order = crud_order.get_scoped(db, order_id=order_id, user=current_user)
+    Authed → owner-scoped lookup exactly as before (admins may start payment
+    for any order). Anonymous → the caller must present the order's
+    ``guest_token``; it is compared constant-time (``secrets.compare_digest``)
+    against the stored token, and any miss — unknown order, authed-user order
+    (token NULL), wrong token — is a plain 404, indistinguishable from
+    not-found. Neither bearer nor token → 401. Also enforces the shared
+    pending-status gate (409 otherwise).
+    """
+    if current_user is not None:
+        order = crud_order.get_scoped(db, order_id=order_id, user=current_user)
+    elif guest_token:
+        order = crud_order.get(db, id=order_id)
+        if order is not None and not (
+            order.guest_token is not None and secrets.compare_digest(order.guest_token, guest_token)
+        ):
+            order = None
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     if order is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
     if OrderStatus(order.status) != OrderStatus.PENDING:
@@ -88,6 +116,33 @@ async def create_payu_checkout(
             status_code=status.HTTP_409_CONFLICT,
             detail="Order is not awaiting payment",
         )
+    return order
+
+
+def _buyer_email(order: Order, current_user: User | None) -> str:
+    """Provider-facing buyer email — the account's, or the guest contact."""
+    if current_user is not None:
+        return current_user.email
+    return order.guest_email or ""
+
+
+@router.post("/payu/orders/{order_id}", response_model=PayUCheckoutResponse)
+async def create_payu_checkout(
+    order_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_user),
+    guest_token: str | None = Query(default=None, max_length=64),
+):
+    """Create a PayU payment for the caller's pending order (authed or guest)."""
+    # Resolve auth/ownership first so anonymous callers get 401 (not a 503
+    # config leak) even when PayU is unconfigured — matches the pre-guest
+    # behavior where the auth dependency ran before the route body.
+    order = _resolve_payable_order(
+        db, order_id=order_id, current_user=current_user, guest_token=guest_token
+    )
+
+    client = get_payu_client()  # 503 when PayU is unconfigured
 
     products = [
         {
@@ -104,7 +159,7 @@ async def create_payu_checkout(
             amount_minor=round(order.total * 100),
             currency=order.currency,
             description=f"Order {order.order_number}",
-            buyer_email=current_user.email,
+            buyer_email=_buyer_email(order, current_user),
             customer_ip=(request.client.host if request.client else "127.0.0.1"),
             products=products,
             notify_url=f"{settings.BACKEND_URL.rstrip('/')}/api/v1/payments/payu/notify",
@@ -175,19 +230,22 @@ async def payu_notify(
 async def create_stripe_checkout(
     order_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User | None = Depends(get_optional_user),
+    guest_token: str | None = Query(default=None, max_length=64),
 ):
-    """Create a Stripe Checkout Session for the caller's pending order."""
+    """Create a Stripe Checkout Session for the caller's pending order (authed or guest)."""
+    # Auth/ownership before the provider-config 503 (see create_payu_checkout).
+    order = _resolve_payable_order(
+        db, order_id=order_id, current_user=current_user, guest_token=guest_token
+    )
+
     service = get_stripe_service()  # 503 when Stripe is unconfigured
 
-    order = crud_order.get_scoped(db, order_id=order_id, user=current_user)
-    if order is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
-    if OrderStatus(order.status) != OrderStatus.PENDING:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Order is not awaiting payment",
-        )
+    # A guest has no /account/orders page — cancel back to the token track view.
+    if order.user_id is None and order.guest_token:
+        cancel_url = f"{settings.FRONTEND_URL.rstrip('/')}/orders/track/{order.guest_token}"
+    else:
+        cancel_url = f"{settings.FRONTEND_URL.rstrip('/')}/account/orders/{order.id}"
 
     try:
         # The SDK call is blocking HTTP — run it off the event loop.
@@ -197,12 +255,12 @@ async def create_stripe_checkout(
             amount_minor=round(order.total * 100),
             currency=order.currency,
             description=f"Order {order.order_number}",
-            buyer_email=current_user.email,
+            buyer_email=_buyer_email(order, current_user),
             success_url=(
                 f"{settings.FRONTEND_URL.rstrip('/')}"
                 f"/checkout/payment/return?order={order.order_number}"
             ),
-            cancel_url=f"{settings.FRONTEND_URL.rstrip('/')}/account/orders/{order.id}",
+            cancel_url=cancel_url,
         )
     except StripeError as exc:
         raise HTTPException(
@@ -214,15 +272,15 @@ async def create_stripe_checkout(
 
 
 @router.get("/stripe/config", response_model=StripeConfigResponse)
-async def stripe_config(
-    current_user: User = Depends(get_current_active_user),
-):
+async def stripe_config():
     """Browser-side Stripe config for the in-page Express Checkout Element.
 
     Deliberately does NOT 503 when Stripe is unconfigured: the frontend reads
     ``configured`` to decide whether to mount the wallet widget at all, so a
     keyless dev/CI env hides it gracefully instead of showing a dead button.
-    The publishable key is a browser key by design — safe to return.
+    The publishable key is a browser key by design — safe to return. Public
+    (was authed) since guest checkout: a guest's payment-method picker needs
+    it to mount the wallet widget, and nothing here is caller-specific.
     """
     return {
         "configured": stripe_configured(),
@@ -234,25 +292,23 @@ async def stripe_config(
 async def create_stripe_payment_intent(
     order_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User | None = Depends(get_optional_user),
+    guest_token: str | None = Query(default=None, max_length=64),
 ):
     """Create a Stripe PaymentIntent for the caller's pending order (wallets).
 
-    Mirrors ``create_stripe_checkout`` but returns a ``client_secret`` the
-    browser confirms in-page via the Express Checkout Element, instead of a
-    hosted redirect URL. Settled server-side by the ``payment_intent.succeeded``
+    Mirrors ``create_stripe_checkout`` (including the optional-auth +
+    ``guest_token`` resolution) but returns a ``client_secret`` the browser
+    confirms in-page via the Express Checkout Element, instead of a hosted
+    redirect URL. Settled server-side by the ``payment_intent.succeeded``
     webhook.
     """
-    service = get_stripe_service()  # 503 when Stripe is unconfigured
+    # Auth/ownership before the provider-config 503 (see create_payu_checkout).
+    order = _resolve_payable_order(
+        db, order_id=order_id, current_user=current_user, guest_token=guest_token
+    )
 
-    order = crud_order.get_scoped(db, order_id=order_id, user=current_user)
-    if order is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
-    if OrderStatus(order.status) != OrderStatus.PENDING:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Order is not awaiting payment",
-        )
+    service = get_stripe_service()  # 503 when Stripe is unconfigured
 
     try:
         # The SDK call is blocking HTTP — run it off the event loop.
@@ -262,7 +318,7 @@ async def create_stripe_payment_intent(
             amount_minor=round(order.total * 100),
             currency=order.currency,
             description=f"Order {order.order_number}",
-            buyer_email=current_user.email,
+            buyer_email=_buyer_email(order, current_user),
         )
     except StripeError as exc:
         raise HTTPException(

@@ -2,11 +2,27 @@ from datetime import date
 from math import ceil
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
+from limits import parse as parse_rate_limit
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.dependencies import get_current_active_user, get_current_admin, get_db
+from app.core.dependencies import (
+    get_current_active_user,
+    get_current_admin,
+    get_db,
+    get_optional_user,
+)
+from app.core.rate_limit import get_ip_key, limiter
 from app.crud import invoice as crud_invoice
 from app.crud import order as crud_order
 from app.crud import refund as crud_refund
@@ -29,6 +45,7 @@ from app.crud.shipping import ShippingRateUnavailableError
 from app.models.order import OrderStatus
 from app.models.user import User, UserRole
 from app.schemas.order import (
+    GuestOrderResponse,
     OrderCreate,
     OrderListResponse,
     OrderResponse,
@@ -41,6 +58,26 @@ from app.services import order_email, order_export, search_index
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+# Anonymous order creation is an unauthenticated stock decrement — 10/minute
+# per IP blunts junk-order stock-burn (accepted v1 posture; no payment-first
+# reservation). Enforced manually (not via ``@limiter.limit``) because the
+# limit applies only to the anonymous branch — slowapi's ``exempt_when`` takes
+# no arguments, so a route decorator would throttle authenticated checkouts too.
+_GUEST_CREATE_LIMIT = parse_rate_limit("10/minute")
+
+
+def _enforce_guest_create_rate_limit(request: Request) -> None:
+    """IP-rate-limit anonymous order creation (shares the slowapi storage, so
+    the test ``reset_limiter`` fixture and the production Redis backend both
+    apply). No-op when rate limiting is disabled (E2E kill-switch)."""
+    if not limiter.enabled:
+        return
+    if not limiter.limiter.hit(_GUEST_CREATE_LIMIT, "guest-order-create", get_ip_key(request)):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded: 10 per 1 minute",
+        )
 
 
 def _touched_product_ids(order) -> list[int]:
@@ -70,17 +107,39 @@ def _export_filename(
 async def create_order(
     order_in: OrderCreate,
     background_tasks: BackgroundTasks,
+    request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User | None = Depends(get_optional_user),
 ):
     """
-    Create an order from posted line items (authenticated).
+    Create an order from posted line items (authenticated or guest).
 
     Validates availability and stock, snapshots product data, decrements stock,
     and computes pricing. Sets ``status=pending``.
+
+    Auth is **optional**: an anonymous caller must supply ``guest_email``
+    (+ optional ``locale``) — 422 otherwise — and is IP-rate-limited at
+    10/minute; the order gets a unique ``guest_token`` for account-less
+    tracking + payment start. An authenticated caller must NOT send
+    ``guest_email`` (422 — the account email is authoritative).
     """
+    if current_user is None:
+        if order_in.guest_email is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="guest_email is required for guest checkout",
+            )
+        _enforce_guest_create_rate_limit(request)
+    elif order_in.guest_email is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="guest_email is not allowed on an authenticated order",
+        )
+
     try:
-        order = crud_order.create_with_items(db, user_id=current_user.id, obj_in=order_in)
+        order = crud_order.create_with_items(
+            db, user_id=current_user.id if current_user else None, obj_in=order_in
+        )
     except ProductUnavailableError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -205,6 +264,31 @@ async def export_orders(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/track/{token}", response_model=GuestOrderResponse)
+@limiter.limit("10/minute")
+async def track_guest_order(
+    token: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Track a guest order by its opaque tracking token (public, no account).
+
+    The token (256-bit, from the order-confirmation email / checkout success
+    page) is the credential. Returns a trimmed view — status, items, totals,
+    shipping method + shipment tracking, city/country — never the full address,
+    payment ids, or refund detail. Unknown token → plain 404 (no enumeration
+    signal); rate-limited per IP against token scanning.
+
+    NOTE: declared *before* ``GET /{order_id}`` (route-ordering discipline,
+    like ``/export``).
+    """
+    order = crud_order.get_by_guest_token(db, token=token)
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+    return order
 
 
 @router.get("/{order_id}", response_model=OrderWithUser)

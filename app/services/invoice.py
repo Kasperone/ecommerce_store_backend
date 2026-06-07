@@ -86,6 +86,40 @@ def _item_label(item: OrderItem) -> str:
     return item.product_name
 
 
+def _buyer_lines(order: Order, labels: dict[str, str]) -> list[str]:
+    """Buyer ("Bill to") block lines — shared by the invoice and the corrective
+    invoice so the two documents can't drift.
+
+    Company details when the user has them, else the person's name; a **guest**
+    order (``order.user`` is None) bills to the guest contact email — the only
+    buyer identity a guest checkout collects (v1; no guest invoice download
+    either, so this renders only on the emailed copy).
+    """
+    user = order.user
+    buyer = [f"<b>{labels['bill_to']}</b>"]
+    if user is None:
+        if order.guest_email:
+            buyer.append(_esc(order.guest_email))
+        return buyer
+    if user.company_name:
+        buyer.append(_esc(user.company_name))
+        if user.company_tax_id:
+            buyer.append(f"{labels['tax_id']}: {_esc(user.company_tax_id)}")
+        if user.company_address_street:
+            buyer.append(_esc(user.company_address_street))
+        company_city = " ".join(
+            p for p in (user.company_address_postal_code, user.company_address_city) if p
+        )
+        if company_city:
+            buyer.append(_esc(company_city))
+        if user.company_address_country:
+            buyer.append(_esc(user.company_address_country))
+    else:
+        buyer.append(_esc(user.full_name))
+    buyer.append(_esc(user.email))
+    return buyer
+
+
 @dataclass(frozen=True)
 class StoreIdentity:
     """Seller identity + VAT rate printed on an invoice (decoupled from Settings)."""
@@ -349,25 +383,9 @@ def build_invoice_pdf(
     if store.email:
         seller.append(_esc(store.email))
 
-    # Buyer block — company details when present, else the person.
-    user = order.user
-    buyer = [f"<b>{labels['bill_to']}</b>"]
-    if user.company_name:
-        buyer.append(_esc(user.company_name))
-        if user.company_tax_id:
-            buyer.append(f"{labels['tax_id']}: {_esc(user.company_tax_id)}")
-        if user.company_address_street:
-            buyer.append(_esc(user.company_address_street))
-        company_city = " ".join(
-            p for p in (user.company_address_postal_code, user.company_address_city) if p
-        )
-        if company_city:
-            buyer.append(_esc(company_city))
-        if user.company_address_country:
-            buyer.append(_esc(user.company_address_country))
-    else:
-        buyer.append(_esc(user.full_name))
-    buyer.append(_esc(user.email))
+    # Buyer block — company details when present, else the person (guest
+    # orders bill to the guest email).
+    buyer = _buyer_lines(order, labels)
 
     parties = Table(
         [[Paragraph("<br/>".join(seller), base), Paragraph("<br/>".join(buyer), base)]],
@@ -643,24 +661,7 @@ def build_corrective_invoice_pdf(
     if store.email:
         seller.append(_esc(store.email))
 
-    user = order.user
-    buyer = [f"<b>{labels['bill_to']}</b>"]
-    if user.company_name:
-        buyer.append(_esc(user.company_name))
-        if user.company_tax_id:
-            buyer.append(f"{labels['tax_id']}: {_esc(user.company_tax_id)}")
-        if user.company_address_street:
-            buyer.append(_esc(user.company_address_street))
-        company_city = " ".join(
-            p for p in (user.company_address_postal_code, user.company_address_city) if p
-        )
-        if company_city:
-            buyer.append(_esc(company_city))
-        if user.company_address_country:
-            buyer.append(_esc(user.company_address_country))
-    else:
-        buyer.append(_esc(user.full_name))
-    buyer.append(_esc(user.email))
+    buyer = _buyer_lines(order, labels)
 
     parties = Table(
         [[Paragraph("<br/>".join(seller), base), Paragraph("<br/>".join(buyer), base)]],

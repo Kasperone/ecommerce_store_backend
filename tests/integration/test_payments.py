@@ -113,6 +113,51 @@ async def test_create_checkout_503_when_unconfigured(
     assert resp.status_code == 503
 
 
+@respx.mock
+async def test_create_checkout_guest_token_ok(
+    client, product_factory, db_session, configured_payu, test_shipping_method_id
+):
+    """An anonymous caller starts a PayU payment for a guest order with its token."""
+    respx.post(f"{SANDBOX}/pl/standard/user/oauth/authorize").mock(
+        return_value=httpx.Response(200, json={"access_token": "tok"}),
+    )
+    create_route = respx.post(f"{SANDBOX}/api/v2_1/orders").mock(
+        return_value=httpx.Response(
+            302,
+            json={
+                "status": {"statusCode": "SUCCESS"},
+                "redirectUri": "https://secure.snd.payu.com/pay/guest",
+                "orderId": "PAYU-G1",
+            },
+        ),
+    )
+    product = product_factory(stock=10, price_pln=499.0)
+    obj_in = OrderCreate(
+        items=[OrderItemCreate(product_id=product.id, quantity=2)],
+        currency="PLN",
+        shipping_address="1 Guest St",
+        shipping_city="Town",
+        shipping_postal_code="00-001",
+        shipping_country="PL",
+        shipping_method_id=test_shipping_method_id,
+        guest_email="guest@example.com",
+    )
+    order = crud_order.create_with_items(db_session, user_id=None, obj_in=obj_in)
+    db_session.commit()
+    db_session.refresh(order)
+
+    resp = await client.post(
+        f"/api/v1/payments/payu/orders/{order.id}",
+        params={"guest_token": order.guest_token},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["redirect_uri"] == "https://secure.snd.payu.com/pay/guest"
+    # The provider sees the guest contact as the buyer.
+    sent = json.loads(create_route.calls.last.request.content)
+    assert sent["buyer"]["email"] == "guest@example.com"
+
+
 async def test_create_checkout_401_without_auth(client):
     resp = await client.post("/api/v1/payments/payu/orders/1")
     assert resp.status_code == 401
