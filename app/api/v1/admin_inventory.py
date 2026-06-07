@@ -16,8 +16,11 @@ from sqlalchemy.orm import Session
 from app.core.dependencies import get_current_admin, get_db
 from app.crud import inventory as crud_inventory
 from app.crud import product as crud_product
+from app.crud import product_variant as crud_product_variant
 from app.crud import warehouse as crud_warehouse
 from app.models.inventory_movement import InventoryMovement, InventoryMovementReason
+from app.models.product import Product
+from app.models.product_variant import ProductVariant
 from app.models.user import User
 from app.schemas.inventory import (
     InventoryListItem,
@@ -62,6 +65,7 @@ def _movement_item(
         product_name=product_name,
         warehouse_id=movement.warehouse_id,
         warehouse_name=warehouse_name,
+        variant_id=movement.variant_id,
         delta=movement.delta,
         resulting_stock=movement.resulting_stock,
         reason=movement.reason,
@@ -69,6 +73,35 @@ def _movement_item(
         order_id=movement.order_id,
         actor_user_id=movement.actor_user_id,
     )
+
+
+def _resolve_variant_grain(
+    db: Session, *, product: Product, variant_id: int | None
+) -> ProductVariant | None:
+    """Resolve the stock grain a request targets, enforcing the 422 matrix.
+
+    A product with variant rows (active or not — inactive variants still hold
+    stock at variant grain) only accepts variant-scoped mutations; a
+    variantless product only product-grain ones. An unknown / other-product
+    variant id is a 404.
+    """
+    has_variant_rows = bool(product.variants)
+    if variant_id is None:
+        if has_variant_rows:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="This product tracks stock per variant; variant_id is required",
+            )
+        return None
+    if not has_variant_rows:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This product has no variants; omit variant_id",
+        )
+    variant = crud_product_variant.get(db, product_id=product.id, variant_id=variant_id)
+    if variant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    return variant
 
 
 @router.get("/", response_model=InventoryListResponse)
@@ -169,13 +202,28 @@ async def list_product_levels(
 ):
     """Per-warehouse stock breakdown for one product (admin).
 
-    Always includes the default warehouse (synthesised from unallocated stock if
-    its level row hasn't been materialised yet), so the rows sum to the product's
-    total stock.
+    Variantless products: one row per warehouse, always including the default
+    (synthesised from unallocated stock if its level row hasn't been
+    materialised yet), so the rows sum to the product's total stock. Variant
+    products: one row per materialised (warehouse, variant) level —
+    ``variant_id`` + ``variant_title`` identify the grain.
     """
     product = crud_product.get(db, id=product_id)
     if product is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+    if product.variants:
+        return [
+            StockLevelItem(
+                warehouse_id=wh.id,
+                warehouse_code=wh.code,
+                warehouse_name=wh.name,
+                variant_id=variant.id,
+                variant_title=variant.title,
+                quantity=qty,
+                is_default=wh.is_default,
+            )
+            for wh, variant, qty in crud_inventory.levels_for_product_variants(db, product=product)
+        ]
     return [
         StockLevelItem(
             warehouse_id=wh.id,
@@ -199,8 +247,10 @@ async def adjust_stock(
     """Set a product's stock in one warehouse to an absolute value (admin).
 
     Computes ``delta = new_stock - <that warehouse's level>``; a no-op (delta 0)
-    is rejected so the ledger never gets empty rows. Records a
-    ``manual_adjustment`` movement + an audit row in one transaction.
+    is rejected so the ledger never gets empty rows. Variant products adjust at
+    variant grain (``variant_id`` required — 422 matrix in
+    ``_resolve_variant_grain``). Records a ``manual_adjustment`` movement + an
+    audit row in one transaction.
     """
     product = crud_product.get(db, id=product_id)
     if product is None:
@@ -208,9 +258,10 @@ async def adjust_stock(
     warehouse = crud_warehouse.get(db, payload.warehouse_id)
     if warehouse is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Warehouse not found")
+    variant = _resolve_variant_grain(db, product=product, variant_id=payload.variant_id)
 
     current_level = crud_inventory.get_level_quantity(
-        db, product=product, warehouse_id=warehouse.id
+        db, product=product, warehouse_id=warehouse.id, variant=variant
     )
     delta = payload.new_stock - current_level
     if delta == 0:
@@ -225,6 +276,7 @@ async def adjust_stock(
         delta=delta,
         reason=InventoryMovementReason.MANUAL_ADJUSTMENT,
         warehouse_id=warehouse.id,
+        variant=variant,
         actor_user_id=current_admin.id,
         note=payload.note,
     )
@@ -247,7 +299,8 @@ async def restock_product(
     """Add incoming stock to a warehouse (admin) — a supplier/purchase-order receipt.
 
     Records a ``restock`` movement of ``+quantity`` and an audit row in one
-    transaction. 404 on unknown product/warehouse.
+    transaction. Variant products restock at variant grain (``variant_id``
+    required). 404 on unknown product/warehouse/variant.
     """
     product = crud_product.get(db, id=product_id)
     if product is None:
@@ -255,6 +308,7 @@ async def restock_product(
     warehouse = crud_warehouse.get(db, payload.warehouse_id)
     if warehouse is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Warehouse not found")
+    variant = _resolve_variant_grain(db, product=product, variant_id=payload.variant_id)
 
     movement = crud_inventory.apply_delta(
         db,
@@ -262,6 +316,7 @@ async def restock_product(
         delta=payload.quantity,
         reason=InventoryMovementReason.RESTOCK,
         warehouse_id=warehouse.id,
+        variant=variant,
         actor_user_id=current_admin.id,
         note=payload.note,
     )
@@ -283,8 +338,9 @@ async def transfer_stock(
     """Move stock between two warehouses (admin).
 
     Writes a paired transfer_out (source) + transfer_in (destination) movement in
-    one transaction; the product total is unchanged. 404 on unknown
-    product/warehouse, 422 on same-warehouse or insufficient source stock.
+    one transaction; the product total is unchanged. Variant products transfer
+    at variant grain (``variant_id`` required). 404 on unknown
+    product/warehouse/variant, 422 on same-warehouse or insufficient source stock.
     """
     if payload.from_warehouse_id == payload.to_warehouse_id:
         raise HTTPException(
@@ -298,8 +354,11 @@ async def transfer_stock(
     dest = crud_warehouse.get(db, payload.to_warehouse_id)
     if source is None or dest is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Warehouse not found")
+    variant = _resolve_variant_grain(db, product=product, variant_id=payload.variant_id)
 
-    available = crud_inventory.get_level_quantity(db, product=product, warehouse_id=source.id)
+    available = crud_inventory.get_level_quantity(
+        db, product=product, warehouse_id=source.id, variant=variant
+    )
     if available < payload.quantity:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -315,6 +374,7 @@ async def transfer_stock(
         delta=-payload.quantity,
         reason=InventoryMovementReason.TRANSFER_OUT,
         warehouse_id=source.id,
+        variant=variant,
         actor_user_id=current_admin.id,
         note=payload.note,
     )
@@ -324,6 +384,7 @@ async def transfer_stock(
         delta=payload.quantity,
         reason=InventoryMovementReason.TRANSFER_IN,
         warehouse_id=dest.id,
+        variant=variant,
         actor_user_id=current_admin.id,
         note=payload.note,
     )
@@ -334,6 +395,7 @@ async def transfer_stock(
         payload={
             "transfer": {
                 "product_id": product.id,
+                "variant_id": variant.id if variant is not None else None,
                 "from_warehouse_id": source.id,
                 "to_warehouse_id": dest.id,
                 "quantity": payload.quantity,

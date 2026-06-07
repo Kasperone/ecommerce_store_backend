@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.models.inventory_movement import InventoryMovement
     from app.models.order import OrderItem
     from app.models.product_image import ProductImage
+    from app.models.product_variant import ProductOption, ProductVariant
     from app.models.review import Review
     from app.models.warehouse import StockLevel
 
@@ -157,6 +158,18 @@ class Product(BaseModel):
         back_populates="product",
         cascade="all, delete-orphan",
     )
+    options: Mapped[list["ProductOption"]] = relationship(
+        "ProductOption",
+        back_populates="product",
+        cascade="all, delete-orphan",
+        order_by="ProductOption.position",
+    )
+    variants: Mapped[list["ProductVariant"]] = relationship(
+        "ProductVariant",
+        back_populates="product",
+        cascade="all, delete-orphan",
+        order_by="ProductVariant.position",
+    )
 
     def __repr__(self):
         return f"<Product {self.name}>"
@@ -165,6 +178,21 @@ class Product(BaseModel):
     def in_stock(self):
         """Check if product is in stock"""
         return self.stock > 0
+
+    @property
+    def has_variants(self) -> bool:
+        """True when the product has at least one **active** variant.
+
+        This is the public/storefront notion of "a variant product" (§0 of the
+        variants plan). Inventory-grain checks use ``bool(product.variants)``
+        instead — stock on an *inactive* variant still lives at variant grain.
+        """
+        return any(variant.is_active for variant in self.variants)
+
+    @property
+    def active_variants(self) -> list["ProductVariant"]:
+        """Active variants only — what the public product detail exposes."""
+        return [variant for variant in self.variants if variant.is_active]
 
     def get_price(self, currency: str = "USD") -> float:
         """Return price in ``currency`` with deterministic fallback (PLN → USD → EUR).

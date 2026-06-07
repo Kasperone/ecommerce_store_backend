@@ -44,6 +44,12 @@ from app.models.page import (
 from app.models.price_history import SUPPORTED_CURRENCIES, PriceHistory
 from app.models.product import Product
 from app.models.product_image import ProductImage
+from app.models.product_variant import (
+    ProductOption,
+    ProductOptionValue,
+    ProductVariant,
+    product_variant_option_values,
+)
 from app.models.quote import QUOTE_STATUS_VALUES, Quote, QuoteItem, QuoteStatus
 from app.models.refresh_token import RefreshToken
 from app.models.refund import REFUND_REASON_VALUES, Refund, RefundReason
@@ -95,6 +101,10 @@ __all__ = [
     "CustomerNote",
     "Product",
     "ProductImage",
+    "ProductOption",
+    "ProductOptionValue",
+    "ProductVariant",
+    "product_variant_option_values",
     "Quote",
     "QuoteItem",
     "QuoteStatus",

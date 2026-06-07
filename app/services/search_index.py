@@ -54,6 +54,9 @@ PRODUCT_INDEX_SETTINGS: dict = {
         "category_name_pl",
         "description",
         "description_pl",
+        # Flattened option values (EN+PL, e.g. "Red", "XL", "Czerwony") so a
+        # query like "red shirt" matches variant products.
+        "option_values",
     ],
     "filterableAttributes": [
         "category_id",
@@ -62,6 +65,9 @@ PRODUCT_INDEX_SETTINGS: dict = {
         "price_pln",
         "price_eur",
         "is_featured",
+        # For a future facet sidebar over option values (out of scope in v1 —
+        # /api/v1/search's build_filters is untouched).
+        "option_values",
     ],
     "sortableAttributes": ["price_usd", "price_pln", "price_eur", "created_at", "name"],
     # Meili defaults + a featured boost appended (applies within the "sort" tie).
@@ -135,8 +141,43 @@ def _epoch(value) -> int | None:
     return int(value.replace(tzinfo=UTC).timestamp())
 
 
+def _min_variant_price(product: Product, attr: str) -> float | None:
+    """Min effective price across active variants (inherit-aware), else the
+    product column.
+
+    For a variant product the indexed price becomes the "from" price — keeps
+    the existing filter/sort semantics meaningful. A NULL variant price
+    inherits the product's; all-NULL candidates collapse to None (not for
+    sale in that currency).
+    """
+    active = [variant for variant in product.variants if variant.is_active]
+    if not active:
+        return getattr(product, attr)
+    candidates = [
+        price
+        for price in (
+            getattr(variant, attr) if getattr(variant, attr) is not None else getattr(product, attr)
+            for variant in active
+        )
+        if price is not None
+    ]
+    return min(candidates) if candidates else None
+
+
+def _option_values(product: Product) -> list[str]:
+    """Flattened option values (EN + PL, option order then value order)."""
+    values: list[str] = []
+    for option in product.options:
+        for value in option.values:
+            values.append(value.value)
+            if value.value_pl:
+                values.append(value.value_pl)
+    return values
+
+
 def build_product_document(product: Product) -> dict:
-    """Flatten a product (+ its category + primary image) into one Meili doc."""
+    """Flatten a product (+ its category + primary image + variants) into one
+    Meili doc."""
     category = product.category
     return {
         "id": product.id,
@@ -146,16 +187,19 @@ def build_product_document(product: Product) -> dict:
         "description_pl": product.description_pl,
         "slug": product.slug,
         "sku": product.sku,
-        "price_usd": product.price_usd,
-        "price_pln": product.price_pln,
-        "price_eur": product.price_eur,
+        "price_usd": _min_variant_price(product, "price_usd"),
+        "price_pln": _min_variant_price(product, "price_pln"),
+        "price_eur": _min_variant_price(product, "price_eur"),
         "category_id": product.category_id,
         "category_name": category.name if category else None,
         "category_name_pl": category.name_pl if category else None,
         "image_url": _primary_image_url(product),
+        # product.stock is already the sum across variants for variant products.
         "in_stock": product.stock > 0,
         "is_featured": product.is_featured,
         "stock": product.stock,
+        "has_variants": product.has_variants,
+        "option_values": _option_values(product),
         "created_at": _epoch(product.created_at),
     }
 

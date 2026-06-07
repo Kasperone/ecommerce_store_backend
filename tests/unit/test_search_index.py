@@ -97,6 +97,65 @@ def test_build_product_document_minimal(db_session, product_factory):
     assert doc["category_name_pl"] is None
     assert doc["image_url"] is None
     assert doc["in_stock"] is False
+    # Variantless product: prices are the product columns, no option values.
+    assert doc["has_variants"] is False
+    assert doc["option_values"] == []
+    assert doc["price_usd"] == product.price_usd
+
+
+def _add_variant(db_session, product, *, value, value_pl=None, **overrides):
+    """Materialise a one-option variant row directly (no matrix machinery)."""
+    from app.models.product_variant import ProductOption, ProductOptionValue, ProductVariant
+
+    option = next((o for o in product.options if o.name == "Color"), None)
+    if option is None:
+        option = ProductOption(name="Color", position=0)
+        product.options.append(option)
+    option_value = ProductOptionValue(value=value, value_pl=value_pl, position=len(option.values))
+    option.values.append(option_value)
+    db_session.flush()
+    defaults = {
+        "product_id": product.id,
+        "title": value,
+        "option_signature": str(option_value.id),
+        "stock": 0,
+        "is_active": True,
+    }
+    defaults.update(overrides)
+    variant = ProductVariant(**defaults)
+    variant.option_values = [option_value]
+    db_session.add(variant)
+    db_session.flush()
+    return variant
+
+
+def test_build_product_document_variant_min_price_and_option_values(db_session, product_factory):
+    """Variant product: prices become the min across active variants
+    (inherit-aware), has_variants flips, option values flatten EN+PL."""
+    product = product_factory(stock=0, price_usd=20.0, price_pln=80.0, price_eur=18.0)
+    _add_variant(db_session, product, value="Red", value_pl="Czerwony", price_usd=15.0)
+    # Inherits USD (20.0) — min stays 15.0; PLN override 70.0 becomes the min.
+    _add_variant(db_session, product, value="Blue", value_pl="Niebieski", price_pln=70.0)
+    # Inactive variants don't contribute to price or visibility.
+    _add_variant(db_session, product, value="Green", price_usd=1.0, is_active=False)
+    db_session.commit()
+    db_session.refresh(product)
+
+    doc = search_index.build_product_document(product)
+
+    assert doc["has_variants"] is True
+    assert doc["price_usd"] == 15.0  # min(15.0 override, 20.0 inherited)
+    assert doc["price_pln"] == 70.0  # min(80.0 inherited, 70.0 override)
+    assert doc["price_eur"] == 18.0  # both inherit
+    # All defined values flatten (EN + PL where present), inactive variants'
+    # values included — they are catalog vocabulary, not offers.
+    assert doc["option_values"] == [
+        "Red",
+        "Czerwony",
+        "Blue",
+        "Niebieski",
+        "Green",
+    ]
 
 
 def test_build_category_document(db_session, category_factory):

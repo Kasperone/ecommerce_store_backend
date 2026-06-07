@@ -51,6 +51,11 @@ class InventoryMovement(BaseModel):
     warehouse_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("warehouses.id", ondelete="SET NULL"), index=True
     )
+    # SET NULL — the ledger survives variant deletion, same posture as the
+    # other parent FKs above/below.
+    variant_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("product_variants.id", ondelete="SET NULL"), index=True
+    )
     delta: Mapped[int] = mapped_column(Integer)
     resulting_stock: Mapped[int] = mapped_column(Integer)
     reason: Mapped[str] = mapped_column(String(32))
