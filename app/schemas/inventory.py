@@ -40,11 +40,14 @@ class StockAdjustRequest(BaseSchema):
 
     ``new_stock`` is the absolute target for ``warehouse_id``; the route computes
     ``delta = new_stock - <that warehouse's level>`` and rejects a no-op (delta 0).
-    ``note`` is a free-text explanation stored on the ledger row (the movement
+    ``variant_id`` is required when the product has variants (and rejected when
+    it doesn't) — variant products track stock at variant grain only. ``note``
+    is a free-text explanation stored on the ledger row (the movement
     ``reason`` is always ``manual_adjustment``).
     """
 
     warehouse_id: int
+    variant_id: int | None = None
     new_stock: Annotated[int, Field(ge=0)]
     note: Annotated[str | None, Field(max_length=255)] = None
 
@@ -52,9 +55,12 @@ class StockAdjustRequest(BaseSchema):
 class RestockRequest(BaseSchema):
     """Record incoming stock into a warehouse (a purchase-order / supplier receipt).
 
-    Adds ``quantity`` units to ``warehouse_id`` as a ``restock`` movement."""
+    Adds ``quantity`` units to ``warehouse_id`` as a ``restock`` movement.
+    ``variant_id`` is required when the product has variants (and rejected when
+    it doesn't)."""
 
     warehouse_id: int
+    variant_id: int | None = None
     quantity: Annotated[int, Field(ge=1)]
     note: Annotated[str | None, Field(max_length=255)] = None
 
@@ -64,9 +70,11 @@ class TransferRequest(BaseSchema):
 
     Writes a paired ``transfer_out`` / ``transfer_in`` movement; the product total
     is unchanged. The source must hold at least ``quantity`` (no backorder on a
-    transfer)."""
+    transfer). ``variant_id`` is required when the product has variants (and
+    rejected when it doesn't)."""
 
     product_id: int
+    variant_id: int | None = None
     from_warehouse_id: int
     to_warehouse_id: int
     quantity: Annotated[int, Field(ge=1)]
@@ -87,12 +95,16 @@ class TransferResponse(BaseSchema):
 class StockLevelItem(BaseSchema):
     """One per-warehouse stock level for a product (the breakdown view).
 
-    A product's default warehouse always appears (synthesised from unallocated
-    stock when no level row has been materialised yet)."""
+    For a variantless product, one row per warehouse (the default synthesised
+    from unallocated stock when no level row has been materialised yet). For a
+    variant product the breakdown is per (warehouse, variant) — ``variant_id``
+    + ``variant_title`` identify the grain (both null at product grain)."""
 
     warehouse_id: int
     warehouse_code: str
     warehouse_name: str
+    variant_id: int | None = None
+    variant_title: str | None = None
     quantity: int
     is_default: bool
 
@@ -104,6 +116,7 @@ class InventoryMovementItem(TimestampSchema):
     product_name: str
     warehouse_id: int | None = None
     warehouse_name: str | None = None
+    variant_id: int | None = None
     delta: int
     resulting_stock: int
     reason: str

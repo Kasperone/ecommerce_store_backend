@@ -150,6 +150,9 @@ async def get_lowest_30d(
     currency: Literal["USD", "PLN", "EUR"] = Query(
         ..., description="Currency to scope the lookup to"
     ),
+    variant_id: int | None = Query(
+        None, description="Scope the lookup to one variant's own price trail"
+    ),
     db: Session = Depends(get_db),
 ):
     """
@@ -157,15 +160,22 @@ async def get_lowest_30d(
     ``currency`` over the last 30 days.
 
     Public + unauthenticated: the answer is what the storefront PDP needs to
-    legally show next to a reduced price. Returns ``lowest_price = null`` +
-    ``since = null`` when no history exists for that (product, currency) — the
-    storefront then renders no comparison line.
+    legally show next to a reduced price. ``variant_id`` scopes the lookup to
+    that variant's own per-offer trail (Omnibus is per-offer); omitted, the
+    product-grain trail answers — today's behavior. Returns
+    ``lowest_price = null`` + ``since = null`` when no history exists for that
+    (product[, variant], currency) — the storefront then renders no comparison
+    line.
     """
     product = crud_product.get(db, id=product_id)
     if product is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+    if variant_id is not None and not any(variant.id == variant_id for variant in product.variants):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
 
-    result = crud_price_history.lowest_in_last_30_days(db, product_id=product.id, currency=currency)
+    result = crud_price_history.lowest_in_last_30_days(
+        db, product_id=product.id, currency=currency, variant_id=variant_id
+    )
     if result is None:
         return LowestPriceResponse(currency=currency, lowest_price=None, since=None)
     lowest, since = result

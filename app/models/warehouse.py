@@ -7,6 +7,7 @@ from app.models.base import BaseModel
 
 if TYPE_CHECKING:
     from app.models.product import Product
+    from app.models.product_variant import ProductVariant
 
 
 class Warehouse(BaseModel):
@@ -52,14 +53,23 @@ class StockLevel(BaseModel):
 
     ``Product.stock`` is the denormalized total across these rows. Created lazily
     on the first movement into a (product, warehouse) pair via
-    ``crud_inventory.apply_delta``. The unique constraint guarantees one row per
-    pair; the warehouse FK is RESTRICT so a warehouse holding stock can't be
-    hard-deleted (admins deactivate instead).
+    ``crud_inventory.apply_delta``. ``variant_id`` is NULL for product-grain
+    rows (variantless products) and set for variant-grain rows; the unique
+    constraint uses PG16's NULLS NOT DISTINCT so two NULL-variant rows for the
+    same (product, warehouse) collide like any other duplicate. The warehouse
+    FK is RESTRICT so a warehouse holding stock can't be hard-deleted (admins
+    deactivate instead).
     """
 
     __tablename__ = "stock_levels"
     __table_args__ = (
-        UniqueConstraint("product_id", "warehouse_id", name="uq_stock_levels_product_warehouse"),
+        UniqueConstraint(
+            "product_id",
+            "warehouse_id",
+            "variant_id",
+            name="uq_stock_levels_product_warehouse_variant",
+            postgresql_nulls_not_distinct=True,
+        ),
     )
 
     product_id: Mapped[int] = mapped_column(
@@ -68,10 +78,18 @@ class StockLevel(BaseModel):
     warehouse_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("warehouses.id", ondelete="RESTRICT"), index=True
     )
+    variant_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("product_variants.id", ondelete="CASCADE"), index=True
+    )
     quantity: Mapped[int] = mapped_column(Integer, default=0)
 
     product: Mapped["Product"] = relationship("Product", back_populates="stock_levels")
     warehouse: Mapped["Warehouse"] = relationship("Warehouse", back_populates="stock_levels")
+    variant: Mapped["ProductVariant | None"] = relationship("ProductVariant")
 
     def __repr__(self) -> str:
-        return f"<StockLevel product#{self.product_id} wh#{self.warehouse_id} = {self.quantity}>"
+        variant = f" variant#{self.variant_id}" if self.variant_id is not None else ""
+        return (
+            f"<StockLevel product#{self.product_id} wh#{self.warehouse_id}"
+            f"{variant} = {self.quantity}>"
+        )
