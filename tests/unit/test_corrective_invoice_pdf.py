@@ -244,3 +244,31 @@ def test_difference_columns_sum_correctly(db_session, user_factory, product_fact
     # We can't directly read the columns from raw PDF bytes without pdftotext,
     # so we just assert the PDF was built (no division-by-zero on vat=0).
     assert pdf.startswith(b"%PDF-")
+
+
+def test_build_corrective_invoice_pdf_variant_line(db_session, user_factory, product_factory):
+    """The KOR item table shares the variant-aware line label — a variant
+    line must render without crashing in both locales."""
+    user = user_factory()
+    product = product_factory(stock=2, price_usd=24.59)
+    order = _make_order_with_user(db_session, user, product)
+    order.items[0].variant_title = "Czerwony / XL"
+    refund = Refund(
+        order_id=order.id,
+        amount=order.total,
+        currency=order.currency,
+        reason=RefundReason.CUSTOMER_REQUEST.value,
+        restock=False,
+    )
+    for lang in ("en", "pl"):
+        pdf = build_corrective_invoice_pdf(
+            refund,
+            order=order,
+            store=StoreIdentity(name="E-shop", vat_rate=23),
+            kor_number="KOR/2026/00777",
+            issued_at=dt.date(2026, 6, 8),
+            original_invoice_number="FV/2026/00777",
+            original_issued_at=dt.date(2026, 6, 1),
+            lang=lang,
+        )
+        assert pdf.startswith(b"%PDF-")

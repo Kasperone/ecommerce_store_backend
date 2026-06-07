@@ -429,3 +429,266 @@ def test_delete_cascades_items(db_session: Session, company_factory):
     db_session.commit()
     assert db_session.get(Quote, qid) is None
     assert db_session.query(QuoteItem).filter(QuoteItem.id.in_(item_ids)).all() == []
+
+
+# ---------------------------------------------------------------------------
+# Variant lines (PR-B2) — request_from_cart + convert_to_order
+# ---------------------------------------------------------------------------
+
+
+def _add_variants(db_session: Session, product, *, stocks=(4, 6), price_usd=(None, None)):
+    """Author a one-option (Red|Blue) matrix on ``product`` (unit-test twin)."""
+    from app.crud import product_variant as crud_product_variant
+    from app.schemas.product_variant import ProductOptionsMatrixUpdate
+
+    matrix = ProductOptionsMatrixUpdate.model_validate(
+        {
+            "options": [
+                {
+                    "name": "Color",
+                    "position": 0,
+                    "values": [
+                        {"value": "Red", "position": 0},
+                        {"value": "Blue", "position": 1},
+                    ],
+                }
+            ],
+            "variants": [
+                {
+                    "option_values": ["Red"],
+                    "sku": f"VQ-RED-{product.id}",
+                    "initial_stock": stocks[0],
+                    "price_usd": price_usd[0],
+                    "position": 0,
+                },
+                {
+                    "option_values": ["Blue"],
+                    "sku": f"VQ-BLUE-{product.id}",
+                    "initial_stock": stocks[1],
+                    "price_usd": price_usd[1],
+                    "position": 1,
+                },
+            ],
+        }
+    )
+    crud_product_variant.apply_matrix(db_session, product=product, matrix=matrix)
+    db_session.commit()
+    db_session.refresh(product)
+    return crud_product_variant.get_for_product(db_session, product_id=product.id)
+
+
+def _request_in(items: list[tuple[int, int | None, int]], **overrides):
+    """Build a ``QuoteRequestCreate`` from ``(product_id, variant_id, qty)`` tuples."""
+    from app.schemas.quote import QuoteRequestCreate, QuoteRequestItem
+
+    base = {
+        "currency": "USD",
+        "items": [
+            QuoteRequestItem(product_id=pid, variant_id=vid, quantity=qty)
+            for pid, vid, qty in items
+        ],
+    }
+    base.update(overrides)
+    return QuoteRequestCreate(**base)
+
+
+def test_request_from_cart_variant_line_prices_and_describes_from_variant(
+    db_session: Session, company_factory, user_factory, product_factory
+):
+    requester = user_factory(email="var-req@example.com")
+    company = company_factory(primary_user_id=requester.id)
+    product = product_factory(stock=0, name="VarWidget", price_usd=20.0)
+    red, blue = _add_variants(db_session, product, price_usd=(25.0, None))
+
+    quote = crud_quote.request_from_cart(
+        db_session,
+        obj_in=_request_in([(product.id, red.id, 2), (product.id, blue.id, 1)]),
+        company_id=company.id,
+        requested_by_user_id=requester.id,
+    )
+    db_session.commit()
+
+    red_line, blue_line = quote.items
+    # Variant price override; description carries the variant title.
+    assert red_line.unit_price == 25.0
+    assert red_line.description == "VarWidget — Red"
+    assert red_line.variant_id == red.id
+    # NULL variant price inherits the product's.
+    assert blue_line.unit_price == 20.0
+    assert blue_line.description == "VarWidget — Blue"
+    assert blue_line.variant_id == blue.id
+    assert quote.subtotal == 70.0
+
+
+def test_request_from_cart_variant_required_422(
+    db_session: Session, company_factory, user_factory, product_factory
+):
+    from app.crud.quote import QuoteRequestError
+
+    requester = user_factory(email="var-req2@example.com")
+    company = company_factory(primary_user_id=requester.id)
+    product = product_factory(stock=0, price_usd=20.0)
+    _add_variants(db_session, product)
+
+    with pytest.raises(QuoteRequestError) as exc:
+        crud_quote.request_from_cart(
+            db_session,
+            obj_in=_request_in([(product.id, None, 1)]),
+            company_id=company.id,
+            requested_by_user_id=requester.id,
+        )
+    assert exc.value.reason == "variant_required"
+    assert exc.value.status_code == 422
+
+
+def test_request_from_cart_variant_unavailable_422(
+    db_session: Session, company_factory, user_factory, product_factory
+):
+    from app.crud import product_variant as crud_product_variant
+    from app.crud.quote import QuoteRequestError
+    from app.schemas.product_variant import ProductVariantUpdate
+
+    requester = user_factory(email="var-req3@example.com")
+    company = company_factory(primary_user_id=requester.id)
+    product = product_factory(stock=0, price_usd=20.0)
+    red, _blue = _add_variants(db_session, product)
+    crud_product_variant.update_variant(
+        db_session, variant=red, obj_in=ProductVariantUpdate(is_active=False)
+    )
+    db_session.commit()
+
+    with pytest.raises(QuoteRequestError) as exc:
+        crud_quote.request_from_cart(
+            db_session,
+            obj_in=_request_in([(product.id, red.id, 1)]),
+            company_id=company.id,
+            requested_by_user_id=requester.id,
+        )
+    assert exc.value.reason == "variant_unavailable"
+    assert exc.value.status_code == 422
+
+
+def _accepted_variant_quote(
+    db_session: Session, *, company_id: int, product, variant, quantity: int = 2
+) -> Quote:
+    """An accepted quote with one variant-backed line at the quoted price 12.0."""
+    q = crud_quote.create_with_items(
+        db_session,
+        obj_in=_create_in(
+            company_id,
+            items=[
+                QuoteItemCreate(
+                    description=f"{product.name} — {variant.title}",
+                    quantity=quantity,
+                    unit_price=12.0,
+                    product_id=product.id,
+                    variant_id=variant.id,
+                )
+            ],
+        ),
+    )
+    crud_quote.update(db_session, quote=q, obj_in=QuoteUpdate(status="accepted"))
+    db_session.commit()
+    reloaded = crud_quote.get(db_session, q.id)
+    assert reloaded is not None
+    return reloaded
+
+
+def test_convert_variant_line_decrements_variant_grain_and_snapshots(
+    db_session: Session, company_factory, user_factory, product_factory
+):
+    actor = user_factory(email="var-actor@example.com")
+    contact = user_factory(email="var-contact@example.com")
+    company = company_factory(primary_user_id=contact.id)
+    product = product_factory(stock=0, name="VarConv", price_usd=20.0)
+    red, _blue = _add_variants(db_session, product)
+    quote = _accepted_variant_quote(
+        db_session, company_id=company.id, product=product, variant=red, quantity=3
+    )
+
+    order = crud_quote.convert_to_order(db_session, quote=quote, actor_user_id=actor.id)
+    db_session.commit()
+
+    line = order.items[0]
+    assert line.variant_id == red.id
+    assert line.variant_title == "Red"
+    assert line.product_sku == f"VQ-RED-{product.id}"
+    assert line.unit_price == 12.0  # quoted price honoured — NOT re-priced
+
+    db_session.refresh(red)
+    db_session.refresh(product)
+    assert red.stock == 1
+    assert product.stock == 7
+    movement = (
+        db_session.query(InventoryMovement)
+        .filter_by(order_id=order.id, reason="order_placed")
+        .one()
+    )
+    assert movement.variant_id == red.id
+    assert movement.delta == -3
+
+
+def test_convert_deleted_variant_line_raises_variant_unavailable(
+    db_session: Session, company_factory, user_factory, product_factory
+):
+    """§7 risk 9: a quote line whose variant was deleted (SET NULL) on a
+    product that still has active variants must fail conversion — never
+    silently convert at product grain."""
+    from app.crud import product_variant as crud_product_variant
+
+    contact = user_factory(email="var-contact2@example.com")
+    company = company_factory(primary_user_id=contact.id)
+    product = product_factory(stock=0, price_usd=20.0)
+    red, _blue = _add_variants(db_session, product)
+    quote = _accepted_variant_quote(db_session, company_id=company.id, product=product, variant=red)
+
+    crud_product_variant.delete_variant(db_session, product=product, variant=red)
+    db_session.commit()
+    quote = crud_quote.get(db_session, quote.id)
+    assert quote is not None
+    assert quote.items[0].variant_id is None  # SET NULL fired
+
+    with pytest.raises(QuoteNotConvertibleError) as exc:
+        crud_quote.convert_to_order(db_session, quote=quote, actor_user_id=contact.id)
+    assert exc.value.reason == "variant_unavailable"
+    assert exc.value.status_code == 422
+
+
+def test_convert_inactive_variant_line_raises_variant_unavailable(
+    db_session: Session, company_factory, user_factory, product_factory
+):
+    from app.crud import product_variant as crud_product_variant
+    from app.schemas.product_variant import ProductVariantUpdate
+
+    contact = user_factory(email="var-contact3@example.com")
+    company = company_factory(primary_user_id=contact.id)
+    product = product_factory(stock=0, price_usd=20.0)
+    red, _blue = _add_variants(db_session, product)
+    quote = _accepted_variant_quote(db_session, company_id=company.id, product=product, variant=red)
+
+    crud_product_variant.update_variant(
+        db_session, variant=red, obj_in=ProductVariantUpdate(is_active=False)
+    )
+    db_session.commit()
+    quote = crud_quote.get(db_session, quote.id)
+    assert quote is not None
+
+    with pytest.raises(QuoteNotConvertibleError) as exc:
+        crud_quote.convert_to_order(db_session, quote=quote, actor_user_id=contact.id)
+    assert exc.value.reason == "variant_unavailable"
+
+
+def test_convert_variant_insufficient_stock_raises(
+    db_session: Session, company_factory, user_factory, product_factory
+):
+    contact = user_factory(email="var-contact4@example.com")
+    company = company_factory(primary_user_id=contact.id)
+    product = product_factory(stock=0, price_usd=20.0)
+    red, _blue = _add_variants(db_session, product, stocks=(1, 6))
+    quote = _accepted_variant_quote(
+        db_session, company_id=company.id, product=product, variant=red, quantity=3
+    )
+
+    with pytest.raises(InsufficientStockError) as exc:
+        crud_quote.convert_to_order(db_session, quote=quote, actor_user_id=contact.id)
+    assert exc.value.available == 1

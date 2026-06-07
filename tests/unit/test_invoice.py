@@ -176,3 +176,24 @@ def test_build_pdf_proforma_mode_en_and_pl():
             order, store=STORE, invoice_number=ref, issued_at=ISSUED, is_proforma=True, lang=lang
         )
         assert pdf[:4] == b"%PDF"
+
+
+def test_build_pdf_variant_line_appends_title():
+    """A variant line renders ``name — variant_title`` (and must not crash on
+    the markup-escaped path)."""
+    order = _order(_person_user())
+    order.items.append(
+        OrderItem(
+            product_name="Koszulka <Premium>",
+            variant_title="Czerwony / XL",
+            product_sku="TS-RED-XL",
+            quantity=1,
+            unit_price=49.99,
+            total_price=49.99,
+        )
+    )
+    for lang in ("en", "pl"):
+        pdf = build_invoice_pdf(
+            order, store=STORE, invoice_number=NUMBER, issued_at=ISSUED, lang=lang
+        )
+        assert pdf[:4] == b"%PDF"

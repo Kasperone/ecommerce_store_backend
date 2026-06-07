@@ -17,6 +17,7 @@ from app.crud.order import (
 )
 from app.models.inventory_movement import InventoryMovement
 from app.models.order import OrderStatus
+from app.models.product import Product
 from app.models.user import UserRole
 from app.schemas.order import OrderCreate, OrderItemCreate
 
@@ -447,3 +448,439 @@ def test_multi_scoped_and_count_filter(
     db_session.flush()
     assert crud_order.count_scoped(db_session, user=admin, status=OrderStatus.CANCELLED) == 1
     assert crud_order.count_scoped(db_session, user=admin, status=OrderStatus.PENDING) == 1
+
+
+# ---------------------------------------------------------------------------
+# Variant lines (PR-B2) — create / cancel / FK-ordering
+# ---------------------------------------------------------------------------
+
+
+def _add_variants(db_session, product, *, stocks=(4, 6), price_usd=(None, None)):
+    """Author a one-option (Red|Blue) variant matrix on ``product``.
+
+    Returns the two variants in position order. ``price_usd=None`` keeps the
+    inherit-from-product behavior; stocks are seeded through the ledger.
+    """
+    from app.crud import product_variant as crud_product_variant
+    from app.schemas.product_variant import ProductOptionsMatrixUpdate
+
+    matrix = ProductOptionsMatrixUpdate.model_validate(
+        {
+            "options": [
+                {
+                    "name": "Color",
+                    "position": 0,
+                    "values": [
+                        {"value": "Red", "position": 0},
+                        {"value": "Blue", "position": 1},
+                    ],
+                }
+            ],
+            "variants": [
+                {
+                    "option_values": ["Red"],
+                    "sku": f"VO-RED-{product.id}",
+                    "initial_stock": stocks[0],
+                    "price_usd": price_usd[0],
+                    "position": 0,
+                },
+                {
+                    "option_values": ["Blue"],
+                    "sku": f"VO-BLUE-{product.id}",
+                    "initial_stock": stocks[1],
+                    "price_usd": price_usd[1],
+                    "position": 1,
+                },
+            ],
+        }
+    )
+    crud_product_variant.apply_matrix(db_session, product=product, matrix=matrix)
+    db_session.commit()
+    db_session.refresh(product)
+    return crud_product_variant.get_for_product(db_session, product_id=product.id)
+
+
+def _variant_order_in(
+    items: list[tuple[int, int | None, int]],
+    *,
+    shipping_method_id: int,
+    currency: str = "USD",
+) -> OrderCreate:
+    """Build an OrderCreate from ``(product_id, variant_id, quantity)`` tuples."""
+    return OrderCreate(
+        items=[
+            OrderItemCreate(product_id=pid, variant_id=vid, quantity=qty) for pid, vid, qty in items
+        ],
+        currency=currency,
+        shipping_address="1 Test St",
+        shipping_city="Testville",
+        shipping_postal_code="00-001",
+        shipping_country="PL",
+        shipping_method_id=shipping_method_id,
+    )
+
+
+def test_create_variant_line_snapshots_and_decrements_at_variant_grain(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
+    user = user_factory()
+    product = product_factory(stock=0, price_usd=20.0)
+    red, blue = _add_variants(db_session, product, price_usd=(25.0, None))
+
+    order = crud_order.create_with_items(
+        db_session,
+        user_id=user.id,
+        obj_in=_variant_order_in(
+            [(product.id, red.id, 2)], shipping_method_id=test_shipping_method_id
+        ),
+    )
+
+    # Snapshot carries the variant ref + title + the VARIANT sku.
+    line = order.items[0]
+    assert line.variant_id == red.id
+    assert line.variant_title == "Red"
+    assert line.product_sku == f"VO-RED-{product.id}"
+    assert line.product_name == product.name
+    # Variant price override used (not the product's 20.0).
+    assert line.unit_price == 25.0
+    assert order.subtotal == 50.0
+
+    # All three aggregates moved in lock-step at variant grain.
+    db_session.refresh(product)
+    db_session.refresh(red)
+    db_session.refresh(blue)
+    assert red.stock == 2
+    assert blue.stock == 6  # untouched
+    assert product.stock == 8
+
+    movements = db_session.query(InventoryMovement).filter_by(order_id=order.id).all()
+    assert len(movements) == 1
+    assert movements[0].variant_id == red.id
+    assert movements[0].delta == -2
+    assert movements[0].resulting_stock == 2
+
+
+def test_create_variant_line_inherits_product_price_on_null(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
+    user = user_factory()
+    product = product_factory(stock=0, price_usd=20.0, price_pln=80.0)
+    red, _blue = _add_variants(db_session, product)  # full-NULL prices
+
+    order = crud_order.create_with_items(
+        db_session,
+        user_id=user.id,
+        obj_in=_variant_order_in(
+            [(product.id, red.id, 1)],
+            shipping_method_id=test_shipping_method_id,
+            currency="PLN",
+        ),
+    )
+
+    assert order.items[0].unit_price == 80.0
+    assert order.total == 80.0
+
+
+def test_create_variant_line_falls_back_to_product_sku_when_variant_sku_null(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
+    from app.crud import product_variant as crud_product_variant
+    from app.schemas.product_variant import ProductVariantUpdate
+
+    user = user_factory()
+    product = product_factory(stock=0, price_usd=20.0)
+    red, _blue = _add_variants(db_session, product)
+    crud_product_variant.update_variant(
+        db_session, variant=red, obj_in=ProductVariantUpdate(sku=None)
+    )
+    db_session.commit()
+
+    order = crud_order.create_with_items(
+        db_session,
+        user_id=user.id,
+        obj_in=_variant_order_in(
+            [(product.id, red.id, 1)], shipping_method_id=test_shipping_method_id
+        ),
+    )
+    assert order.items[0].product_sku == product.sku
+
+
+def test_create_requires_variant_for_variant_product(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
+    from app.crud.order import VariantRequiredError
+
+    user = user_factory()
+    product = product_factory(stock=0, price_usd=20.0)
+    _add_variants(db_session, product)
+
+    with pytest.raises(VariantRequiredError) as exc:
+        crud_order.create_with_items(
+            db_session,
+            user_id=user.id,
+            obj_in=_order_in([(product.id, 1)], shipping_method_id=test_shipping_method_id),
+        )
+    assert exc.value.product_id == product.id
+
+
+def test_create_plain_line_ok_when_all_variants_inactive(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
+    """A product whose variants are ALL inactive behaves variantless at
+    order time (``has_variants`` derives from *active* rows)."""
+    from app.crud import product_variant as crud_product_variant
+    from app.schemas.product_variant import ProductVariantUpdate
+
+    user = user_factory()
+    product = product_factory(stock=0, price_usd=20.0, allow_backorder=True)
+    for variant in _add_variants(db_session, product, stocks=(0, 0)):
+        crud_product_variant.update_variant(
+            db_session, variant=variant, obj_in=ProductVariantUpdate(is_active=False)
+        )
+    db_session.commit()
+
+    order = crud_order.create_with_items(
+        db_session,
+        user_id=user.id,
+        obj_in=_order_in([(product.id, 1)], shipping_method_id=test_shipping_method_id),
+    )
+    assert order.items[0].variant_id is None
+    assert order.items[0].variant_title is None
+
+
+@pytest.mark.parametrize("case", ["missing", "inactive", "foreign"])
+def test_create_rejects_unavailable_variant(
+    db_session, user_factory, product_factory, test_shipping_method_id, case
+):
+    from app.crud import product_variant as crud_product_variant
+    from app.crud.order import VariantUnavailableError
+    from app.schemas.product_variant import ProductVariantUpdate
+
+    user = user_factory()
+    product = product_factory(stock=0, price_usd=20.0)
+    red, _blue = _add_variants(db_session, product)
+
+    if case == "missing":
+        variant_id = 999_999
+    elif case == "inactive":
+        crud_product_variant.update_variant(
+            db_session, variant=red, obj_in=ProductVariantUpdate(is_active=False)
+        )
+        db_session.commit()
+        variant_id = red.id
+    else:  # foreign — another product's variant
+        other = product_factory(stock=0, price_usd=10.0)
+        other_red, _ = _add_variants(db_session, other)
+        variant_id = other_red.id
+
+    with pytest.raises(VariantUnavailableError) as exc:
+        crud_order.create_with_items(
+            db_session,
+            user_id=user.id,
+            obj_in=_variant_order_in(
+                [(product.id, variant_id, 1)], shipping_method_id=test_shipping_method_id
+            ),
+        )
+    assert exc.value.variant_id == variant_id
+
+
+def test_create_duplicate_variant_lines_check_running_remainder(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
+    """Duplicate (product, variant) lines validate against the running
+    remainder; distinct variants of the same product do not interfere."""
+    user = user_factory()
+    product = product_factory(stock=0, price_usd=20.0)
+    red, blue = _add_variants(db_session, product, stocks=(3, 5))
+
+    # 2 + 2 = 4 > red's 3 — second line sees the decremented remainder.
+    with pytest.raises(InsufficientStockError):
+        crud_order.create_with_items(
+            db_session,
+            user_id=user.id,
+            obj_in=_variant_order_in(
+                [(product.id, red.id, 2), (product.id, red.id, 2)],
+                shipping_method_id=test_shipping_method_id,
+            ),
+        )
+
+    # Red 3 + Blue 5 across distinct variants fits even though either alone
+    # exceeds the other's level.
+    order = crud_order.create_with_items(
+        db_session,
+        user_id=user.id,
+        obj_in=_variant_order_in(
+            [(product.id, red.id, 3), (product.id, blue.id, 5)],
+            shipping_method_id=test_shipping_method_id,
+        ),
+    )
+    db_session.refresh(product)
+    assert product.stock == 0
+    movements = db_session.query(InventoryMovement).filter_by(order_id=order.id).all()
+    assert {(m.variant_id, m.delta) for m in movements} == {(red.id, -3), (blue.id, -5)}
+
+
+def test_create_variant_with_unmaterialised_level_reads_zero(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
+    """§7 risk 3: a variant whose level was never materialised (no initial
+    stock seed) reads 0 — no unallocated synthesis at variant grain."""
+    user = user_factory()
+    # Product row carries stock the variant never claimed — the variant-grain
+    # check must NOT see it.
+    product = product_factory(stock=50, price_usd=20.0)
+    red, _blue = _add_variants(db_session, product, stocks=(0, 0))
+
+    with pytest.raises(InsufficientStockError) as exc:
+        crud_order.create_with_items(
+            db_session,
+            user_id=user.id,
+            obj_in=_variant_order_in(
+                [(product.id, red.id, 1)], shipping_method_id=test_shipping_method_id
+            ),
+        )
+    assert exc.value.available == 0
+
+
+def test_cancel_restores_stock_at_variant_grain(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
+    user = user_factory()
+    product = product_factory(stock=0, price_usd=20.0)
+    red, _blue = _add_variants(db_session, product)
+
+    order = crud_order.create_with_items(
+        db_session,
+        user_id=user.id,
+        obj_in=_variant_order_in(
+            [(product.id, red.id, 3)], shipping_method_id=test_shipping_method_id
+        ),
+    )
+    db_session.refresh(red)
+    assert red.stock == 1
+
+    crud_order.cancel(db_session, order=order)
+    db_session.flush()
+
+    db_session.refresh(red)
+    db_session.refresh(product)
+    assert red.stock == 4
+    assert product.stock == 10
+    restore = (
+        db_session.query(InventoryMovement)
+        .filter_by(order_id=order.id, reason="order_cancelled")
+        .one()
+    )
+    assert restore.variant_id == red.id
+    assert restore.delta == 3
+    assert restore.note is None
+
+
+def test_cancel_deleted_variant_restores_at_product_grain_with_note(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
+    from app.crud import product_variant as crud_product_variant
+
+    user = user_factory()
+    product = product_factory(stock=0, price_usd=20.0)
+    red, _blue = _add_variants(db_session, product)
+
+    order = crud_order.create_with_items(
+        db_session,
+        user_id=user.id,
+        obj_in=_variant_order_in(
+            [(product.id, red.id, 2)], shipping_method_id=test_shipping_method_id
+        ),
+    )
+    db_session.flush()
+
+    # Delete the variant — order_items.variant_id is SET NULL, the title
+    # snapshot survives.
+    crud_product_variant.delete_variant(db_session, product=product, variant=red)
+    db_session.commit()
+    db_session.refresh(order)
+    line = order.items[0]
+    assert line.variant_id is None
+    assert line.variant_title == "Red"
+
+    db_session.refresh(product)
+    stock_before = product.stock
+
+    crud_order.cancel(db_session, order=order)
+    db_session.flush()
+    db_session.refresh(product)
+
+    # Restored at PRODUCT grain (variant_id NULL on the movement) with a note.
+    assert product.stock == stock_before + 2
+    restore = (
+        db_session.query(InventoryMovement)
+        .filter_by(order_id=order.id, reason="order_cancelled")
+        .one()
+    )
+    assert restore.variant_id is None
+    assert restore.note is not None
+    assert "Red" in restore.note
+
+
+def test_product_delete_cascades_variants_and_levels(db_session, product_factory):
+    """§7 risk 11 (no-orders case): deleting a variant product CASCADEs its
+    options, variants and their stock levels without FK-ordering errors."""
+    from app.models.product_variant import ProductOption, ProductVariant
+    from app.models.warehouse import StockLevel
+
+    product = product_factory(stock=0)
+    _add_variants(db_session, product)
+    product_id = product.id
+
+    db_session.delete(product)
+    db_session.commit()
+
+    assert db_session.query(ProductVariant).filter_by(product_id=product_id).count() == 0
+    assert db_session.query(ProductOption).filter_by(product_id=product_id).count() == 0
+    assert db_session.query(StockLevel).filter_by(product_id=product_id).count() == 0
+
+
+def test_variant_delete_set_nulls_order_item_ref_keeps_snapshot(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
+    """§7 risk 11 (ordered case): order_items.product_id is a plain NO-ACTION
+    FK, so an *ordered* product is not deletable (unchanged, pre-variants
+    behavior) — the SET-NULL ordering that matters fires on VARIANT deletion:
+    the line keeps its snapshots while the ref nulls out."""
+    import sqlalchemy.exc
+
+    from app.crud import product_variant as crud_product_variant
+    from app.models.order import OrderItem
+
+    user = user_factory()
+    product = product_factory(stock=0, price_usd=20.0)
+    red, _blue = _add_variants(db_session, product)
+    order = crud_order.create_with_items(
+        db_session,
+        user_id=user.id,
+        obj_in=_variant_order_in(
+            [(product.id, red.id, 1)], shipping_method_id=test_shipping_method_id
+        ),
+    )
+    db_session.commit()
+
+    # The ordered product itself stays undeletable (order_items.product_id FK).
+    db_session.delete(product)
+    with pytest.raises(sqlalchemy.exc.IntegrityError):
+        db_session.commit()
+    db_session.rollback()
+
+    # Deleting just the variant SET-NULLs the line ref; snapshots survive.
+    product = db_session.get(Product, order.items[0].product_id)
+    assert product is not None
+    line_variant_id = order.items[0].variant_id
+    assert line_variant_id is not None
+    red = crud_product_variant.get(db_session, product_id=product.id, variant_id=line_variant_id)
+    assert red is not None
+    crud_product_variant.delete_variant(db_session, product=product, variant=red)
+    db_session.commit()
+
+    line = db_session.query(OrderItem).filter_by(order_id=order.id).one()
+    assert line.variant_id is None
+    assert line.variant_title == "Red"
+    assert line.product_sku == f"VO-RED-{product.id}"
