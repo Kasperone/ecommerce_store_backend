@@ -5,12 +5,15 @@ All routes are admin-gated and audited (resource_type ``coupon``). This is
 read-only; applying a coupon to an order total is a separate, shared concern.
 
 Validation: ``code`` is unique (stored UPPERCASE → 409 on duplicate); ``value``
-is 1-100 for ``percent`` / ``> 0`` for ``fixed``; ``currency`` is required for
-``fixed`` and forbidden for ``percent``; ``ends_at`` must be after ``starts_at``.
+is 1-100 for ``percent`` / ``> 0`` for ``fixed`` / exactly 0 for
+``free_shipping``; ``currency`` is required for ``fixed`` and forbidden for
+``percent`` and ``free_shipping``; ``ends_at`` must be after ``starts_at``.
 The CREATE body validates itself (CouponCreate's ``model_validator``). PATCH
 re-checks the per-type value/currency rule and the date window against the
 **merged** state, because a partial update may flip one half of a pair (422 on a
-conflict — mirrors the categories/inventory route convention).
+conflict — mirrors the categories/inventory route convention). In particular,
+flipping an existing fixed coupon to ``free_shipping`` must explicitly zero
+``value`` and null ``currency`` in the same PATCH.
 """
 
 from math import ceil

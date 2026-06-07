@@ -377,3 +377,104 @@ async def test_delete_404(client, user_factory):
     assert (
         await client.delete("/api/v1/admin/coupons/999999", headers=_headers(admin))
     ).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# free_shipping kind + is_automatic flag
+# ---------------------------------------------------------------------------
+
+
+async def test_create_free_shipping_coupon(client, user_factory):
+    """free_shipping: value 0 (omittable — defaults to 0), no currency."""
+    admin = user_factory(email="cpn-admin20@example.com", role=UserRole.ADMIN)
+    resp = await client.post(
+        "/api/v1/admin/coupons/",
+        json={"code": "shipfree", "discount_type": "free_shipping"},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["code"] == "SHIPFREE"
+    assert body["discount_type"] == "free_shipping"
+    assert body["value"] == 0
+    assert body["currency"] is None
+    assert body["is_automatic"] is False
+
+
+async def test_create_free_shipping_with_value_422(client, user_factory):
+    admin = user_factory(email="cpn-admin21@example.com", role=UserRole.ADMIN)
+    resp = await client.post(
+        "/api/v1/admin/coupons/",
+        json={"code": "SHIPVAL", "discount_type": "free_shipping", "value": 5},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 422
+
+
+async def test_create_free_shipping_with_currency_422(client, user_factory):
+    admin = user_factory(email="cpn-admin22@example.com", role=UserRole.ADMIN)
+    resp = await client.post(
+        "/api/v1/admin/coupons/",
+        json={"code": "SHIPCUR", "discount_type": "free_shipping", "currency": "USD"},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 422
+
+
+async def test_create_automatic_coupon_persists_flag(client, user_factory, db_session):
+    admin = user_factory(email="cpn-admin23@example.com", role=UserRole.ADMIN)
+    resp = await client.post(
+        "/api/v1/admin/coupons/",
+        json={"code": "AUTOCREATE", "discount_type": "percent", "value": 10, "is_automatic": True},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["is_automatic"] is True
+    row = db_session.get(Coupon, body["id"])
+    assert row is not None
+    assert row.is_automatic is True
+
+
+async def test_update_flip_fixed_to_free_shipping_without_nulling_422(
+    client, user_factory, coupon_factory
+):
+    """Merged-state validation (the plan's §7 risk): flipping fixed →
+    free_shipping must explicitly zero ``value`` and null ``currency``."""
+    admin = user_factory(email="cpn-admin24@example.com", role=UserRole.ADMIN)
+    c = coupon_factory(code="FLIPSHIP", discount_type="fixed", value=5, currency="USD")
+    resp = await client.patch(
+        f"/api/v1/admin/coupons/{c.id}",
+        json={"discount_type": "free_shipping"},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 422
+
+
+async def test_update_flip_fixed_to_free_shipping_with_nulling_ok(
+    client, user_factory, coupon_factory
+):
+    admin = user_factory(email="cpn-admin25@example.com", role=UserRole.ADMIN)
+    c = coupon_factory(code="FLIPSHIP2", discount_type="fixed", value=5, currency="USD")
+    resp = await client.patch(
+        f"/api/v1/admin/coupons/{c.id}",
+        json={"discount_type": "free_shipping", "value": 0, "currency": None},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["discount_type"] == "free_shipping"
+    assert body["value"] == 0
+    assert body["currency"] is None
+
+
+async def test_update_toggle_is_automatic(client, user_factory, coupon_factory):
+    admin = user_factory(email="cpn-admin26@example.com", role=UserRole.ADMIN)
+    c = coupon_factory(code="AUTOTOGGLE", is_automatic=False)
+    resp = await client.patch(
+        f"/api/v1/admin/coupons/{c.id}",
+        json={"is_automatic": True},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["is_automatic"] is True

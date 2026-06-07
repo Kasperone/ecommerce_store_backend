@@ -10,13 +10,22 @@ The redemption half (added for coupon-at-checkout) lives here too so the discoun
 math and the eligibility rules sit next to the model they read:
 
 - ``compute_discount`` — pure: percent → ``subtotal * value / 100``; fixed →
-  ``min(value, subtotal)`` (a coupon never discounts below zero). Rounded to 2dp.
+  ``min(value, subtotal)`` (a coupon never discounts below zero); free_shipping
+  → 0 (its saving lives in the shipping line, not the goods). Rounded to 2dp.
+- ``effective_saving`` — what a coupon is *worth* on a given cart: the goods
+  discount for percent/fixed, the shipping amount for free_shipping. This is
+  the number ``pick_best`` compares candidates by.
 - ``validate_for_redemption`` — runs every eligibility check (active / window /
   usage cap / currency match / min-order) against a given subtotal + currency and
   returns ``(coupon, discount)`` or raises ``CouponRedemptionError`` carrying a
-  machine ``code`` + human message. Used by both the preview endpoint and the
-  order-create path (single source of truth — the preview can never diverge from
-  what checkout actually applies).
+  machine ``code`` + human message.
+- ``pick_best`` — the single source of truth for which discount an order gets:
+  validates an optionally typed code (re-raising its failure — a bad code never
+  silently falls back to an automatic), evaluates every active automatic coupon
+  (silently skipping ineligible ones), and returns the single best discount
+  (largest effective saving; tie → manual wins, then lowest id). Used by both
+  the preview endpoint and the order-create path, so the preview can never
+  diverge from what checkout actually applies.
 - ``redeem`` — atomically bumps ``used_count`` with a guarded UPDATE so two
   concurrent redemptions can't exceed ``max_uses`` (the validate-then-increment
   window is otherwise racy). Caller owns the commit.
@@ -24,12 +33,14 @@ math and the eligibility rules sit next to the model they read:
 
 from __future__ import annotations
 
+from collections.abc import Collection
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from app.models.coupon import Coupon, CouponRedemption
+from app.models.coupon import Coupon, CouponDiscountType, CouponRedemption
 from app.schemas.coupon import CouponCreate, CouponUpdate
 
 
@@ -55,11 +66,46 @@ def compute_discount(coupon: Coupon, subtotal: float) -> float:
 
     Percent coupons take ``value`` percent of the subtotal; fixed coupons take
     ``value`` units of their currency but never more than the subtotal (a coupon
-    can zero an order but never make the total negative). Rounded to 2 decimals.
+    can zero an order but never make the total negative). free_shipping coupons
+    never discount the goods — their saving is the shipping line (see
+    ``effective_saving``), so this returns 0. Rounded to 2 decimals.
     """
+    if coupon.discount_type == CouponDiscountType.FREE_SHIPPING.value:
+        return 0.0
     if coupon.discount_type == "percent":
         return round(subtotal * coupon.value / 100, 2)
     return round(min(coupon.value, subtotal), 2)
+
+
+def effective_saving(coupon: Coupon, subtotal: float, shipping: float) -> float:
+    """What a coupon is worth on a cart with this ``subtotal`` + ``shipping``.
+
+    percent/fixed → the goods discount (``compute_discount``); free_shipping →
+    the shipping amount the order would otherwise pay (post free-above-threshold
+    — when that already zeroed shipping, a free_shipping coupon saves nothing
+    and a goods-discount candidate wins the pick instead).
+    """
+    if coupon.discount_type == CouponDiscountType.FREE_SHIPPING.value:
+        return round(shipping, 2)
+    return compute_discount(coupon, subtotal)
+
+
+@dataclass(frozen=True)
+class AppliedDiscount:
+    """The picker's winner: which coupon applies and what it's worth.
+
+    ``saving`` is the effective saving (goods discount for percent/fixed,
+    shipping saved for free_shipping). ``free_shipping`` tells the consumer to
+    zero the shipping line instead of discounting the goods. ``is_manual``
+    distinguishes a customer-typed code from an automatic — checkout re-raises a
+    redeem failure for a manual winner (the customer must know their code didn't
+    work) but retries the pick without an exhausted automatic.
+    """
+
+    coupon: Coupon
+    saving: float
+    free_shipping: bool
+    is_manual: bool
 
 
 class CRUDCoupon:
@@ -116,6 +162,7 @@ class CRUDCoupon:
             starts_at=obj_in.starts_at,
             ends_at=obj_in.ends_at,
             is_active=obj_in.is_active,
+            is_automatic=obj_in.is_automatic,
         )
         db.add(coupon)
         db.flush()
@@ -159,18 +206,38 @@ class CRUDCoupon:
         """Validate a coupon for use against ``subtotal`` in ``currency``.
 
         Returns ``(coupon, discount)`` when every eligibility rule passes, else
-        raises ``CouponRedemptionError`` with a machine ``code``. Checks, in order:
-        existence → active → started → not expired → usage cap → per-user cap →
-        currency match (fixed coupons only) → minimum order. The per-user cap is
-        only checked when ``user_id`` is given (anonymous previews skip it; the
-        order-create path always passes it and re-validates server-side). The
-        ``now`` override keeps the window checks testable without freezegun; it
-        defaults to naive UTC to match the (naive) ``starts_at`` / ``ends_at``
-        columns.
+        raises ``CouponRedemptionError`` with a machine ``code``. Existence is
+        checked here; the remaining rules live in ``check_eligibility`` (shared
+        with the automatic-coupon scan).
         """
         coupon = self.get_by_code(db, code=code)
         if coupon is None:
             raise CouponRedemptionError("not_found", "This coupon code is not valid.")
+        self.check_eligibility(
+            db, coupon=coupon, subtotal=subtotal, currency=currency, user_id=user_id, now=now
+        )
+        return coupon, compute_discount(coupon, subtotal)
+
+    def check_eligibility(
+        self,
+        db: Session,
+        *,
+        coupon: Coupon,
+        subtotal: float,
+        currency: str,
+        user_id: int | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        """Raise ``CouponRedemptionError`` if ``coupon`` can't apply right now.
+
+        Checks, in order: active → started → not expired → usage cap → per-user
+        cap → currency match (fixed coupons only) → minimum order. The per-user
+        cap is only checked when ``user_id`` is given (anonymous previews and
+        guest orders skip it; the authed order-create path always passes it and
+        re-validates server-side). The ``now`` override keeps the window checks
+        testable without freezegun; it defaults to naive UTC to match the
+        (naive) ``starts_at`` / ``ends_at`` columns.
+        """
         if not coupon.is_active:
             raise CouponRedemptionError("inactive", "This coupon is no longer active.")
 
@@ -209,7 +276,94 @@ class CRUDCoupon:
                 f" {currency}.",
             )
 
-        return coupon, compute_discount(coupon, subtotal)
+    def get_active_automatic(self, db: Session, *, now: datetime | None = None) -> list[Coupon]:
+        """Active automatic coupons, pre-filtered by window + global usage cap.
+
+        One indexed query (``ix_coupons_automatic_active``) — runs on every
+        order create and every preview. Per-coupon checks that need the cart
+        (currency / min-order) or the user (per-user cap) happen in
+        ``check_eligibility`` from ``pick_best``.
+        """
+        moment = now if now is not None else datetime.now(UTC).replace(tzinfo=None)
+        return (
+            db.query(Coupon)
+            .filter(
+                Coupon.is_automatic.is_(True),
+                Coupon.is_active.is_(True),
+                (Coupon.starts_at.is_(None)) | (Coupon.starts_at <= moment),
+                (Coupon.ends_at.is_(None)) | (Coupon.ends_at > moment),
+                (Coupon.max_uses.is_(None)) | (Coupon.used_count < Coupon.max_uses),
+            )
+            .order_by(Coupon.id)
+            .all()
+        )
+
+    def pick_best(
+        self,
+        db: Session,
+        *,
+        code: str | None,
+        subtotal: float,
+        shipping: float,
+        currency: str,
+        user_id: int | None = None,
+        now: datetime | None = None,
+        exclude_coupon_ids: Collection[int] = (),
+    ) -> AppliedDiscount | None:
+        """Pick the single best discount for a cart (typed code vs automatics).
+
+        Stacking policy: **best-single-discount wins**. A typed ``code`` is
+        validated via ``validate_for_redemption`` and its failure **re-raised**
+        — an invalid typed code never silently falls back to an automatic (the
+        customer must know their code didn't work). Every active automatic is
+        then evaluated (per-coupon ineligibility swallowed — automatics are
+        opportunistic) and candidates compete on effective saving; an automatic
+        that saves nothing (e.g. free_shipping when shipping is already 0) is
+        not a candidate. Tie → manual wins, then lowest id. Returns ``None``
+        when nothing applies.
+
+        ``exclude_coupon_ids`` lets checkout retry the pick without an
+        automatic whose ``redeem`` lost the last-use race (usage_exhausted) —
+        rather than failing the whole order over a discount the customer never
+        asked for.
+        """
+        candidates: list[AppliedDiscount] = []
+        manual: Coupon | None = None
+        if code:
+            manual, _ = self.validate_for_redemption(
+                db, code=code, subtotal=subtotal, currency=currency, user_id=user_id, now=now
+            )
+            candidates.append(
+                AppliedDiscount(
+                    coupon=manual,
+                    saving=effective_saving(manual, subtotal, shipping),
+                    free_shipping=manual.discount_type == CouponDiscountType.FREE_SHIPPING.value,
+                    is_manual=True,
+                )
+            )
+        for auto in self.get_active_automatic(db, now=now):
+            if auto.id in exclude_coupon_ids or (manual is not None and auto.id == manual.id):
+                continue
+            try:
+                self.check_eligibility(
+                    db, coupon=auto, subtotal=subtotal, currency=currency, user_id=user_id, now=now
+                )
+            except CouponRedemptionError:
+                continue
+            saving = effective_saving(auto, subtotal, shipping)
+            if saving <= 0:
+                continue
+            candidates.append(
+                AppliedDiscount(
+                    coupon=auto,
+                    saving=saving,
+                    free_shipping=auto.discount_type == CouponDiscountType.FREE_SHIPPING.value,
+                    is_manual=False,
+                )
+            )
+        if not candidates:
+            return None
+        return max(candidates, key=lambda c: (c.saving, c.is_manual, -c.coupon.id))
 
     def redeem(self, db: Session, *, coupon: Coupon) -> None:
         """Atomically bump ``used_count`` (caller owns the commit).
