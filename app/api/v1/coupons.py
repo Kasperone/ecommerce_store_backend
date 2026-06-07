@@ -1,10 +1,13 @@
-"""Customer-facing coupon endpoint — validate/preview a code at checkout.
+"""Customer-facing coupon endpoint — preview the discount checkout would apply.
 
 Distinct from ``app/api/v1/admin_coupons.py`` (the admin management CRUD). This
-single route lets the storefront preview a discount before the order is placed.
-It is **advisory**: the authoritative validation + application happens in the
-order-create path (``crud_order.create_with_items`` → ``crud_coupon.redeem``), so
-a stale or tampered preview can never let an invalid code reduce a real total.
+single route lets the storefront preview a discount before the order is placed
+— a typed code, or (with no code) any applicable **automatic** discount. It
+routes through the same picker as the order-create path
+(``crud_coupon.pick_best``), so the preview can never diverge from what checkout
+actually applies. It is **advisory**: the authoritative validation + application
+happens in ``crud_order.create_with_items`` → ``crud_coupon.redeem``, so a stale
+or tampered preview can never let an invalid code reduce a real total.
 
 Optional auth (guest checkout previews coupons too) and rate-limited per IP so
 the endpoint can't be used to brute-force valid codes. An anonymous preview
@@ -33,29 +36,51 @@ async def validate_coupon(
     db: Session = Depends(get_db),
     current_user: User | None = Depends(get_optional_user),
 ):
-    """Preview a coupon's discount against the posted subtotal + currency.
+    """Preview the discount checkout would apply (typed code or automatic).
 
-    200 with the computed discount when eligible; 400 with the failure reason
-    (expired / inactive / min-order-not-met / currency-mismatch / usage-exhausted
-    / per-user-exhausted / not-found) otherwise. No state is mutated —
+    With a ``code``: 200 with the winning discount when the code is eligible
+    (an eligible automatic with a larger saving may win instead — best single
+    discount, exactly as checkout decides); 400 with the failure reason
+    (expired / inactive / min-order-not-met / currency-mismatch /
+    usage-exhausted / per-user-exhausted / not-found) when the code itself is
+    invalid — a bad code never silently falls back to an automatic.
+
+    Without a ``code``: 200 with the best applicable automatic discount, or a
+    200 with NULL applied-fields when nothing applies.
+
+    ``shipping_amount`` is what a free_shipping coupon saves (send the
+    already-resolved amount, post free-above-threshold). No state is mutated —
     ``used_count`` is bumped only at order create. An authenticated user is
     passed through so the preview reflects the per-user cap; an anonymous
     (guest-checkout) preview skips that one check.
     """
     try:
-        coupon, discount = crud_coupon.validate_for_redemption(
+        applied = crud_coupon.pick_best(
             db,
             code=payload.code,
             subtotal=payload.subtotal,
+            shipping=payload.shipping_amount,
             currency=payload.currency,
             user_id=current_user.id if current_user else None,
         )
     except CouponRedemptionError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.message) from exc
 
+    if applied is None:
+        return CouponValidateResponse(
+            code=None,
+            discount_type=None,
+            discount_amount=None,
+            is_automatic=False,
+            free_shipping=False,
+            currency=payload.currency,
+        )
+
     return CouponValidateResponse(
-        code=coupon.code,
-        discount_type=coupon.discount_type,  # type: ignore[arg-type]
-        discount_amount=discount,
+        code=applied.coupon.code,
+        discount_type=applied.coupon.discount_type,  # type: ignore[arg-type]
+        discount_amount=applied.saving,
+        is_automatic=applied.coupon.is_automatic,
+        free_shipping=applied.free_shipping,
         currency=payload.currency,
     )

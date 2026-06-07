@@ -10,8 +10,12 @@ coupon+user+order) back the per-user cap.
 
 ``discount_type`` follows the ``RefundReason`` / ``InventoryMovementReason``
 convention: a ``str``-enum stored as the lowercase value in a plain
-``String(8)`` column (not a PG enum), guarded by a CHECK constraint. Adding a
-type later is a code-only change with no migration.
+``String(16)`` column (not a PG enum), guarded by a CHECK constraint.
+
+``is_automatic`` marks coupons the checkout applies on its own (no code typed):
+the order-create path and the validate preview scan active automatics and pick
+the single best discount (see ``crud/coupon.py:pick_best``). The partial index
+``ix_coupons_automatic_active`` keeps that per-checkout scan cheap.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -38,13 +43,16 @@ from app.models.base import BaseModel
 class CouponDiscountType(str, enum.Enum):
     """How a coupon discounts an order.
 
-    Stored as the lowercase value in a ``String(8)`` column (mirrors
+    Stored as the lowercase value in a ``String(16)`` column (mirrors
     ``RefundReason``). ``PERCENT`` discounts by ``value`` percent (1-100,
-    currency-agnostic); ``FIXED`` discounts by ``value`` units of ``currency``.
+    currency-agnostic); ``FIXED`` discounts by ``value`` units of ``currency``;
+    ``FREE_SHIPPING`` zeroes the order's shipping line (``value`` is 0 and
+    ``currency`` is NULL — the saving is whatever shipping would have cost).
     """
 
     PERCENT = "percent"
     FIXED = "fixed"
+    FREE_SHIPPING = "free_shipping"
 
 
 # Mirror of ``CouponDiscountType.values``, used by the DB CHECK constraint and
@@ -72,17 +80,29 @@ class Coupon(BaseModel):
             "discount_type IN ('" + "', '".join(COUPON_DISCOUNT_TYPE_VALUES) + "')",
             name="ck_coupons_discount_type_enum",
         ),
-        CheckConstraint("value > 0", name="ck_coupons_value_positive"),
+        # free_shipping coupons carry value=0 (the saving is the shipping
+        # amount, not a stored number); percent/fixed still require > 0.
+        CheckConstraint(
+            "value > 0 OR discount_type = 'free_shipping'",
+            name="ck_coupons_value_positive",
+        ),
         CheckConstraint("used_count >= 0", name="ck_coupons_used_count_non_negative"),
         CheckConstraint(
             "per_user_limit IS NULL OR per_user_limit > 0",
             name="ck_coupons_per_user_limit_positive",
         ),
+        # Backs the per-checkout automatic-discount scan (pick_best): only
+        # automatic+active rows are ever candidates, so index just those.
+        Index(
+            "ix_coupons_automatic_active",
+            "id",
+            postgresql_where=text("is_automatic AND is_active"),
+        ),
     )
 
     code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     description: Mapped[str | None] = mapped_column(Text)
-    discount_type: Mapped[str] = mapped_column(String(8))
+    discount_type: Mapped[str] = mapped_column(String(16))
     value: Mapped[float] = mapped_column(Float)
     currency: Mapped[str | None] = mapped_column(String(3))
     min_order_amount: Mapped[float | None] = mapped_column(Float)
@@ -96,6 +116,10 @@ class Coupon(BaseModel):
     starts_at: Mapped[datetime | None] = mapped_column(DateTime)
     ends_at: Mapped[datetime | None] = mapped_column(DateTime)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    # Applied by checkout automatically (no code typed). All eligibility rules
+    # (window / caps / currency / min-order) still apply; the picker chooses the
+    # single best discount among automatics + an optionally typed code.
+    is_automatic: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     def __repr__(self) -> str:
         return f"<Coupon {self.code} ({self.discount_type}={self.value})>"
