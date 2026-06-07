@@ -19,8 +19,10 @@ from app.models.user import User
 from app.services import order_email
 
 
-def _make_order() -> Order:
+def _make_order(locale: str | None = None) -> Order:
     user = User(email="buyer@example.com", first_name="Buyer", last_name="One")
+    if locale is not None:
+        user.locale = locale
     order = Order(
         order_number="ORD-20260527-EMAIL1",
         status=OrderStatus.PENDING,
@@ -185,8 +187,8 @@ def test_unknown_event_sends_nothing(captured_emails):
 # --- shipment tracking (shipped event) ----------------------------------------
 
 
-def _make_shipped_order(**tracking) -> Order:
-    order = _make_order()
+def _make_shipped_order(locale: str | None = None, **tracking) -> Order:
+    order = _make_order(locale=locale)
     order.status = OrderStatus.SHIPPED
     for field, value in tracking.items():
         setattr(order, field, value)
@@ -229,11 +231,11 @@ def test_shipped_without_tracking_reads_as_before(captured_emails):
 
 def test_shipped_polish_tracking_labels(captured_emails):
     order = _make_shipped_order(
+        locale="pl",
         shipping_carrier="InPost",
         tracking_number="620000000000000000000001",
         tracking_url="https://inpost.pl/sledzenie-przesylek?number=620000000000000000000001",
     )
-    order.user.locale = "pl"
     order_email.send_order_event(_DB, order, "shipped")
     intro = captured_emails[0]["intro_html"]
     assert "Przewoźnik: InPost" in intro
@@ -268,8 +270,7 @@ def test_send_failure_is_swallowed(captured_emails, monkeypatch):
 
 
 def test_polish_user_gets_polish_subject_and_lang(captured_emails):
-    order = _make_order()
-    order.user.locale = "pl"
+    order = _make_order(locale="pl")
     order_email.send_order_event(_DB, order, "confirmation")
     entry = captured_emails[0]
     assert "potwierdzone" in entry["subject"]  # PL "confirmed"
@@ -277,10 +278,59 @@ def test_polish_user_gets_polish_subject_and_lang(captured_emails):
 
 
 def test_unknown_locale_falls_back_to_english(captured_emails):
-    order = _make_order()
-    order.user.locale = "de"  # unsupported → EN copy
+    order = _make_order(locale="de")  # unsupported → EN copy
     order_email.send_order_event(_DB, order, "shipped")
     assert "shipped" in captured_emails[0]["subject"]
+
+
+# --- guest orders -------------------------------------------------------------
+
+
+def _make_guest_order(locale: str | None = "pl") -> Order:
+    order = _make_order()
+    order.user = None
+    order.user_id = None
+    order.guest_email = "guest@example.com"
+    order.guest_token = "guest-tok-abc123"
+    order.guest_locale = locale
+    return order
+
+
+def test_guest_order_emails_guest_recipient_in_guest_locale(captured_emails):
+    order_email.send_order_event(_DB, _make_guest_order(locale="pl"), "confirmation")
+    assert len(captured_emails) == 1
+    entry = captured_emails[0]
+    assert entry["email_to"] == "guest@example.com"
+    assert "potwierdzone" in entry["subject"]  # PL copy from guest_locale
+    assert entry["lang"] == "pl"
+
+
+def test_guest_order_view_link_is_track_url(captured_emails):
+    order_email.send_order_event(_DB, _make_guest_order(locale="en"), "confirmation")
+    intro = captured_emails[0]["intro_html"]
+    assert "/orders/track/guest-tok-abc123" in intro
+    assert "/account/orders/" not in intro
+
+
+def test_guest_order_without_locale_falls_back_to_english(captured_emails):
+    order_email.send_order_event(_DB, _make_guest_order(locale=None), "shipped")
+    assert "shipped" in captured_emails[0]["subject"]
+
+
+def test_authed_order_view_link_is_account_url(captured_emails):
+    order_email.send_order_event(_DB, _make_order(), "confirmation")
+    intro = captured_emails[0]["intro_html"]
+    assert "/account/orders/42" in intro
+    assert "/orders/track/" not in intro
+
+
+def test_order_with_no_recipient_sends_nothing(captured_emails):
+    # Defensive: the DB CHECK forbids this shape; the composer must not crash
+    # or "send" to nobody if handed a detached/partial instance.
+    order = _make_guest_order()
+    order.guest_email = None
+    order_email.send_order_event(_DB, order, "confirmation")
+    assert captured_emails == []
 
 
 def test_render_order_email_body_english_labels():

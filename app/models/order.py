@@ -1,8 +1,8 @@
 import enum
 from typing import TYPE_CHECKING
 
+from sqlalchemy import CheckConstraint, Float, ForeignKey, Integer, String, Text
 from sqlalchemy import Enum as SQLEnum
-from sqlalchemy import Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import BaseModel
@@ -40,8 +40,28 @@ class Order(BaseModel):
 
     __tablename__ = "orders"
 
-    # User
-    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    # Every order has an owner OR a guest contact email — never neither.
+    __table_args__ = (
+        CheckConstraint(
+            "user_id IS NOT NULL OR guest_email IS NOT NULL",
+            name="ck_orders_user_or_guest_email",
+        ),
+    )
+
+    # User — nullable for guest checkout (a guest order has no user row;
+    # deliberately NOT a guest-user row, which would collide with the
+    # email-verification login flow and "register later with the same email").
+    user_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"))
+
+    # Guest checkout (all NULL on authed orders). ``guest_email`` is the contact
+    # address (required iff ``user_id`` is NULL — see the CHECK). ``guest_token``
+    # is an opaque 256-bit tracking token (``secrets.token_urlsafe(32)``),
+    # unique-indexed, generated ONLY for guest orders — it backs the public
+    # ``GET /orders/track/{token}`` view and the guest payment-start calls.
+    # ``guest_locale`` is the email language (no ``User.locale`` to read).
+    guest_email: Mapped[str | None] = mapped_column(String(255), index=True)
+    guest_token: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
+    guest_locale: Mapped[str | None] = mapped_column(String(5))
 
     # Order details
     order_number: Mapped[str] = mapped_column(String(50), unique=True, index=True)
@@ -96,8 +116,8 @@ class Order(BaseModel):
     # Notes
     notes: Mapped[str | None] = mapped_column(Text)
 
-    # Relationships
-    user: Mapped["User"] = relationship("User", back_populates="orders")
+    # Relationships (``user`` is None on guest orders)
+    user: Mapped["User | None"] = relationship("User", back_populates="orders")
     items: Mapped[list["OrderItem"]] = relationship(
         "OrderItem", back_populates="order", cascade="all, delete-orphan"
     )
@@ -120,8 +140,8 @@ class Order(BaseModel):
 
     @property
     def customer_email(self) -> str | None:
-        """Email of the ordering user, for admin list views."""
-        return self.user.email if self.user else None
+        """Email of the ordering user (guest orders fall back to ``guest_email``)."""
+        return self.user.email if self.user else self.guest_email
 
 
 class OrderItem(BaseModel):

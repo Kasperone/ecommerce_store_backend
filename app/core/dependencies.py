@@ -1,7 +1,7 @@
 from collections.abc import Generator
 from datetime import UTC
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jwt import PyJWTError
 from sqlalchemy.orm import Session
@@ -82,6 +82,47 @@ async def get_current_user(
         # JWT iat is int seconds; floor pwd_changed (microseconds) to match.
         if iat < pwd_changed.replace(microsecond=0):
             raise credentials_exception
+
+    return user
+
+
+async def get_optional_user(
+    db: Session = Depends(get_db),
+    authorization: str | None = Header(default=None),
+) -> User | None:
+    """Resolve the bearer access token to a user when present and valid, else None.
+
+    Never raises — endpoints that serve both guests and authed callers (guest
+    checkout, coupon preview, cookie consent) use this instead of
+    ``get_current_user``. Anything wrong — no header, malformed scheme,
+    bad/expired token, unknown user, inactive account, token issued before the
+    last password change — resolves to ``None`` so the caller is treated as a
+    guest. Applies the same ``iat < password_changed_at`` floor as
+    ``get_current_user`` so a "signed out everywhere" token can't keep acting
+    as the user on optional-auth routes.
+    """
+    if not authorization:
+        return None
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return None
+    try:
+        decoded = decode_token(token, expected_type="access")
+        user_id = int(decoded.subject)
+    except (PyJWTError, ValueError):
+        return None
+
+    user = crud_user.get(db, id=user_id)
+    if user is None or not user.is_active:
+        return None
+
+    pwd_changed = user.password_changed_at
+    if pwd_changed is not None:
+        iat = decoded.issued_at
+        if iat.tzinfo is not None:
+            iat = iat.astimezone(UTC).replace(tzinfo=None)
+        if iat < pwd_changed.replace(microsecond=0):
+            return None
 
     return user
 
