@@ -135,11 +135,14 @@ async def create_payu_checkout(
     guest_token: str | None = Query(default=None, max_length=64),
 ):
     """Create a PayU payment for the caller's pending order (authed or guest)."""
-    client = get_payu_client()  # 503 when PayU is unconfigured
-
+    # Resolve auth/ownership first so anonymous callers get 401 (not a 503
+    # config leak) even when PayU is unconfigured — matches the pre-guest
+    # behavior where the auth dependency ran before the route body.
     order = _resolve_payable_order(
         db, order_id=order_id, current_user=current_user, guest_token=guest_token
     )
+
+    client = get_payu_client()  # 503 when PayU is unconfigured
 
     products = [
         {
@@ -231,11 +234,12 @@ async def create_stripe_checkout(
     guest_token: str | None = Query(default=None, max_length=64),
 ):
     """Create a Stripe Checkout Session for the caller's pending order (authed or guest)."""
-    service = get_stripe_service()  # 503 when Stripe is unconfigured
-
+    # Auth/ownership before the provider-config 503 (see create_payu_checkout).
     order = _resolve_payable_order(
         db, order_id=order_id, current_user=current_user, guest_token=guest_token
     )
+
+    service = get_stripe_service()  # 503 when Stripe is unconfigured
 
     # A guest has no /account/orders page — cancel back to the token track view.
     if order.user_id is None and order.guest_token:
@@ -299,11 +303,12 @@ async def create_stripe_payment_intent(
     redirect URL. Settled server-side by the ``payment_intent.succeeded``
     webhook.
     """
-    service = get_stripe_service()  # 503 when Stripe is unconfigured
-
+    # Auth/ownership before the provider-config 503 (see create_payu_checkout).
     order = _resolve_payable_order(
         db, order_id=order_id, current_user=current_user, guest_token=guest_token
     )
+
+    service = get_stripe_service()  # 503 when Stripe is unconfigured
 
     try:
         # The SDK call is blocking HTTP — run it off the event loop.
