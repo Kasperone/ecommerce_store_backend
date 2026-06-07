@@ -143,6 +143,16 @@ def test_build_pdf_person_buyer():
     assert pdf[:4] == b"%PDF"
 
 
+def test_build_pdf_guest_buyer():
+    # Guest orders have no user — the buyer block bills to the guest email.
+    order = _order(_person_user())
+    order.user = None
+    order.user_id = None
+    order.guest_email = "guest@example.com"
+    pdf = build_invoice_pdf(order, store=STORE, invoice_number=NUMBER, issued_at=ISSUED, lang="en")
+    assert pdf[:4] == b"%PDF"
+
+
 def test_build_pdf_polish_with_diacritics_does_not_raise():
     pdf = build_invoice_pdf(
         _order(_company_user()), store=STORE, invoice_number=NUMBER, issued_at=ISSUED, lang="pl"

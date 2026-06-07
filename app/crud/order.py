@@ -179,7 +179,7 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
                 return candidate
         raise RuntimeError("could not generate a unique order number after 10 attempts")
 
-    def create_with_items(self, db: Session, *, user_id: int, obj_in: OrderCreate) -> Order:
+    def create_with_items(self, db: Session, *, user_id: int | None, obj_in: OrderCreate) -> Order:
         """Create an order from posted line items.
 
         Validates availability + stock, snapshots product fields, decrements
@@ -193,6 +193,12 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         ``ProductUnavailableError`` / ``InsufficientStockError`` /
         ``VariantRequiredError`` / ``VariantUnavailableError`` (the route maps
         all four to 422). Flushes so the ``id`` is populated; does not commit.
+
+        ``user_id=None`` creates a **guest** order: the route guarantees
+        ``obj_in.guest_email`` is present (the DB CHECK enforces it too), the
+        guest fields are snapshotted, and a unique 256-bit ``guest_token`` is
+        generated for account-less tracking + payment start. Authed orders
+        keep every guest field NULL.
         """
         currency = obj_in.currency
         product_ids = [line.product_id for line in obj_in.items]
@@ -327,8 +333,14 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
 
         total = round(subtotal - discount + shipping_amount, 2)
 
+        is_guest = user_id is None
         order = Order(
             user_id=user_id,
+            guest_email=obj_in.guest_email if is_guest else None,
+            # Opaque 256-bit tracking token, guest orders only (authed orders
+            # keep NULL — their account is the credential).
+            guest_token=secrets.token_urlsafe(32) if is_guest else None,
+            guest_locale=obj_in.locale if is_guest else None,
             order_number=self._generate_order_number(db),
             status=OrderStatus.PENDING,
             subtotal=subtotal,
@@ -353,8 +365,11 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
 
         # Record the per-user redemption now that order.id exists (same unit of
         # work as redeem() above, so a rolled-back order burns no use and records
-        # no redemption). Backs Coupon.per_user_limit.
-        if redeemed_coupon is not None:
+        # no redemption). Backs Coupon.per_user_limit. Skipped for guest orders:
+        # ``CouponRedemption.user_id`` is NOT NULL, so ``per_user_limit`` is
+        # unenforceable for guests (documented limitation) — the global
+        # ``max_uses`` cap still applies via ``redeem`` above.
+        if redeemed_coupon is not None and user_id is not None:
             crud_coupon.record_redemption(
                 db, coupon_id=redeemed_coupon.id, user_id=user_id, order_id=order.id
             )
@@ -484,6 +499,21 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             db.query(Order)
             .options(selectinload(Order.items))
             .filter(Order.order_number == order_number)
+            .first()
+        )
+
+    def get_by_guest_token(self, db: Session, *, token: str) -> Order | None:
+        """Look up a guest order by its opaque tracking token.
+
+        Backs the public ``GET /orders/track/{token}`` view (plain 404 on a
+        miss — no enumeration signal). The token column is unique-indexed and
+        only ever populated on guest orders, so an authed order can never be
+        reached this way.
+        """
+        return (
+            db.query(Order)
+            .options(selectinload(Order.items))
+            .filter(Order.guest_token == token)
             .first()
         )
 

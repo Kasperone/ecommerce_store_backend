@@ -5,7 +5,9 @@ Composed off the order lifecycle and sent **best-effort** inside a
 update. The confirmation + paid events attach the invoice PDF (built via the
 invoice service). Localized to the recipient's ``User.locale`` (EN/PL) — the
 language is a stored preference because the send happens off the request (webhook
-/ admin action), where there is no customer UI locale to read.
+/ admin action), where there is no customer UI locale to read. Guest orders
+(``user_id`` NULL) send to ``order.guest_email`` in ``order.guest_locale``, and
+their "view order" link points at the public token-tracking page.
 """
 
 from __future__ import annotations
@@ -175,13 +177,25 @@ def event_for_status(status: str) -> str | None:
     return _STATUS_EVENTS.get(status)
 
 
+def _view_order_url(order: Order) -> str:
+    """The customer-facing "view order" link.
+
+    Authed orders point at the account order detail; guest orders (no account
+    to log into) point at the public token-tracking page — the token in the
+    email is itself the credential (proof-of-inbox).
+    """
+    if order.user_id is None and order.guest_token:
+        return f"{settings.FRONTEND_URL}/orders/track/{order.guest_token}"
+    return f"{settings.FRONTEND_URL}/account/orders/{order.id}"
+
+
 def _spec_for(event: str, order: Order, lang: str) -> _EventSpec | None:
     entry = _texts_for(lang).get(event)
     if entry is None:
         return None
     view_label = _VIEW_LABEL.get(lang, _VIEW_LABEL["en"])
     view = (
-        f'<p style="margin:16px 0;"><a href="{settings.FRONTEND_URL}/account/orders/{order.id}" '
+        f'<p style="margin:16px 0;"><a href="{_view_order_url(order)}" '
         f'style="color:#2563eb;">{view_label}</a></p>'
     )
     # The shipped email carries the carrier + tracking number + tracking link
@@ -206,7 +220,14 @@ def send_order_event(db: Session, order: Order, event: str) -> None:
     Swallows + logs any failure — a transactional email must never bubble into the
     caller's request or transaction.
     """
-    lang = (order.user.locale if order.user else None) or "en"
+    # Guest orders carry their own contact email + language preference.
+    lang = (order.user.locale if order.user else order.guest_locale) or "en"
+    email_to = order.user.email if order.user else order.guest_email
+    if email_to is None:
+        # Defensive: the DB CHECK guarantees user_id OR guest_email, so this
+        # only fires on a detached/partial instance — never silently drop.
+        logger.warning("Order %s has no recipient email; skipping %s", order.order_number, event)
+        return
     spec = _spec_for(event, order, lang)
     if spec is None:
         logger.warning("Unknown order-email event %r (order %s)", event, order.order_number)
@@ -231,7 +252,7 @@ def send_order_event(db: Session, order: Order, event: str) -> None:
                 kor = crud_corrective.get_by_refund_id(db, latest_refund.id)
                 corrective_number = kor.kor_number if kor is not None else None
         email.send_order_email(
-            email_to=order.user.email,
+            email_to=email_to,
             subject=spec.subject,
             heading=spec.heading,
             intro_html=spec.intro_html,

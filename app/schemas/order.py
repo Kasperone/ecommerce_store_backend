@@ -1,4 +1,7 @@
-from pydantic import Field, field_validator
+from datetime import datetime
+from typing import Literal
+
+from pydantic import EmailStr, Field, field_validator
 
 from app.models.order import OrderStatus
 from app.schemas.base import BaseSchema, TimestampSchema
@@ -71,6 +74,13 @@ class OrderCreate(OrderBase):
     # subtotal at create time (the storefront preview is advisory only); an
     # invalid/expired/exhausted code 400s the create with the reason message.
     coupon_code: str | None = Field(default=None, max_length=64)
+    # Guest checkout: contact email for an anonymous order. The route REQUIRES
+    # it when no (valid) bearer is present (422 otherwise) and REJECTS it when
+    # authenticated (422 — the account email is authoritative, no ambiguity).
+    guest_email: EmailStr | None = None
+    # Guest email language (stored as ``orders.guest_locale``); ignored for
+    # authenticated orders (their ``User.locale`` preference wins).
+    locale: Literal["en", "pl"] | None = None
 
 
 class OrderUpdate(BaseSchema):
@@ -96,7 +106,13 @@ class OrderUpdate(BaseSchema):
 class OrderResponse(OrderBase, TimestampSchema):
     """Schema for order response"""
 
-    user_id: int
+    # NULL on guest orders; ``guest_email``/``guest_token`` are then set instead.
+    # The token rides the create response so the guest can be handed their
+    # tracking URL (and start payment) — it is the order's own credential, only
+    # ever returned to its creator (or an admin via the scoped detail).
+    user_id: int | None = None
+    guest_email: str | None = None
+    guest_token: str | None = None
     order_number: str
     status: OrderStatus
 
@@ -134,9 +150,46 @@ class OrderResponse(OrderBase, TimestampSchema):
 
 
 class OrderWithUser(OrderResponse):
-    """Order response with user details"""
+    """Order response with user details (``user`` is null on guest orders)"""
 
-    user: UserResponse
+    user: UserResponse | None = None
+
+
+class GuestOrderItem(BaseSchema):
+    """Trimmed line item for the public guest-tracking view (snapshots only —
+    no product/variant ids, nothing an enumeration could pivot on)."""
+
+    product_name: str
+    variant_title: str | None = None
+    quantity: int
+    unit_price: float
+    total_price: float
+
+
+class GuestOrderResponse(BaseSchema):
+    """Public account-less order-tracking view (``GET /orders/track/{token}``).
+
+    Deliberately trimmed: status, items, totals, shipping method name, shipment
+    tracking fields, and the shipping city/country — no full street address, no
+    payment ids, no refund detail, no user data. View only (no cancel — a
+    stock-mutating action on token-possession-only auth is too weak).
+    """
+
+    order_number: str
+    status: OrderStatus
+    created_at: datetime
+    items: list[GuestOrderItem] = Field(default_factory=list)
+    subtotal: float
+    discount: float = 0.0
+    shipping: float
+    total: float
+    currency: str
+    shipping_method_name: str | None = None
+    shipping_carrier: str | None = None
+    tracking_number: str | None = None
+    tracking_url: str | None = None
+    shipping_city: str
+    shipping_country: str
 
 
 class OrderListItem(TimestampSchema):

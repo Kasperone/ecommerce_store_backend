@@ -103,13 +103,18 @@ async def test_create_order_inactive_product_422(
     assert resp.status_code == 422
 
 
-async def test_create_order_requires_auth(client, product_factory, test_shipping_method_id):
+async def test_create_order_anonymous_without_guest_email_422(
+    client, product_factory, test_shipping_method_id
+):
+    # Auth is optional since guest checkout — but an anonymous create without a
+    # guest_email has no owner and no contact, so it's rejected (was a 401).
     product = product_factory(stock=10, price_usd=25.0)
     resp = await client.post(
         "/api/v1/orders/",
         json=_order_body(product.id, quantity=1, shipping_method_id=test_shipping_method_id),
     )
-    assert resp.status_code == 401
+    assert resp.status_code == 422
+    assert "guest_email" in resp.json()["detail"]
 
 
 # ---------------------------------------------------------------------------
