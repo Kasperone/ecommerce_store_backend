@@ -85,6 +85,14 @@ class Order(BaseModel):
     )
     shipping_method_name: Mapped[str | None] = mapped_column(String(80))
 
+    # Shipment tracking (all nullable — recorded by the admin when the order
+    # ships, editable afterwards; pre-shipping orders and untracked carriers
+    # carry none). ``tracking_url`` is stored verbatim when the admin provides
+    # one — there is deliberately no carrier→URL-template guessing table (v1).
+    shipping_carrier: Mapped[str | None] = mapped_column(String(100))
+    tracking_number: Mapped[str | None] = mapped_column(String(100))
+    tracking_url: Mapped[str | None] = mapped_column(String(500))
+
     # Notes
     notes: Mapped[str | None] = mapped_column(Text)
 

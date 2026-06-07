@@ -1,9 +1,18 @@
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from app.models.order import OrderStatus
 from app.schemas.base import BaseSchema, TimestampSchema
 from app.schemas.refund import RefundResponse
 from app.schemas.user import UserResponse
+
+
+def _blank_to_none(v: object) -> object:
+    """Trim; a blank/whitespace-only string → null (clears the field). Non-strings
+    pass through untouched so type validation still rejects them."""
+    if isinstance(v, str):
+        stripped = v.strip()
+        return stripped if stripped else None
+    return v
 
 
 class OrderItemBase(BaseSchema):
@@ -64,6 +73,17 @@ class OrderUpdate(BaseSchema):
     payment_method: str | None = None
     payment_intent_id: str | None = None
     notes: str | None = None
+    # Shipment tracking — typically set alongside ``status=shipped`` and editable
+    # afterwards. Values are trimmed; an explicit blank/empty string clears the
+    # field (null). ``tracking_url`` is taken verbatim when provided — no
+    # carrier→URL guessing (v1).
+    shipping_carrier: str | None = Field(default=None, max_length=100)
+    tracking_number: str | None = Field(default=None, max_length=100)
+    tracking_url: str | None = Field(default=None, max_length=500)
+
+    _trim_tracking = field_validator(
+        "shipping_carrier", "tracking_number", "tracking_url", mode="before"
+    )(_blank_to_none)
 
 
 class OrderResponse(OrderBase, TimestampSchema):
@@ -92,6 +112,11 @@ class OrderResponse(OrderBase, TimestampSchema):
     shipping_method_id: int | None = None
     shipping_method_name: str | None = None
 
+    # Shipment tracking (null until the admin records it at/after ship time)
+    shipping_carrier: str | None = None
+    tracking_number: str | None = None
+    tracking_url: str | None = None
+
     # Items
     items: list[OrderItemResponse] = Field(default_factory=list)
 
@@ -118,6 +143,12 @@ class OrderListItem(TimestampSchema):
     currency: str
     item_count: int
     customer_email: str | None = None
+
+    # Shipment tracking — surfaced on list rows so the customer order history /
+    # admin orders table can show a tracking link without a detail fetch.
+    shipping_carrier: str | None = None
+    tracking_number: str | None = None
+    tracking_url: str | None = None
 
 
 class OrderListResponse(BaseSchema):

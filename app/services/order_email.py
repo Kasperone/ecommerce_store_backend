@@ -135,9 +135,39 @@ _EVENT_TEXT: dict[str, dict[str, dict[str, str]]] = {
 
 _VIEW_LABEL = {"en": "View your order", "pl": "Zobacz swoje zamówienie"}
 
+# Shipment-tracking labels for the shipped event (fallback "en", like the copy).
+_TRACKING_LABELS = {
+    "en": {"carrier": "Carrier", "number": "Tracking number", "track": "Track your shipment"},
+    "pl": {"carrier": "Przewoźnik", "number": "Numer przesyłki", "track": "Śledź swoją przesyłkę"},
+}
+
 
 def _texts_for(lang: str) -> dict[str, dict[str, str]]:
     return _EVENT_TEXT.get(lang, _EVENT_TEXT["en"])
+
+
+def _tracking_html(order: Order, lang: str) -> str:
+    """Carrier / tracking-number / tracking-link block for the shipped email.
+
+    Empty string when the order carries no tracking info (the email reads as
+    before). The link renders only when ``tracking_url`` is set — there is no
+    carrier→URL guessing.
+    """
+    if not (order.shipping_carrier or order.tracking_number or order.tracking_url):
+        return ""
+    labels = _TRACKING_LABELS.get(lang, _TRACKING_LABELS["en"])
+    lines: list[str] = []
+    if order.shipping_carrier:
+        lines.append(f"{labels['carrier']}: {order.shipping_carrier}")
+    if order.tracking_number:
+        lines.append(f"{labels['number']}: {order.tracking_number}")
+    html = f'<p style="margin:16px 0 0;">{"<br>".join(lines)}</p>' if lines else ""
+    if order.tracking_url:
+        html += (
+            f'<p style="margin:8px 0 0;"><a href="{order.tracking_url}" '
+            f'style="color:#2563eb;">{labels["track"]}</a></p>'
+        )
+    return html
 
 
 def event_for_status(status: str) -> str | None:
@@ -154,10 +184,13 @@ def _spec_for(event: str, order: Order, lang: str) -> _EventSpec | None:
         f'<p style="margin:16px 0;"><a href="{settings.FRONTEND_URL}/account/orders/{order.id}" '
         f'style="color:#2563eb;">{view_label}</a></p>'
     )
+    # The shipped email carries the carrier + tracking number + tracking link
+    # (when recorded on the order); other events never show tracking.
+    tracking = _tracking_html(order, lang) if event == "shipped" else ""
     return _EventSpec(
         subject=entry["subject"].format(name=settings.EMAIL_FROM_NAME, num=order.order_number),
         heading=entry["heading"],
-        intro_html=f"<p>{entry['intro']}</p>{view}",
+        intro_html=f"<p>{entry['intro']}</p>{tracking}{view}",
         attach_invoice=event in _ATTACH_EVENTS,
         attach_corrective=event in _ATTACH_CORRECTIVE_EVENTS,
     )
