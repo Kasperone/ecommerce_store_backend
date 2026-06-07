@@ -19,6 +19,7 @@ from sqlalchemy.orm import Query, Session, selectinload
 
 from app.crud import coupon as crud_coupon
 from app.crud.base import CRUDBase
+from app.crud.coupon import AppliedDiscount, CouponRedemptionError
 from app.crud.inventory import inventory as crud_inventory
 from app.crud.invoice import invoice as crud_invoice
 from app.crud.shipping import (
@@ -311,25 +312,51 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             2,
         )
 
-        # Coupon redemption: re-validate the posted code against the *server-side*
-        # subtotal (the storefront preview is advisory) and apply the discount to
-        # the goods subtotal only — shipping is computed from the full subtotal
-        # above and is never discounted. The discount never drives the total below
-        # the shipping amount (compute_discount caps at subtotal). ``redeem``
-        # atomically bumps used_count; both raise CouponRedemptionError, which the
-        # route maps to a 400. The increment lands in the same unit of work as the
-        # order, so a rolled-back order never burns a use.
-        discount = 0.0
-        redeemed_coupon = None
-        if obj_in.coupon_code:
-            redeemed_coupon, discount = crud_coupon.validate_for_redemption(
+        # Discount resolution: ``pick_best`` is the single source of truth for
+        # which coupon (typed code vs active automatics) an order gets — the
+        # validate-preview endpoint routes through the same picker, so the
+        # preview can never diverge. It runs AFTER shipping_amount is known
+        # because a free_shipping coupon's saving is the shipping line. An
+        # invalid typed code re-raises CouponRedemptionError (400 at the route
+        # — never silently falls back to an automatic); an automatic winner
+        # whose ``redeem`` loses the last-use race is dropped and the pick is
+        # retried without it (the customer never asked for it, so it must not
+        # fail the checkout). The used_count bump lands in the same unit of
+        # work as the order, so a rolled-back order never burns a use.
+        applied: AppliedDiscount | None = None
+        excluded: set[int] = set()
+        while True:
+            applied = crud_coupon.pick_best(
                 db,
                 code=obj_in.coupon_code,
                 subtotal=subtotal,
+                shipping=shipping_amount,
                 currency=currency,
                 user_id=user_id,
+                exclude_coupon_ids=excluded,
             )
-            crud_coupon.redeem(db, coupon=redeemed_coupon)
+            if applied is None:
+                break
+            try:
+                crud_coupon.redeem(db, coupon=applied.coupon)
+            except CouponRedemptionError:
+                if applied.is_manual:
+                    raise
+                excluded.add(applied.coupon.id)
+                continue
+            break
+
+        # percent/fixed discount the goods subtotal; free_shipping zeroes the
+        # shipping line instead (order.discount stays 0 so the documented
+        # invariant ``total == round(subtotal - discount + shipping, 2)`` holds
+        # and the invoice/CSV render a 0.00 shipping line, no bogus discount row).
+        discount = 0.0
+        redeemed_coupon = applied.coupon if applied is not None else None
+        if applied is not None:
+            if applied.free_shipping:
+                shipping_amount = 0.0
+            else:
+                discount = applied.saving
 
         total = round(subtotal - discount + shipping_amount, 2)
 

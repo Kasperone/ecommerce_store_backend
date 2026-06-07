@@ -32,3 +32,4 @@ class CouponFactory(SQLAlchemyModelFactory):
     starts_at = None
     ends_at = None
     is_active = True
+    is_automatic = False

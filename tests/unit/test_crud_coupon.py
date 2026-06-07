@@ -213,3 +213,189 @@ def test_redeem_at_cap_raises_usage_exhausted(db_session, coupon_factory):
     with pytest.raises(CouponRedemptionError) as exc:
         crud_coupon.redeem(db_session, coupon=c)
     assert exc.value.code == "usage_exhausted"
+
+
+# ---------------------------------------------------------------------------
+# Automatic discounts + free_shipping: effective_saving / get_active_automatic
+# / pick_best
+# ---------------------------------------------------------------------------
+
+from app.crud.coupon import effective_saving  # noqa: E402
+
+
+def test_compute_discount_free_shipping_is_zero_goods_discount():
+    c = CouponFactory.build(discount_type="free_shipping", value=0, currency=None)
+    assert compute_discount(c, 200.0) == 0.0
+
+
+def test_effective_saving_percent_and_fixed_use_goods_discount():
+    pct = CouponFactory.build(discount_type="percent", value=10, currency=None)
+    assert effective_saving(pct, 200.0, 15.0) == 20.0
+    fixed = CouponFactory.build(discount_type="fixed", value=50, currency="USD")
+    assert effective_saving(fixed, 30.0, 15.0) == 30.0  # capped at subtotal
+
+
+def test_effective_saving_free_shipping_is_the_shipping_amount():
+    c = CouponFactory.build(discount_type="free_shipping", value=0, currency=None)
+    assert effective_saving(c, 200.0, 12.5) == 12.5
+    # Free-above already zeroed shipping → the coupon saves nothing.
+    assert effective_saving(c, 200.0, 0.0) == 0.0
+
+
+def test_get_active_automatic_filters(db_session, coupon_factory):
+    auto = coupon_factory(code="AUTO-ON", is_automatic=True)
+    coupon_factory(code="AUTO-OFF", is_automatic=True, is_active=False)
+    coupon_factory(code="MANUAL-1", is_automatic=False)
+    coupon_factory(code="AUTO-FUTURE", is_automatic=True, starts_at=_NOW + timedelta(days=1))
+    coupon_factory(code="AUTO-PAST", is_automatic=True, ends_at=_NOW - timedelta(days=1))
+    coupon_factory(code="AUTO-MAXED", is_automatic=True, max_uses=1, used_count=1)
+    codes = {c.code for c in crud_coupon.get_active_automatic(db_session, now=_NOW)}
+    assert auto.code in codes
+    assert codes.isdisjoint({"AUTO-OFF", "MANUAL-1", "AUTO-FUTURE", "AUTO-PAST", "AUTO-MAXED"})
+
+
+def test_pick_best_nothing_applies_returns_none(db_session):
+    assert (
+        crud_coupon.pick_best(db_session, code=None, subtotal=100.0, shipping=10.0, currency="USD")
+        is None
+    )
+
+
+def test_pick_best_automatic_only(db_session, coupon_factory):
+    auto = coupon_factory(code="AUTO10", is_automatic=True, discount_type="percent", value=10)
+    picked = crud_coupon.pick_best(
+        db_session, code=None, subtotal=100.0, shipping=10.0, currency="USD"
+    )
+    assert picked is not None
+    assert picked.coupon.id == auto.id
+    assert picked.saving == 10.0
+    assert picked.is_manual is False
+    assert picked.free_shipping is False
+
+
+def test_pick_best_manual_only(db_session, coupon_factory):
+    coupon_factory(code="HAND10", discount_type="percent", value=10)
+    picked = crud_coupon.pick_best(
+        db_session, code="hand10", subtotal=100.0, shipping=10.0, currency="USD"
+    )
+    assert picked is not None
+    assert picked.coupon.code == "HAND10"
+    assert picked.is_manual is True
+
+
+def test_pick_best_bigger_automatic_beats_manual(db_session, coupon_factory):
+    coupon_factory(code="HAND5", discount_type="percent", value=5)
+    auto = coupon_factory(code="AUTO20", is_automatic=True, discount_type="percent", value=20)
+    picked = crud_coupon.pick_best(
+        db_session, code="HAND5", subtotal=100.0, shipping=0.0, currency="USD"
+    )
+    assert picked is not None
+    assert picked.coupon.id == auto.id
+    assert picked.saving == 20.0
+    assert picked.is_manual is False
+
+
+def test_pick_best_manual_beats_smaller_automatic(db_session, coupon_factory):
+    coupon_factory(code="HAND25", discount_type="percent", value=25)
+    coupon_factory(code="AUTO10B", is_automatic=True, discount_type="percent", value=10)
+    picked = crud_coupon.pick_best(
+        db_session, code="HAND25", subtotal=100.0, shipping=0.0, currency="USD"
+    )
+    assert picked is not None
+    assert picked.coupon.code == "HAND25"
+    assert picked.is_manual is True
+
+
+def test_pick_best_tie_prefers_manual(db_session, coupon_factory):
+    coupon_factory(code="HANDTIE", discount_type="percent", value=10)
+    coupon_factory(code="AUTOTIE", is_automatic=True, discount_type="percent", value=10)
+    picked = crud_coupon.pick_best(
+        db_session, code="HANDTIE", subtotal=100.0, shipping=0.0, currency="USD"
+    )
+    assert picked is not None
+    assert picked.coupon.code == "HANDTIE"
+
+
+def test_pick_best_tie_between_automatics_prefers_lowest_id(db_session, coupon_factory):
+    first = coupon_factory(code="AUTOTIE1", is_automatic=True, discount_type="percent", value=10)
+    coupon_factory(code="AUTOTIE2", is_automatic=True, discount_type="percent", value=10)
+    picked = crud_coupon.pick_best(
+        db_session, code=None, subtotal=100.0, shipping=0.0, currency="USD"
+    )
+    assert picked is not None
+    assert picked.coupon.id == first.id
+
+
+def test_pick_best_free_shipping_vs_goods_discount(db_session, coupon_factory):
+    coupon_factory(code="AUTOSHIP", is_automatic=True, discount_type="free_shipping", value=0)
+    coupon_factory(code="AUTOPCT5", is_automatic=True, discount_type="percent", value=5)
+    # Shipping 20 > 5% of 100 → free_shipping wins.
+    picked = crud_coupon.pick_best(
+        db_session, code=None, subtotal=100.0, shipping=20.0, currency="USD"
+    )
+    assert picked is not None
+    assert picked.coupon.code == "AUTOSHIP"
+    assert picked.free_shipping is True
+    assert picked.saving == 20.0
+
+
+def test_pick_best_free_shipping_skipped_when_shipping_already_zero(db_session, coupon_factory):
+    # Free-above already zeroed shipping → the free_shipping automatic saves 0
+    # and the goods-discount candidate wins instead.
+    coupon_factory(code="AUTOSHIP0", is_automatic=True, discount_type="free_shipping", value=0)
+    pct = coupon_factory(code="AUTOPCT5B", is_automatic=True, discount_type="percent", value=5)
+    picked = crud_coupon.pick_best(
+        db_session, code=None, subtotal=100.0, shipping=0.0, currency="USD"
+    )
+    assert picked is not None
+    assert picked.coupon.id == pct.id
+    assert picked.free_shipping is False
+
+
+def test_pick_best_invalid_manual_code_raises_despite_automatics(db_session, coupon_factory):
+    # A typed code that fails validation 400s — it never silently falls back to
+    # an eligible automatic.
+    coupon_factory(code="AUTOOK", is_automatic=True, discount_type="percent", value=10)
+    with pytest.raises(CouponRedemptionError) as exc:
+        crud_coupon.pick_best(db_session, code="NOPE", subtotal=100.0, shipping=0.0, currency="USD")
+    assert exc.value.code == "not_found"
+
+
+def test_pick_best_automatic_ineligibility_is_swallowed(db_session, coupon_factory):
+    # Automatics failing per-cart checks (min-order, currency) are skipped, not
+    # raised — they are opportunistic.
+    coupon_factory(code="AUTOMIN", is_automatic=True, min_order_amount=500.0)
+    coupon_factory(
+        code="AUTOEUR", is_automatic=True, discount_type="fixed", value=5, currency="EUR"
+    )
+    assert (
+        crud_coupon.pick_best(db_session, code=None, subtotal=100.0, shipping=0.0, currency="USD")
+        is None
+    )
+
+
+def test_pick_best_exclude_coupon_ids_skips_automatic(db_session, coupon_factory):
+    big = coupon_factory(code="AUTOBIG", is_automatic=True, discount_type="percent", value=20)
+    small = coupon_factory(code="AUTOSMALL", is_automatic=True, discount_type="percent", value=10)
+    picked = crud_coupon.pick_best(
+        db_session,
+        code=None,
+        subtotal=100.0,
+        shipping=0.0,
+        currency="USD",
+        exclude_coupon_ids={big.id},
+    )
+    assert picked is not None
+    assert picked.coupon.id == small.id
+
+
+def test_pick_best_typed_automatic_code_is_single_manual_candidate(db_session, coupon_factory):
+    # Typing an automatic coupon's own code must not duplicate it; it competes
+    # once, flagged manual (so a redeem failure re-raises).
+    auto = coupon_factory(code="AUTOTYPED", is_automatic=True, discount_type="percent", value=10)
+    picked = crud_coupon.pick_best(
+        db_session, code="AUTOTYPED", subtotal=100.0, shipping=0.0, currency="USD"
+    )
+    assert picked is not None
+    assert picked.coupon.id == auto.id
+    assert picked.is_manual is True
