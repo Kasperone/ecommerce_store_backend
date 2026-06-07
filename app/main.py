@@ -110,6 +110,7 @@ from app.api.v1 import (  # noqa: E402
     reviews,
     search,
     shipping,
+    sitemap,
     store_config,
     uploads,
 )
@@ -126,6 +127,7 @@ app.include_router(blocks.router, prefix="/api/v1/blocks", tags=["Blocks"])
 app.include_router(newsletter.router, prefix="/api/v1/newsletter", tags=["Newsletter"])
 app.include_router(payments.router, prefix="/api/v1/payments", tags=["Payments"])
 app.include_router(search.router, prefix="/api/v1/search", tags=["Search"])
+app.include_router(sitemap.router, prefix="/api/v1/sitemap", tags=["Sitemap"])
 app.include_router(shipping.router, prefix="/api/v1/shipping", tags=["Shipping"])
 app.include_router(
     admin_customers.router, prefix="/api/v1/admin/customers", tags=["Admin Customers"]
