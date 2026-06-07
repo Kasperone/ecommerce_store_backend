@@ -334,17 +334,26 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         return OrderStatus(order.status) in _CANCELLABLE
 
     def apply_admin_update(self, db: Session, *, order: Order, obj_in: OrderUpdate) -> Order:
-        """Apply an admin PATCH (status workflow + notes/payment fields).
+        """Apply an admin PATCH (status workflow + notes/payment/tracking fields).
 
         Coerces ``status`` to a real ``OrderStatus`` member (the schema's
         ``use_enum_values`` would otherwise hand us a raw string that the
-        SQLEnum column may reject). Does not flush — the audit writer reads
+        SQLEnum column may reject). Tracking fields are typically set alongside
+        ``status=shipped`` but may be edited on their own afterwards (a no-op
+        status keeps the PATCH valid). Does not flush — the audit writer reads
         ``get_history`` before the route commits.
         """
         update_data = obj_in.model_dump(exclude_unset=True)
         if "status" in update_data and obj_in.status is not None:
             order.status = OrderStatus(obj_in.status)
-        for field in ("payment_method", "payment_intent_id", "notes"):
+        for field in (
+            "payment_method",
+            "payment_intent_id",
+            "notes",
+            "shipping_carrier",
+            "tracking_number",
+            "tracking_url",
+        ):
             if field in update_data:
                 setattr(order, field, update_data[field])
         db.add(order)

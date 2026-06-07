@@ -264,10 +264,14 @@ async def update_order(
     audit: AuditWriter = Depends(get_audit_writer),
 ):
     """
-    Update an order's status (forward workflow) and notes/payment fields (admin).
+    Update an order's status (forward workflow) and notes/payment/tracking
+    fields (admin).
 
-    Cancellation and refunds are not done here — use the cancel endpoint
-    (refunds are Phase B).
+    Shipment tracking (``shipping_carrier`` / ``tracking_number`` /
+    ``tracking_url``) is typically set together with ``status=shipped`` so the
+    shipped email carries the tracking link, and may be edited afterwards via a
+    tracking-only PATCH. Cancellation and refunds are not done here — use the
+    cancel endpoint (refunds are Phase B).
     """
     order = crud_order.get(db, id=order_id)
     if order is None:
