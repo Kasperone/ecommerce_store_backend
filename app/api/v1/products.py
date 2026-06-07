@@ -129,11 +129,18 @@ async def get_product_by_slug(
     db: Session = Depends(get_db),
 ):
     """
-    Get product by slug with category details
+    Get product by slug with category details.
+
+    Never-existed slug -> 404; deactivated product -> 410 Gone. The distinct
+    410 tells crawlers to drop the URL faster than a 404 (SEO blueprint D12)
+    and stops delisted products from being publicly reachable by direct slug.
+    Admin surfaces fetch by integer ID and are unaffected.
     """
     product = crud_product.get_by_slug(db, slug=slug)
     if not product:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+    if not product.is_active:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Product no longer available")
     return product
 
 
