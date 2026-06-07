@@ -542,3 +542,87 @@ async def test_admin_patch_to_refunded_points_at_endpoint(
     # Updated message points the caller at the dedicated endpoint.
     assert "refunds" in resp.json()["detail"]
     assert "POST" in resp.json()["detail"]
+
+
+# ----------------------------------------------------------------------
+# Variant lines (PR-B2) — restock at variant grain
+# ----------------------------------------------------------------------
+
+
+async def test_refund_restock_at_variant_grain(
+    client, user_factory, product_factory, db_session: Session, test_shipping_method_id
+):
+    """A picked variant line restocks at variant grain: the movement carries
+    ``variant_id`` and variant.stock + product.stock move in lock-step."""
+    from app.crud import product_variant as crud_product_variant
+    from app.schemas.product_variant import ProductOptionsMatrixUpdate
+
+    customer = user_factory(email="varrefund-cust@example.com")
+    admin = user_factory(email="varrefund-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=0, price_usd=12.50)
+    matrix = ProductOptionsMatrixUpdate.model_validate(
+        {
+            "options": [
+                {
+                    "name": "Color",
+                    "position": 0,
+                    "values": [{"value": "Red", "position": 0}],
+                }
+            ],
+            "variants": [
+                {
+                    "option_values": ["Red"],
+                    "sku": f"VR-RED-{product.id}",
+                    "initial_stock": 5,
+                    "position": 0,
+                }
+            ],
+        }
+    )
+    crud_product_variant.apply_matrix(db_session, product=product, matrix=matrix)
+    db_session.commit()
+    db_session.refresh(product)
+    red = crud_product_variant.get_for_product(db_session, product_id=product.id)[0]
+
+    body = _order_body(product.id, shipping_method_id=test_shipping_method_id, quantity=2)
+    body["items"][0]["variant_id"] = red.id
+    placed = await client.post("/api/v1/orders/", json=body, headers=_headers(customer))
+    assert placed.status_code == 201, placed.text
+    order_id = placed.json()["id"]
+    paid = await client.patch(
+        f"/api/v1/orders/{order_id}",
+        json={"status": "paid", "payment_method": "stripe"},
+        headers=_headers(admin),
+    )
+    assert paid.status_code == 200, paid.text
+    paid_body = paid.json()
+    db_session.refresh(red)
+    assert red.stock == 3
+
+    resp = await client.post(
+        f"/api/v1/orders/{order_id}/refunds",
+        json={
+            "amount": paid_body["total"],
+            "reason": "customer_request",
+            "restock": True,
+            "items": [{"order_item_id": paid_body["items"][0]["id"], "quantity": 2}],
+        },
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 201, resp.text
+
+    db_session.refresh(red)
+    db_session.refresh(product)
+    assert red.stock == 5
+    assert product.stock == 5
+
+    movement = (
+        db_session.query(InventoryMovement)
+        .filter(
+            InventoryMovement.product_id == product.id,
+            InventoryMovement.reason == "order_refunded",
+        )
+        .one()
+    )
+    assert movement.variant_id == red.id
+    assert movement.delta == 2

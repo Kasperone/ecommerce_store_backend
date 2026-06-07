@@ -14,6 +14,8 @@ from app.crud.coupon import CouponRedemptionError
 from app.crud.order import (
     InsufficientStockError,
     ProductUnavailableError,
+    VariantRequiredError,
+    VariantUnavailableError,
     status_transition_error,
 )
 from app.crud.refund import (
@@ -83,6 +85,16 @@ async def create_order(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Product {exc.product_id} is unavailable",
+        ) from exc
+    except VariantRequiredError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    except VariantUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
         ) from exc
     except InsufficientStockError as exc:
         raise HTTPException(

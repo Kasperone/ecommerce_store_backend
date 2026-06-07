@@ -171,6 +171,14 @@ class QuoteItem(BaseModel):
     product_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("products.id", ondelete="SET NULL"), index=True
     )
+    # Optional variant ref — SET NULL on variant deletion (the line keeps its
+    # snapshotted ``description`` / ``unit_price``). Conversion detects the
+    # stale case (product has active variants but the line lost its ref) and
+    # 422s ``variant_unavailable`` rather than silently converting at product
+    # grain.
+    variant_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("product_variants.id", ondelete="SET NULL"), index=True
+    )
     description: Mapped[str] = mapped_column(String(500))
     quantity: Mapped[int] = mapped_column(Integer)
     unit_price: Mapped[float] = mapped_column(Float)

@@ -192,3 +192,24 @@ def test_multiple_orders_one_row_each():
     )
     assert len(rows) == 4  # header + 3
     assert [r[0] for r in rows[1:]] == ["ORD-1", "ORD-2", "ORD-3"]
+
+
+def test_items_packed_with_variant_title():
+    """A variant line packs as ``qty x name — variant_title (sku)``; the SKU
+    parenthetical is unchanged (it already snapshots the variant SKU)."""
+    order = _order(
+        items=[
+            OrderItem(
+                product_name="Widget",
+                variant_title="Red / XL",
+                product_sku="WD-RED-XL",
+                quantity=2,
+                unit_price=50.0,
+                total_price=100.0,
+            ),
+            _item(name="Gadget", sku=None, qty=1),
+        ]
+    )
+    rows = _parse(build_orders_csv([order]))
+    row = dict(zip(CSV_HEADERS, rows[1], strict=True))
+    assert row["items"] == "2× Widget — Red / XL (WD-RED-XL); 1× Gadget"

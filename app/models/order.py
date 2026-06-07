@@ -134,9 +134,18 @@ class OrderItem(BaseModel):
 
     # Product
     product_id: Mapped[int] = mapped_column(Integer, ForeignKey("products.id"))
+    # Optional variant ref — SET NULL on variant deletion so the order line
+    # survives with its snapshots (same discipline as coupon_code /
+    # shipping_method_name). NULL for variantless products.
+    variant_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("product_variants.id", ondelete="SET NULL"), index=True
+    )
 
     # Item details (snapshot at time of order)
     product_name: Mapped[str] = mapped_column(String(200))
+    # Variant title snapshot ("Red / XL") — set iff the line was ordered as a
+    # variant; outlives the variant row (SET NULL keeps history readable).
+    variant_title: Mapped[str | None] = mapped_column(String(200))
     product_sku: Mapped[str | None] = mapped_column(String(100))
     quantity: Mapped[int] = mapped_column(Integer)
     unit_price: Mapped[float] = mapped_column(Float)

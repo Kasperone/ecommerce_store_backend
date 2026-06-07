@@ -19,6 +19,10 @@ class OrderItemBase(BaseSchema):
     """Base order item schema"""
 
     product_id: int
+    # Optional variant selection. Required (enforced in the CRUD layer, 422)
+    # when the product has active variants; rejected when the variant is
+    # missing/inactive/another product's. NULL for variantless products.
+    variant_id: int | None = None
     quantity: int = Field(..., gt=0)
 
 
@@ -33,6 +37,9 @@ class OrderItemResponse(OrderItemBase, TimestampSchema):
 
     order_id: int
     product_name: str
+    # Variant title snapshot ("Red / XL") — null for variantless lines.
+    # Additive; powers the order-detail display + reorder ("buy again").
+    variant_title: str | None = None
     product_sku: str | None
     unit_price: float
     total_price: float
