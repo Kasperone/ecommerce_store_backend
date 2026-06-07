@@ -557,3 +557,181 @@ async def test_movements_pagination(client, user_factory, product_factory, db_se
         "/api/v1/admin/inventory/movements?page=2&page_size=20", headers=_headers(admin)
     )
     assert len(p2.json()["items"]) == 5
+
+
+# ---------------------------------------------------------------------------
+# variant-scoped inventory (adjust / restock / transfer / levels)
+# ---------------------------------------------------------------------------
+
+
+async def _make_variant_product(client, admin, product) -> dict:
+    """Give ``product`` a Red/Blue variant pair via the matrix PUT; returns
+    ``{title: variant dict}``."""
+    resp = await client.put(
+        f"/api/v1/products/{product.id}/options",
+        json={
+            "options": [
+                {
+                    "name": "Color",
+                    "position": 0,
+                    "values": [{"value": "Red", "position": 0}, {"value": "Blue", "position": 1}],
+                }
+            ],
+            "variants": [
+                {"option_values": ["Red"], "initial_stock": 5},
+                {"option_values": ["Blue"], "initial_stock": 3},
+            ],
+        },
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200, resp.text
+    return {v["title"]: v for v in resp.json()["variants"]}
+
+
+async def test_adjust_variant_scoped(client, db_session, user_factory, product_factory):
+    admin = user_factory(email="var-inv-adjust@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=0)
+    variants = await _make_variant_product(client, admin, product)
+    wh_id = _default_wh_id(db_session)
+
+    resp = await client.patch(
+        f"/api/v1/admin/inventory/products/{product.id}/stock",
+        json={"warehouse_id": wh_id, "variant_id": variants["Red"]["id"], "new_stock": 9},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["variant_id"] == variants["Red"]["id"]
+    assert body["delta"] == 4  # 5 -> 9
+    assert body["resulting_stock"] == 9
+    db_session.refresh(product)
+    assert product.stock == 9 + 3  # variant sum maintained
+
+
+async def test_adjust_422_matrix(client, db_session, user_factory, product_factory):
+    """variant_id required for variant products, rejected for variantless ones,
+    404 when it belongs to another product."""
+    admin = user_factory(email="var-inv-422@example.com", role=UserRole.ADMIN)
+    plain = product_factory(stock=5)
+    varied = product_factory(stock=0)
+    variants = await _make_variant_product(client, admin, varied)
+    wh_id = _default_wh_id(db_session)
+
+    missing = await client.patch(
+        f"/api/v1/admin/inventory/products/{varied.id}/stock",
+        json={"warehouse_id": wh_id, "new_stock": 9},
+        headers=_headers(admin),
+    )
+    assert missing.status_code == 422
+    assert "variant_id is required" in missing.json()["detail"]
+
+    forbidden = await client.patch(
+        f"/api/v1/admin/inventory/products/{plain.id}/stock",
+        json={"warehouse_id": wh_id, "variant_id": variants["Red"]["id"], "new_stock": 9},
+        headers=_headers(admin),
+    )
+    assert forbidden.status_code == 422
+    assert "has no variants" in forbidden.json()["detail"]
+
+    other = product_factory(stock=0)
+    other_variants = await _make_variant_product(client, admin, other)
+    foreign = await client.patch(
+        f"/api/v1/admin/inventory/products/{varied.id}/stock",
+        json={"warehouse_id": wh_id, "variant_id": other_variants["Red"]["id"], "new_stock": 9},
+        headers=_headers(admin),
+    )
+    assert foreign.status_code == 404
+
+
+async def test_restock_variant_scoped(client, db_session, user_factory, product_factory):
+    admin = user_factory(email="var-inv-restock@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=0)
+    variants = await _make_variant_product(client, admin, product)
+    wh_id = _default_wh_id(db_session)
+
+    resp = await client.post(
+        f"/api/v1/admin/inventory/products/{product.id}/restock",
+        json={"warehouse_id": wh_id, "variant_id": variants["Blue"]["id"], "quantity": 7},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["variant_id"] == variants["Blue"]["id"]
+    assert resp.json()["resulting_stock"] == 10  # 3 + 7
+    db_session.refresh(product)
+    assert product.stock == 5 + 10
+
+    missing = await client.post(
+        f"/api/v1/admin/inventory/products/{product.id}/restock",
+        json={"warehouse_id": wh_id, "quantity": 1},
+        headers=_headers(admin),
+    )
+    assert missing.status_code == 422
+
+
+async def test_transfer_variant_scoped(client, db_session, user_factory, product_factory):
+    admin = user_factory(email="var-inv-transfer@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=0)
+    variants = await _make_variant_product(client, admin, product)
+    from app.models.warehouse import Warehouse
+
+    eu = Warehouse(name="EU-VAR", code="EU-VAR", is_active=True, is_default=False)
+    db_session.add(eu)
+    db_session.commit()
+    wh_id = _default_wh_id(db_session)
+
+    resp = await client.post(
+        "/api/v1/admin/inventory/transfer",
+        json={
+            "product_id": product.id,
+            "variant_id": variants["Red"]["id"],
+            "from_warehouse_id": wh_id,
+            "to_warehouse_id": eu.id,
+            "quantity": 2,
+        },
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["from_resulting_stock"] == 3
+    assert resp.json()["to_resulting_stock"] == 2
+    db_session.refresh(product)
+    assert product.stock == 8  # total unchanged
+
+    # The variant's own stock is unchanged too (sum across warehouses).
+    red = await client.get(f"/api/v1/products/{product.id}/variants", headers=_headers(admin))
+    assert {v["title"]: v["stock"] for v in red.json()} == {"Red": 5, "Blue": 3}
+
+    missing = await client.post(
+        "/api/v1/admin/inventory/transfer",
+        json={
+            "product_id": product.id,
+            "from_warehouse_id": wh_id,
+            "to_warehouse_id": eu.id,
+            "quantity": 1,
+        },
+        headers=_headers(admin),
+    )
+    assert missing.status_code == 422
+
+
+async def test_levels_grouped_per_variant(client, db_session, user_factory, product_factory):
+    admin = user_factory(email="var-inv-levels@example.com", role=UserRole.ADMIN)
+    plain = product_factory(stock=4)
+    varied = product_factory(stock=0)
+    variants = await _make_variant_product(client, admin, varied)
+
+    varied_levels = await client.get(
+        f"/api/v1/admin/inventory/products/{varied.id}/levels", headers=_headers(admin)
+    )
+    assert varied_levels.status_code == 200
+    rows = varied_levels.json()
+    assert {(r["variant_id"], r["variant_title"], r["quantity"]) for r in rows} == {
+        (variants["Red"]["id"], "Red", 5),
+        (variants["Blue"]["id"], "Blue", 3),
+    }
+
+    # Variantless products keep the product-grain breakdown (variant fields null).
+    plain_levels = await client.get(
+        f"/api/v1/admin/inventory/products/{plain.id}/levels", headers=_headers(admin)
+    )
+    assert plain_levels.status_code == 200
+    assert [(r["variant_id"], r["quantity"]) for r in plain_levels.json()] == [(None, 4)]

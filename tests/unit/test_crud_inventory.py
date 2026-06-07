@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import pytest
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 
 from app.crud import inventory as crud_inventory
+from app.crud import warehouse as crud_warehouse
 from app.models.inventory_movement import InventoryMovement, InventoryMovementReason
+from app.models.product_variant import ProductOption, ProductOptionValue, ProductVariant
 from app.models.warehouse import StockLevel, Warehouse
 
 pytestmark = pytest.mark.integration
@@ -21,6 +24,24 @@ def _make_warehouse(db_session, code: str) -> Warehouse:
     db_session.add(wh)
     db_session.flush()
     return wh
+
+
+def _make_variant(db_session, product, value: str = "Red") -> ProductVariant:
+    """Materialise a minimal one-option variant directly (no matrix machinery)."""
+    option = ProductOption(product_id=product.id, name="Color", position=0)
+    option.values.append(ProductOptionValue(value=value, position=0))
+    db_session.add(option)
+    db_session.flush()
+    variant = ProductVariant(
+        product_id=product.id,
+        title=value,
+        option_signature=str(option.values[0].id),
+        stock=0,
+    )
+    variant.option_values = [option.values[0]]
+    db_session.add(variant)
+    db_session.flush()
+    return variant
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +181,129 @@ def test_apply_delta_allow_negative_permits_backorder(db_session, product_factor
 
     assert movement.resulting_stock == -3
     assert product.stock == -3
+
+
+# ---------------------------------------------------------------------------
+# apply_delta — variant grain
+# ---------------------------------------------------------------------------
+
+
+def test_apply_delta_variant_maintains_all_three_aggregates(db_session, product_factory):
+    """The variant branch keeps the (level, variant.stock, product.stock)
+    triple in lock-step."""
+    product = product_factory(stock=0)
+    variant = _make_variant(db_session, product)
+
+    movement = crud_inventory.apply_delta(
+        db_session,
+        product=product,
+        delta=5,
+        reason=InventoryMovementReason.RESTOCK,
+        variant=variant,
+    )
+    db_session.flush()
+
+    assert movement.variant_id == variant.id
+    assert movement.resulting_stock == 5
+    assert variant.stock == 5
+    assert product.stock == 5
+    level = (
+        db_session.query(StockLevel)
+        .filter(StockLevel.product_id == product.id, StockLevel.variant_id == variant.id)
+        .one()
+    )
+    assert level.quantity == 5
+
+    crud_inventory.apply_delta(
+        db_session,
+        product=product,
+        delta=-2,
+        reason=InventoryMovementReason.MANUAL_ADJUSTMENT,
+        variant=variant,
+    )
+    db_session.flush()
+    assert variant.stock == 3
+    assert product.stock == 3
+    assert level.quantity == 3
+
+
+def test_apply_delta_variant_level_seeds_zero_never_unallocated(db_session, product_factory):
+    """A variant-grain level never seeds from the product's unallocated stock —
+    a decrement against an unmaterialised variant level fails even though the
+    product has (product-grain) stock."""
+    product = product_factory(stock=10)
+    variant = _make_variant(db_session, product)
+
+    with pytest.raises(ValueError, match="negative"):
+        crud_inventory.apply_delta(
+            db_session,
+            product=product,
+            delta=-1,
+            reason=InventoryMovementReason.ORDER_PLACED,
+            variant=variant,
+        )
+
+
+def test_get_level_quantity_variant_missing_row_is_zero(db_session, product_factory):
+    """No synthesis at variant grain: a missing level reads 0 (the order-create
+    guard for a variant whose level was never materialised)."""
+    product = product_factory(stock=10)
+    variant = _make_variant(db_session, product)
+    default = crud_warehouse.get_default(db_session)
+    assert default is not None
+
+    assert (
+        crud_inventory.get_level_quantity(
+            db_session, product=product, warehouse_id=default.id, variant=variant
+        )
+        == 0
+    )
+    # The product-grain read still synthesises unallocated default stock.
+    assert (
+        crud_inventory.get_level_quantity(db_session, product=product, warehouse_id=default.id)
+        == 10
+    )
+
+
+def test_default_unallocated_excludes_variant_stock(db_session, product_factory):
+    """Variant stock is never 'unallocated' — once all stock lives at variant
+    grain, the product-grain default read reports 0."""
+    product = product_factory(stock=0)
+    variant = _make_variant(db_session, product)
+    crud_inventory.apply_delta(
+        db_session,
+        product=product,
+        delta=8,
+        reason=InventoryMovementReason.RESTOCK,
+        variant=variant,
+    )
+    db_session.flush()
+    default = crud_warehouse.get_default(db_session)
+    assert default is not None
+
+    # Remove the product-grain NULL row if any was materialised (none should be).
+    assert (
+        crud_inventory.get_level_quantity(db_session, product=product, warehouse_id=default.id) == 0
+    )
+
+
+def test_stock_levels_nulls_not_distinct_unique(db_session, product_factory):
+    """PG16 NULLS NOT DISTINCT: two NULL-variant rows for the same (product,
+    warehouse) collide like any other duplicate."""
+    product = product_factory(stock=0)
+    default = crud_warehouse.get_default(db_session)
+    assert default is not None
+
+    db_session.add(
+        StockLevel(product_id=product.id, warehouse_id=default.id, variant_id=None, quantity=1)
+    )
+    db_session.flush()
+    db_session.add(
+        StockLevel(product_id=product.id, warehouse_id=default.id, variant_id=None, quantity=2)
+    )
+    with pytest.raises(IntegrityError, match="uq_stock_levels_product_warehouse_variant"):
+        db_session.flush()
+    db_session.rollback()
 
 
 # ---------------------------------------------------------------------------

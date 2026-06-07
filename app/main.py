@@ -105,6 +105,7 @@ from app.api.v1 import (  # noqa: E402
     orders,
     pages,
     payments,
+    product_variants,
     products,
     quotes,
     reviews,
@@ -168,6 +169,10 @@ app.include_router(uploads.router, prefix="/api/v1/products", tags=["Product Ima
 # Customer + public reviews are nested under products (a review has no meaning
 # without its product). Paths surface as /api/v1/products/{id}/reviews...
 app.include_router(reviews.router, prefix="/api/v1/products", tags=["Reviews"])
+# Admin option/variant matrix routes are nested under products (a variant has
+# no meaning without its product). Paths surface as
+# /api/v1/products/{id}/options and /api/v1/products/{id}/variants...
+app.include_router(product_variants.router, prefix="/api/v1/products", tags=["Product Variants"])
 app.include_router(account.router, prefix="/api/v1/me", tags=["Account"])
 app.include_router(addresses.router, prefix="/api/v1/addresses", tags=["Addresses"])
 app.include_router(quotes.router, prefix="/api/v1/quotes", tags=["Quotes"])

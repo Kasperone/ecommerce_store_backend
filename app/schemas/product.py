@@ -4,6 +4,7 @@ from pydantic import Field, computed_field, model_validator
 
 from app.schemas.base import BaseSchema, TimestampSchema
 from app.schemas.category import CategoryResponse
+from app.schemas.product_variant import ProductOptionResponse, ProductVariantPublic
 
 
 class ProductImageResponse(TimestampSchema):
@@ -181,6 +182,11 @@ class ProductResponse(ProductBase, TimestampSchema):
     """Schema for product response"""
 
     images: list[ProductImageResponse] = Field(default_factory=list)
+    # True when the product has at least one active variant (read from the
+    # model's ``has_variants`` property). Additive: variantless products keep
+    # today's shape with ``has_variants=False``. List endpoints eager-load
+    # ``Product.variants`` so this doesn't N+1.
+    has_variants: bool = False
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -190,9 +196,20 @@ class ProductResponse(ProductBase, TimestampSchema):
 
 
 class ProductWithCategory(ProductResponse):
-    """Product response with category details"""
+    """Product response with category details (the detail endpoints).
+
+    Carries the option/variant matrix for the PDP: ``options`` with their
+    values, and **active** variants only (``variants`` reads the model's
+    ``active_variants`` property via its validation alias). Both default to
+    empty lists — variantless products are byte-for-byte unchanged apart from
+    the additive keys.
+    """
 
     category: CategoryResponse | None = None
+    options: list[ProductOptionResponse] = Field(default_factory=list)
+    variants: list[ProductVariantPublic] = Field(
+        default_factory=list, validation_alias="active_variants"
+    )
 
 
 class ProductListResponse(BaseSchema):

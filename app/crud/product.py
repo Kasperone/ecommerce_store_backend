@@ -1,8 +1,11 @@
+from typing import Any
+
 from sqlalchemy import nulls_last, or_
 from sqlalchemy.orm import Session, selectinload
 
 from app.crud.base import CRUDBase
 from app.models.product import Product
+from app.models.product_variant import ProductOption, ProductVariant
 from app.schemas.product import ProductCreate, ProductUpdate
 
 # Whitelisted sort columns for the public product list. Keys are the API-facing
@@ -15,12 +18,25 @@ SORTABLE_COLUMNS = {
 }
 
 
+# Detail-path eager loads: the PDP serializes options (with values) + active
+# variants (with their option-value links), so the detail CRUD reads pull them
+# in two selectin passes instead of lazy N+1s at serialization time.
+_DETAIL_OPTIONS = (
+    selectinload(Product.options).selectinload(ProductOption.values),
+    selectinload(Product.variants).selectinload(ProductVariant.option_values),
+)
+
+
 class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
     """CRUD operations for Product model"""
 
+    def get(self, db: Session, id: Any) -> Product | None:
+        """Get a single product by ID with the variant matrix eager-loaded."""
+        return db.query(Product).options(*_DETAIL_OPTIONS).filter(Product.id == id).first()
+
     def get_by_slug(self, db: Session, *, slug: str) -> Product | None:
         """
-        Get product by slug
+        Get product by slug (variant matrix eager-loaded for the PDP)
 
         Args:
             db: Database session
@@ -29,7 +45,7 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
         Returns:
             Product object or None
         """
-        return db.query(Product).filter(Product.slug == slug).first()
+        return db.query(Product).options(*_DETAIL_OPTIONS).filter(Product.slug == slug).first()
 
     def get_by_sku(self, db: Session, *, sku: str) -> Product | None:
         """
@@ -122,6 +138,10 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
         ordering = column.asc() if order == "asc" else column.desc()
         query = query.order_by(nulls_last(ordering), Product.id.asc())
 
+        # The list response carries ``has_variants`` (a property over
+        # Product.variants) — one selectin pass instead of a per-row lazy load.
+        query = query.options(selectinload(Product.variants))
+
         # Pagination
         return query.offset(skip).limit(limit).all()
 
@@ -185,6 +205,7 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
         """
         return (
             db.query(Product)
+            .options(selectinload(Product.variants))
             .filter(Product.is_featured.is_(True))
             .filter(Product.is_active.is_(True))
             .limit(limit)

@@ -68,6 +68,7 @@ class PriceHistory(BaseModel):
         Index(
             "ix_price_history_lookup",
             "product_id",
+            "variant_id",
             "currency",
             "effective_from",
         ),
@@ -75,6 +76,12 @@ class PriceHistory(BaseModel):
 
     product_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("products.id", ondelete="CASCADE"), index=True
+    )
+    # NULL = the product-grain trail (today's behavior); set = a per-variant
+    # trail. Omnibus is per-offer — a variant price cut legally needs its own
+    # 30-day-low history. CASCADE like ``product_id`` (informational only).
+    variant_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("product_variants.id", ondelete="CASCADE"), index=True
     )
     currency: Mapped[str] = mapped_column(String(3))
     price: Mapped[float] = mapped_column(Float)
