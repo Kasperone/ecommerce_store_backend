@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, computed_field, model_validator
 
@@ -50,6 +50,21 @@ class ProductBase(BaseSchema):
     # EN field when unset. Mirrors CategoryBase.name_pl/description_pl.
     name_pl: Annotated[str | None, Field(min_length=1, max_length=200)] = None
     description_pl: str | None = None
+
+    # Merchant identity (SEO blueprint D11) — feeds PDP JSON-LD + merchant
+    # feeds. All optional; ``brand`` falls back to the store Organization in
+    # JSON-LD, ``condition`` defaults to 'new'.
+    brand: Annotated[str | None, Field(max_length=100)] = None
+    gtin: Annotated[str | None, Field(max_length=14)] = None
+    mpn: Annotated[str | None, Field(max_length=70)] = None
+    condition: Literal["new", "refurbished", "used"] = "new"
+
+    # SEO meta (per locale) — mirrors CategoryBase; PDP falls back to
+    # name / description when unset. Lengths match the DB CHECKs (70/160).
+    meta_title: Annotated[str | None, Field(max_length=70)] = None
+    meta_description: Annotated[str | None, Field(max_length=160)] = None
+    meta_title_pl: Annotated[str | None, Field(max_length=70)] = None
+    meta_description_pl: Annotated[str | None, Field(max_length=160)] = None
 
     # Multi-currency prices — individually optional, at least one required on create.
     # The DB-level CHECK constraint (ck_products_at_least_one_price) enforces the
@@ -116,6 +131,16 @@ class ProductUpdate(BaseSchema):
 
     name_pl: Annotated[str | None, Field(min_length=1, max_length=200)] = None
     description_pl: str | None = None
+
+    brand: Annotated[str | None, Field(max_length=100)] = None
+    gtin: Annotated[str | None, Field(max_length=14)] = None
+    mpn: Annotated[str | None, Field(max_length=70)] = None
+    condition: Literal["new", "refurbished", "used"] | None = None
+
+    meta_title: Annotated[str | None, Field(max_length=70)] = None
+    meta_description: Annotated[str | None, Field(max_length=160)] = None
+    meta_title_pl: Annotated[str | None, Field(max_length=70)] = None
+    meta_description_pl: Annotated[str | None, Field(max_length=160)] = None
 
     price_usd: Annotated[float | None, Field(gt=0)] = None
     price_pln: Annotated[float | None, Field(gt=0)] = None
