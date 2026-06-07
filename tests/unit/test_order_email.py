@@ -182,6 +182,79 @@ def test_unknown_event_sends_nothing(captured_emails):
     assert captured_emails == []
 
 
+# --- shipment tracking (shipped event) ----------------------------------------
+
+
+def _make_shipped_order(**tracking) -> Order:
+    order = _make_order()
+    order.status = OrderStatus.SHIPPED
+    for field, value in tracking.items():
+        setattr(order, field, value)
+    return order
+
+
+def test_shipped_includes_carrier_number_and_tracking_link(captured_emails):
+    order = _make_shipped_order(
+        shipping_carrier="DHL",
+        tracking_number="JD014600003SE28X",
+        tracking_url="https://track.example.com/JD014600003SE28X",
+    )
+    order_email.send_order_event(_DB, order, "shipped")
+    intro = captured_emails[0]["intro_html"]
+    assert "Carrier: DHL" in intro
+    assert "Tracking number: JD014600003SE28X" in intro
+    assert 'href="https://track.example.com/JD014600003SE28X"' in intro
+    assert "Track your shipment" in intro
+
+
+def test_shipped_without_tracking_url_has_no_link(captured_emails):
+    # Carrier + number recorded but no URL → show them, render no link (the
+    # service never guesses a carrier URL).
+    order = _make_shipped_order(shipping_carrier="DHL", tracking_number="JD014600003SE28X")
+    order_email.send_order_event(_DB, order, "shipped")
+    intro = captured_emails[0]["intro_html"]
+    assert "Carrier: DHL" in intro
+    assert "Tracking number: JD014600003SE28X" in intro
+    assert "Track your shipment" not in intro
+    # The only link left is the standard "view your order" one.
+    assert intro.count("<a ") == 1
+
+
+def test_shipped_without_tracking_reads_as_before(captured_emails):
+    order_email.send_order_event(_DB, _make_order(), "shipped")
+    intro = captured_emails[0]["intro_html"]
+    for label in ("Carrier", "Tracking number", "Track your shipment"):
+        assert label not in intro
+
+
+def test_shipped_polish_tracking_labels(captured_emails):
+    order = _make_shipped_order(
+        shipping_carrier="InPost",
+        tracking_number="620000000000000000000001",
+        tracking_url="https://inpost.pl/sledzenie-przesylek?number=620000000000000000000001",
+    )
+    order.user.locale = "pl"
+    order_email.send_order_event(_DB, order, "shipped")
+    intro = captured_emails[0]["intro_html"]
+    assert "Przewoźnik: InPost" in intro
+    assert "Numer przesyłki: 620000000000000000000001" in intro
+    assert "Śledź swoją przesyłkę" in intro
+
+
+def test_non_shipped_events_never_show_tracking(captured_emails):
+    # Tracking is a shipped-email concern; a later delivered email stays clean.
+    order = _make_shipped_order(
+        shipping_carrier="DHL",
+        tracking_number="JD014600003SE28X",
+        tracking_url="https://track.example.com/JD014600003SE28X",
+    )
+    order.status = OrderStatus.DELIVERED
+    order_email.send_order_event(_DB, order, "delivered")
+    intro = captured_emails[0]["intro_html"]
+    assert "DHL" not in intro
+    assert "track.example.com" not in intro
+
+
 def test_send_failure_is_swallowed(captured_emails, monkeypatch):
     def _boom(**kwargs):
         raise RuntimeError("resend down")

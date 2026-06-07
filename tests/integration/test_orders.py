@@ -475,3 +475,165 @@ async def test_customer_cannot_patch(
         f"/api/v1/orders/{order_id}", json={"status": "paid"}, headers=_headers(customer)
     )
     assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Shipment tracking (admin PATCH + customer exposure)
+# ---------------------------------------------------------------------------
+
+
+async def _create_order_id(client, customer, product, shipping_method_id: int) -> int:
+    created = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=1, shipping_method_id=shipping_method_id),
+        headers=_headers(customer),
+    )
+    assert created.status_code == 201
+    return created.json()["id"]
+
+
+async def test_admin_sets_tracking_on_ship_and_audit_records_it(
+    client, user_factory, product_factory, db_session: Session, test_shipping_method_id
+):
+    customer = user_factory(email="track-cust@example.com")
+    admin = user_factory(email="track-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10, price_usd=10.0)
+    order_id = await _create_order_id(client, customer, product, test_shipping_method_id)
+    await client.patch(
+        f"/api/v1/orders/{order_id}", json={"status": "paid"}, headers=_headers(admin)
+    )
+
+    resp = await client.patch(
+        f"/api/v1/orders/{order_id}",
+        json={
+            "status": "shipped",
+            "shipping_carrier": "DHL",
+            "tracking_number": "JD014600003SE28X",
+            "tracking_url": "https://track.example.com/JD014600003SE28X",
+        },
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "shipped"
+    assert body["shipping_carrier"] == "DHL"
+    assert body["tracking_number"] == "JD014600003SE28X"
+    assert body["tracking_url"] == "https://track.example.com/JD014600003SE28X"
+
+    # The audit diff carries the tracking fields like any other admin change.
+    event = (
+        db_session.query(AdminAuditEvent)
+        .filter(
+            AdminAuditEvent.resource_type == "order",
+            AdminAuditEvent.resource_id == order_id,
+            AdminAuditEvent.action == "update",
+        )
+        .order_by(AdminAuditEvent.id.desc())
+        .first()
+    )
+    assert event is not None
+    assert event.payload["after"]["shipping_carrier"] == "DHL"
+    assert event.payload["after"]["tracking_number"] == "JD014600003SE28X"
+    assert event.payload["after"]["tracking_url"] == "https://track.example.com/JD014600003SE28X"
+    assert event.payload["before"]["tracking_number"] is None
+
+
+async def test_admin_edits_tracking_after_ship_without_status(
+    client, user_factory, product_factory, test_shipping_method_id
+):
+    customer = user_factory(email="trackedit-cust@example.com")
+    admin = user_factory(email="trackedit-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10, price_usd=10.0)
+    order_id = await _create_order_id(client, customer, product, test_shipping_method_id)
+    await client.patch(
+        f"/api/v1/orders/{order_id}", json={"status": "paid"}, headers=_headers(admin)
+    )
+    await client.patch(
+        f"/api/v1/orders/{order_id}",
+        json={"status": "shipped", "shipping_carrier": "DHL", "tracking_number": "WRONG-1"},
+        headers=_headers(admin),
+    )
+
+    # Tracking-only PATCH (no status) corrects the number and adds the URL.
+    resp = await client.patch(
+        f"/api/v1/orders/{order_id}",
+        json={
+            "tracking_number": "  JD014600003SE28X  ",  # trimmed
+            "tracking_url": "https://track.example.com/JD014600003SE28X",
+        },
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "shipped"  # unchanged
+    assert body["shipping_carrier"] == "DHL"  # untouched (not in the PATCH)
+    assert body["tracking_number"] == "JD014600003SE28X"
+    assert body["tracking_url"] == "https://track.example.com/JD014600003SE28X"
+
+
+async def test_admin_blank_tracking_value_clears_to_null(
+    client, user_factory, product_factory, test_shipping_method_id
+):
+    customer = user_factory(email="trackclear-cust@example.com")
+    admin = user_factory(email="trackclear-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10, price_usd=10.0)
+    order_id = await _create_order_id(client, customer, product, test_shipping_method_id)
+    await client.patch(
+        f"/api/v1/orders/{order_id}", json={"status": "paid"}, headers=_headers(admin)
+    )
+    await client.patch(
+        f"/api/v1/orders/{order_id}",
+        json={
+            "status": "shipped",
+            "shipping_carrier": "DHL",
+            "tracking_number": "JD014600003SE28X",
+            "tracking_url": "https://track.example.com/JD014600003SE28X",
+        },
+        headers=_headers(admin),
+    )
+
+    resp = await client.patch(
+        f"/api/v1/orders/{order_id}",
+        json={"tracking_url": "   "},  # whitespace-only → cleared
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["tracking_url"] is None
+    assert body["tracking_number"] == "JD014600003SE28X"  # untouched
+
+
+async def test_customer_sees_tracking_on_detail_and_list(
+    client, user_factory, product_factory, test_shipping_method_id
+):
+    customer = user_factory(email="trackview-cust@example.com")
+    admin = user_factory(email="trackview-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10, price_usd=10.0)
+    order_id = await _create_order_id(client, customer, product, test_shipping_method_id)
+    await client.patch(
+        f"/api/v1/orders/{order_id}", json={"status": "paid"}, headers=_headers(admin)
+    )
+    await client.patch(
+        f"/api/v1/orders/{order_id}",
+        json={
+            "status": "shipped",
+            "shipping_carrier": "DHL",
+            "tracking_number": "JD014600003SE28X",
+            "tracking_url": "https://track.example.com/JD014600003SE28X",
+        },
+        headers=_headers(admin),
+    )
+
+    detail = await client.get(f"/api/v1/orders/{order_id}", headers=_headers(customer))
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["shipping_carrier"] == "DHL"
+    assert body["tracking_number"] == "JD014600003SE28X"
+    assert body["tracking_url"] == "https://track.example.com/JD014600003SE28X"
+
+    listed = await client.get("/api/v1/orders/", headers=_headers(customer))
+    assert listed.status_code == 200
+    row = next(item for item in listed.json()["items"] if item["id"] == order_id)
+    assert row["shipping_carrier"] == "DHL"
+    assert row["tracking_number"] == "JD014600003SE28X"
+    assert row["tracking_url"] == "https://track.example.com/JD014600003SE28X"
