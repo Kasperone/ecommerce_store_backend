@@ -1,5 +1,5 @@
 from sqlalchemy import nulls_last, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.crud.base import CRUDBase
 from app.models.product import Product
@@ -188,6 +188,23 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
             .filter(Product.is_featured.is_(True))
             .filter(Product.is_active.is_(True))
             .limit(limit)
+            .all()
+        )
+
+    def get_sitemap_entries(self, db: Session) -> list[Product]:
+        """
+        All active products with their images eagerly loaded, for the public
+        sitemap-source endpoint (SEO blueprint D7).
+
+        Unpaginated by design: the consumer is the frontend's sitemap
+        generator, which needs the complete catalog in one pass. ``id`` order
+        keeps output stable between calls.
+        """
+        return (
+            db.query(Product)
+            .options(selectinload(Product.images))
+            .filter(Product.is_active.is_(True))
+            .order_by(Product.id)
             .all()
         )
 

@@ -63,6 +63,14 @@ class CRUDCategory(CRUDBase[Category, CategoryCreate, CategoryUpdate]):
             .all()
         )
 
+    def get_sitemap_entries(self, db: Session) -> list[Category]:
+        """
+        All active categories for the public sitemap-source endpoint (SEO
+        blueprint D7). Unpaginated by design — the frontend's sitemap
+        generator needs the full set; ``id`` order keeps output stable.
+        """
+        return db.query(Category).filter(Category.is_active.is_(True)).order_by(Category.id).all()
+
     def get_all_ordered(self, db: Session) -> list[Category]:
         """Every row ordered by ``(parent_id NULLS FIRST, sort_order, id)``.
 
