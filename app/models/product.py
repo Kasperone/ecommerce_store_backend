@@ -42,6 +42,26 @@ class Product(BaseModel):
             "height_cm IS NULL OR height_cm >= 0",
             name="ck_products_height_cm_nonneg",
         ),
+        CheckConstraint(
+            "meta_title IS NULL OR char_length(meta_title) <= 70",
+            name="ck_products_meta_title_len",
+        ),
+        CheckConstraint(
+            "meta_description IS NULL OR char_length(meta_description) <= 160",
+            name="ck_products_meta_description_len",
+        ),
+        CheckConstraint(
+            "meta_title_pl IS NULL OR char_length(meta_title_pl) <= 70",
+            name="ck_products_meta_title_pl_len",
+        ),
+        CheckConstraint(
+            "meta_description_pl IS NULL OR char_length(meta_description_pl) <= 160",
+            name="ck_products_meta_description_pl_len",
+        ),
+        CheckConstraint(
+            "condition IN ('new', 'refurbished', 'used')",
+            name="ck_products_condition_valid",
+        ),
     )
 
     # Basic info
@@ -55,6 +75,24 @@ class Product(BaseModel):
     # keep their single slug (URL i18n is out of scope).
     name_pl: Mapped[str | None] = mapped_column(String(200))
     description_pl: Mapped[str | None] = mapped_column(Text)
+
+    # Merchant identity (SEO blueprint D11) — feeds Product JSON-LD on the PDP
+    # and, later, the GMC/Bing/Perplexity merchant feeds. All nullable: legacy
+    # products backfill at the admin's pace. ``brand`` falls back to the store
+    # Organization identity in JSON-LD when unset; ``gtin``/``mpn`` matter
+    # doubly (rich results + feed quality). ``condition`` defaults to 'new'
+    # (ck_products_condition_valid keeps the schema.org-mappable vocabulary).
+    brand: Mapped[str | None] = mapped_column(String(100))
+    gtin: Mapped[str | None] = mapped_column(String(14))
+    mpn: Mapped[str | None] = mapped_column(String(70))
+    condition: Mapped[str] = mapped_column(String(20), default="new", server_default="new")
+
+    # SEO meta (per locale) — mirrors Category; PDP fallback chain is
+    # meta_title -> name (+ _pl), meta_description -> description excerpt.
+    meta_title: Mapped[str | None] = mapped_column(String(70))
+    meta_description: Mapped[str | None] = mapped_column(String(160))
+    meta_title_pl: Mapped[str | None] = mapped_column(String(70))
+    meta_description_pl: Mapped[str | None] = mapped_column(String(160))
 
     # Pricing (multi-currency) — individually nullable; ck_products_at_least_one_price
     # guarantees at least one is set at the DB level
