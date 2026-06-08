@@ -1,7 +1,8 @@
 import enum
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -112,6 +113,12 @@ class Order(BaseModel):
     shipping_carrier: Mapped[str | None] = mapped_column(String(100))
     tracking_number: Mapped[str | None] = mapped_column(String(100))
     tracking_url: Mapped[str | None] = mapped_column(String(500))
+
+    # When the order was marked delivered (naive UTC). Set by
+    # ``apply_admin_update`` on the transition into DELIVERED; anchors the
+    # returns-eligibility window. NULL on legacy delivered orders — the
+    # eligibility check falls back to ``updated_at`` for those.
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     # Notes
     notes: Mapped[str | None] = mapped_column(Text)

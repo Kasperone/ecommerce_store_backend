@@ -26,6 +26,8 @@ from app.core.rate_limit import get_ip_key, limiter
 from app.crud import invoice as crud_invoice
 from app.crud import order as crud_order
 from app.crud import refund as crud_refund
+from app.crud import return_request as crud_return_request
+from app.crud import store_config as crud_store_config
 from app.crud.coupon import CouponRedemptionError
 from app.crud.order import (
     InsufficientStockError,
@@ -41,6 +43,13 @@ from app.crud.refund import (
     RefundOverError,
     RestockRequiresItemsError,
 )
+from app.crud.return_request import (
+    OrderNotReturnableError,
+    ReturnLineNotOnOrderError,
+    ReturnLineOverError,
+    ReturnsDisabledError,
+    ReturnWindowClosedError,
+)
 from app.crud.shipping import ShippingRateUnavailableError
 from app.models.order import OrderStatus
 from app.models.user import User, UserRole
@@ -53,8 +62,14 @@ from app.schemas.order import (
     OrderWithUser,
 )
 from app.schemas.refund import RefundCreate, RefundResponse
+from app.schemas.return_request import (
+    ReturnEligibilityLine,
+    ReturnEligibilityResponse,
+    ReturnRequestCreate,
+    ReturnRequestResponse,
+)
 from app.services import invoice as invoice_service
-from app.services import order_email, order_export, search_index
+from app.services import order_email, order_export, return_email, search_index
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
@@ -539,3 +554,125 @@ async def list_order_refunds(
     if order is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
     return crud_refund.list_for_order(db, order_id=order.id)
+
+
+# ---------------------------------------------------------------------------
+# Returns (RMA) — customer surface. Owner-scoped via get_scoped (guest orders
+# have user_id NULL, so the customer scope never matches them — guests are
+# excluded from returns in v1 and use the support email instead).
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{order_id}/returns/eligibility", response_model=ReturnEligibilityResponse)
+async def get_return_eligibility(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Check whether (and how much of) an order can still be returned.
+
+    The single server-side source for the storefront return modal: eligible =
+    order delivered + returns enabled (``returns_window_days > 0``) + within
+    the window of the delivery timestamp (``delivered_at``, legacy fallback
+    ``updated_at``) + at least one returnable unit remaining. ``lines`` carries
+    the per-line returnable quantity (original minus prior non-rejected
+    returns minus unlinked refunds). A non-existent or not-owned order returns
+    404 (existence is not leaked).
+    """
+    order = crud_order.get_scoped(db, order_id=order_id, user=current_user)
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+    window_days = crud_store_config.get_singleton(db).returns_window_days
+    eligible, reason, window_ends_at, returnable = crud_return_request.check_eligibility(
+        db, order=order, window_days=window_days
+    )
+    return ReturnEligibilityResponse(
+        eligible=eligible,
+        reason=reason,  # pyright: ignore[reportArgumentType] -- CRUD emits only the literal codes
+        window_ends_at=window_ends_at,
+        lines=[
+            ReturnEligibilityLine(
+                order_item_id=item.id,
+                product_name=item.product_name,
+                variant_title=item.variant_title,
+                quantity=item.quantity,
+                returnable_qty=returnable.get(item.id, 0),
+            )
+            for item in order.items
+        ],
+    )
+
+
+@router.post(
+    "/{order_id}/returns",
+    response_model=ReturnRequestResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_return_request(
+    order_id: int,
+    return_in: ReturnRequestCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Request a return for (some of) a delivered order's items.
+
+    Validates the eligibility window (delivered + within
+    ``returns_window_days`` of delivery) and the per-line returnable quantity
+    (400 on any violation). Creates the request with ``status=requested`` and
+    fires the "return requested" email (best-effort). Customer action — no
+    audit row (the audit log records admin mutations). A non-existent or
+    not-owned order returns 404.
+    """
+    order = crud_order.get_scoped(db, order_id=order_id, user=current_user)
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+
+    window_days = crud_store_config.get_singleton(db).returns_window_days
+    try:
+        ret = crud_return_request.create_for_order(
+            db,
+            order=order,
+            user_id=current_user.id,
+            obj_in=return_in,
+            window_days=window_days,
+        )
+    except OrderNotReturnableError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except ReturnsDisabledError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except ReturnWindowClosedError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except ReturnLineNotOnOrderError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except ReturnLineOverError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    db.commit()
+    # Re-load with the eager options so the response carries the lines + the
+    # denormalised order/user fields without lazy round-trips.
+    ret = crud_return_request.get(db, return_id=ret.id) or ret
+    background_tasks.add_task(return_email.send_return_event_in_background, ret.id, "requested")
+    return ret
+
+
+@router.get("/{order_id}/returns", response_model=list[ReturnRequestResponse])
+async def list_order_returns(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    List return requests for an order, scoped to the caller (customer / admin).
+
+    Customers see only their own orders' returns; admins see any. A
+    non-existent or not-owned order returns 404 (existence is not leaked). The
+    customer surface drops ``admin_note`` client-side — same convention as the
+    refund ``note``.
+    """
+    order = crud_order.get_scoped(db, order_id=order_id, user=current_user)
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+    return crud_return_request.list_for_order(db, order_id=order.id)
