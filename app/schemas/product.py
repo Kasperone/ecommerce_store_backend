@@ -1,11 +1,15 @@
 from typing import Annotated, Literal
 
-from pydantic import Field, computed_field, model_validator
+from pydantic import ConfigDict, Field, computed_field, model_validator
 
 from app.schemas.base import BaseSchema, TimestampSchema
 from app.schemas.category import CategoryResponse
 from app.schemas.product_tag import ProductTagChip
 from app.schemas.product_variant import ProductOptionResponse, ProductVariantPublic
+
+# Cap on the number of products a single bulk-edit may touch — keeps the
+# one-transaction batch bounded (mirrors the ~5k CSV import cap).
+BULK_EDIT_MAX_IDS = 1000
 
 
 class ProductImageResponse(TimestampSchema):
@@ -188,6 +192,62 @@ class ProductUpdate(BaseSchema):
         if self.price_usd is None and self.price_pln is None and self.price_eur is None:
             raise ValueError("At least one price is required (USD, PLN, or EUR)")
         return self
+
+
+class ProductBulkSet(BaseSchema):
+    """The narrow set of fields a bulk-edit may write across many products.
+
+    Deliberately a small subset of ``ProductUpdate``: only price (per currency),
+    ``is_active``, and ``low_stock_threshold``. **Stock is intentionally absent** —
+    stock is the maintained sum of per-warehouse levels and may only move through
+    the inventory ledger (``apply_delta``), never a direct column write. Adding a
+    ``stock`` key here is rejected by ``extra="forbid"``.
+
+    Every field is optional; the route requires at least one to be present.
+    Prices follow the catalog rule (``> 0``); ``low_stock_threshold`` is ``>= 0``
+    or ``None`` (None = clear the per-product threshold → never flagged low-stock).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    price_usd: Annotated[float | None, Field(gt=0)] = None
+    price_pln: Annotated[float | None, Field(gt=0)] = None
+    price_eur: Annotated[float | None, Field(gt=0)] = None
+    is_active: bool | None = None
+    low_stock_threshold: Annotated[int | None, Field(ge=0)] = None
+
+    @model_validator(mode="after")
+    def _at_least_one_field(self) -> "ProductBulkSet":
+        if not self.model_fields_set:
+            raise ValueError("At least one field is required in 'set'")
+        return self
+
+
+class ProductBulkUpdate(BaseSchema):
+    """Request body for ``PATCH /api/v1/admin/products/bulk``.
+
+    Applies ``set`` to every product in ``product_ids`` in one transaction. The id
+    list must be non-empty and is capped to keep the single-transaction batch
+    bounded. Any id that doesn't resolve to a product fails the whole request
+    (all-or-nothing — see the route).
+    """
+
+    product_ids: Annotated[list[int], Field(min_length=1, max_length=BULK_EDIT_MAX_IDS)]
+    set: ProductBulkSet
+
+    @model_validator(mode="after")
+    def _unique_ids(self) -> "ProductBulkUpdate":
+        # De-dup is the route's job, but reject obviously-malformed input early.
+        if len(set(self.product_ids)) != len(self.product_ids):
+            raise ValueError("product_ids must not contain duplicates")
+        return self
+
+
+class ProductBulkUpdateResult(BaseSchema):
+    """Summary returned by a successful bulk-edit."""
+
+    updated: int
+    product_ids: list[int]
 
 
 class ProductResponse(ProductBase, TimestampSchema):
