@@ -3,6 +3,7 @@ from app.crud.audit_event import audit_event
 from app.crud.banner import banner
 from app.crud.campaign import campaign
 from app.crud.category import category
+from app.crud.collection import collection
 from app.crud.company import company
 from app.crud.company_user import company_user
 from app.crud.cookie_consent import cookie_consent
@@ -54,6 +55,7 @@ __all__ = [
     "product_variant",
     "quote",
     "category",
+    "collection",
     "order",
     "page",
     "inventory",

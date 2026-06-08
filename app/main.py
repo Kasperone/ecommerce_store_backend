@@ -77,6 +77,7 @@ from app.api.v1 import (  # noqa: E402
     admin_audit,
     admin_banners,
     admin_campaigns,
+    admin_collections,
     admin_companies,
     admin_coupons,
     admin_customers,
@@ -98,6 +99,7 @@ from app.api.v1 import (  # noqa: E402
     banners,
     blocks,
     categories,
+    collections,
     companies,
     company_team,
     contact,
@@ -122,6 +124,7 @@ from app.api.v1 import (  # noqa: E402
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
 app.include_router(products.router, prefix="/api/v1/products", tags=["Products"])
 app.include_router(categories.router, prefix="/api/v1/categories", tags=["Categories"])
+app.include_router(collections.router, prefix="/api/v1/collections", tags=["Collections"])
 app.include_router(orders.router, prefix="/api/v1/orders", tags=["Orders"])
 app.include_router(coupons.router, prefix="/api/v1/coupons", tags=["Coupons"])
 app.include_router(contact.router, prefix="/api/v1", tags=["Contact"])
@@ -163,6 +166,9 @@ app.include_router(
     admin_companies.router, prefix="/api/v1/admin/companies", tags=["Admin Companies"]
 )
 app.include_router(admin_coupons.router, prefix="/api/v1/admin/coupons", tags=["Admin Coupons"])
+app.include_router(
+    admin_collections.router, prefix="/api/v1/admin/collections", tags=["Admin Collections"]
+)
 app.include_router(admin_quotes.router, prefix="/api/v1/admin/quotes", tags=["Admin Quotes"])
 app.include_router(admin_staff.router, prefix="/api/v1/admin/staff", tags=["Admin Staff"])
 app.include_router(admin_settings.router, prefix="/api/v1/admin/settings", tags=["Admin Settings"])

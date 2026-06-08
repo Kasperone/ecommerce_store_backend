@@ -10,6 +10,7 @@ from app.models.campaign import (
     CampaignStatus,
 )
 from app.models.category import Category
+from app.models.collection import Collection, collection_products
 from app.models.company import COMPANY_STATUS_VALUES, Company, CompanyStatus
 from app.models.company_user import (
     COMPANY_MEMBER_STATUS_VALUES,
@@ -93,6 +94,8 @@ __all__ = [
     "CAMPAIGN_STATUS_VALUES",
     "User",
     "Category",
+    "Collection",
+    "collection_products",
     "Company",
     "CompanyStatus",
     "COMPANY_STATUS_VALUES",
