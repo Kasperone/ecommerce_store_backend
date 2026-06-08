@@ -72,6 +72,9 @@ PRODUCT_INDEX_SETTINGS: dict = {
         "option_values",
         # Merchandising tag names — drives the /api/v1/search tag filter + facet.
         "tags",
+        # Slugs of the manual collections this product belongs to — drives the
+        # /api/v1/search collection filter + facet.
+        "collection_slugs",
     ],
     "sortableAttributes": ["price_usd", "price_pln", "price_eur", "created_at", "name"],
     # Meili defaults + a featured boost appended (applies within the "sort" tie).
@@ -184,6 +187,11 @@ def _tag_names(product: Product) -> list[str]:
     return [tag.name for tag in product.tags]
 
 
+def _collection_slugs(product: Product) -> list[str]:
+    """Slugs of the manual collections this product belongs to."""
+    return [collection.slug for collection in product.collections]
+
+
 def build_product_document(product: Product) -> dict:
     """Flatten a product (+ its category + primary image + variants) into one
     Meili doc."""
@@ -210,6 +218,7 @@ def build_product_document(product: Product) -> dict:
         "has_variants": product.has_variants,
         "option_values": _option_values(product),
         "tags": _tag_names(product),
+        "collection_slugs": _collection_slugs(product),
         "created_at": _epoch(product.created_at),
     }
 
@@ -326,6 +335,33 @@ def sync_products_for_category(db: Session, category_id: int) -> None:
         sync_products_bulk(db, list(ids))
     except Exception:
         logger.warning("Meili sync_products_for_category(%s) failed", category_id, exc_info=True)
+
+
+def sync_products_for_collection(db: Session, collection_id: int) -> None:
+    """Re-sync every active member product of a collection — used when the
+    collection is renamed (its ``collection_slugs`` on member docs change)."""
+    if not meili_configured():
+        return
+    try:
+        from app.models.collection import collection_products
+
+        ids = (
+            db.execute(
+                select(Product.id)
+                .join(collection_products, collection_products.c.product_id == Product.id)
+                .where(
+                    collection_products.c.collection_id == collection_id,
+                    Product.is_active.is_(True),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        sync_products_bulk(db, list(ids))
+    except Exception:
+        logger.warning(
+            "Meili sync_products_for_collection(%s) failed", collection_id, exc_info=True
+        )
 
 
 def sync_category(db: Session, category_id: int) -> None:

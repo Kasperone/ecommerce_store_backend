@@ -68,6 +68,9 @@ async def list_products(
     tag: str | None = Query(
         None, max_length=50, description="Filter by tag name (case-insensitive)"
     ),
+    collection_id: int | None = Query(
+        None, description="Filter by collection membership (ordered by curation position)"
+    ),
     sort_by: Literal["created_at", "price_usd", "name"] = Query(
         "created_at", description="Field to sort by"
     ),
@@ -102,6 +105,7 @@ async def list_products(
         in_stock=in_stock,
         search=search,
         tag=tag,
+        collection_id=collection_id,
         sort_by=sort_by,
         order=order,
     )
@@ -117,6 +121,7 @@ async def list_products(
         in_stock=in_stock,
         search=search,
         tag=tag,
+        collection_id=collection_id,
     )
 
     pages = ceil(total / page_size) if total > 0 else 1
