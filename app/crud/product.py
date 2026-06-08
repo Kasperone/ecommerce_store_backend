@@ -1,9 +1,10 @@
 from typing import Any
 
-from sqlalchemy import nulls_last, or_
+from sqlalchemy import func, nulls_last, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.crud.base import CRUDBase
+from app.models.order import Order, OrderItem, OrderStatus
 from app.models.product import Product
 from app.models.product_variant import ProductOption, ProductVariant
 from app.schemas.product import ProductCreate, ProductUpdate
@@ -211,6 +212,82 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
             .limit(limit)
             .all()
         )
+
+    def get_related(self, db: Session, *, product: Product, limit: int = 8) -> list[Product]:
+        """Ranked related products for a PDP ("customers also bought").
+
+        Primary signal — **co-occurrence**: other products that appear in the
+        same orders as ``product``, ranked by the number of distinct orders they
+        share with it (descending), tie-broken by newest product id first. Only
+        non-cancelled orders count (CANCELLED orders are excluded — they never
+        represent a real "customers also bought" signal).
+
+        Fallback fill — when co-occurrence yields fewer than ``limit`` products,
+        the remainder is filled with other **active, in-stock** products from the
+        **same category** (newest first), excluding the subject and anything
+        already chosen.
+
+        The subject product is always excluded, inactive products are never
+        returned, results are de-duplicated and capped at ``limit``. Ranking is
+        at PRODUCT grain — ``variant_id`` is ignored (co-occurrence is on
+        ``product_id``). The card relationships the storefront needs
+        (``images`` for the primary image, ``variants`` for ``has_variants``)
+        are eager-loaded so serialisation never lazy-loads per row.
+        """
+        # 1. Orders (non-cancelled) that contain the subject product.
+        subject_orders = (
+            select(OrderItem.order_id)
+            .join(Order, Order.id == OrderItem.order_id)
+            .where(OrderItem.product_id == product.id)
+            .where(Order.status != OrderStatus.CANCELLED)
+        )
+
+        # 2. Other active products in those orders, ranked by distinct-order
+        #    co-occurrence count (desc), then newest product id (desc).
+        cooccurrence = (
+            db.query(OrderItem.product_id)
+            .join(Product, Product.id == OrderItem.product_id)
+            .filter(OrderItem.order_id.in_(subject_orders))
+            .filter(OrderItem.product_id != product.id)
+            .filter(Product.is_active.is_(True))
+            .group_by(OrderItem.product_id)
+            .order_by(
+                func.count(func.distinct(OrderItem.order_id)).desc(),
+                OrderItem.product_id.desc(),
+            )
+            .limit(limit)
+            .all()
+        )
+        ranked_ids: list[int] = [row[0] for row in cooccurrence]
+
+        # 3. Fallback: fill the remainder from the same category if short.
+        if len(ranked_ids) < limit and product.category_id is not None:
+            exclude = {*ranked_ids, product.id}
+            fallback = (
+                db.query(Product.id)
+                .filter(Product.category_id == product.category_id)
+                .filter(Product.is_active.is_(True))
+                .filter(Product.stock > 0)
+                .filter(Product.id.not_in(exclude))
+                .order_by(Product.created_at.desc(), Product.id.desc())
+                .limit(limit - len(ranked_ids))
+                .all()
+            )
+            ranked_ids.extend(row[0] for row in fallback)
+
+        if not ranked_ids:
+            return []
+
+        # 4. Load the chosen rows in one pass (with card relationships eager) and
+        #    restore the ranked order — an ``IN`` query won't preserve it.
+        products = (
+            db.query(Product)
+            .options(selectinload(Product.images), selectinload(Product.variants))
+            .filter(Product.id.in_(ranked_ids))
+            .all()
+        )
+        by_id = {p.id: p for p in products}
+        return [by_id[pid] for pid in ranked_ids if pid in by_id]
 
     def get_sitemap_entries(self, db: Session) -> list[Product]:
         """
