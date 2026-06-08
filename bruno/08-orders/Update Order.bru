@@ -1,7 +1,7 @@
 meta {
   name: Update Order
   type: http
-  seq: 5
+  seq: 6
 }
 
 patch {
@@ -30,6 +30,9 @@ docs {
   - `payment_method`: string|null
   - `payment_intent_id`: string|null
   - `notes`: string|null
+  - `shipping_carrier`: string|null
+  - `tracking_number`: string|null
+  - `tracking_url`: string|null
 
 **Responses:** 200, 422
 }

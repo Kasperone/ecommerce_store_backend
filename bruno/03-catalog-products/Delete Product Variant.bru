@@ -1,0 +1,22 @@
+meta {
+  name: Delete Product Variant
+  type: http
+  seq: 14
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/products/:product_id/variants/:variant_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  product_id: 1
+  variant_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 204, 422
+}

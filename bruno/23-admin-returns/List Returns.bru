@@ -1,0 +1,23 @@
+meta {
+  name: List Returns
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/returns/
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~page: 1
+  ~page_size: 20
+  ~status:
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

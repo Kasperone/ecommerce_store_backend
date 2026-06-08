@@ -1,0 +1,37 @@
+meta {
+  name: Create Return Request
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/api/v1/orders/:order_id/returns
+  body: json
+  auth: inherit
+}
+
+params:path {
+  order_id: 1
+}
+
+body:json {
+  {
+    "items": [
+      {
+        "order_item_id": 1,
+        "quantity": 1,
+        "reason": "defective"
+      }
+    ]
+  }
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Request body** `ReturnRequestCreate`:
+  - `items`: array[ReturnItemCreate] (required)
+  - `comment`: string|null
+
+**Responses:** 201, 422
+}

@@ -1,0 +1,35 @@
+meta {
+  name: Refund Return
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/returns/:return_id/refund
+  body: json
+  auth: inherit
+}
+
+params:path {
+  return_id: 1
+}
+
+body:json {
+  {
+    "amount": 10.0,
+    "restock": false,
+    "reason": "defective"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `ReturnRefundRequest`:
+  - `amount`: number|null
+  - `restock`: boolean
+  - `reason`: string — one of ['defective', 'wrong_item', 'customer_request', 'lost_in_transit', 'damaged_in_transit', 'other']
+  - `note`: string|null
+
+**Responses:** 200, 422
+}

@@ -1,0 +1,45 @@
+meta {
+  name: Update Product Options Matrix
+  type: http
+  seq: 12
+}
+
+put {
+  url: {{baseUrl}}/api/v1/products/:product_id/options
+  body: json
+  auth: inherit
+}
+
+params:path {
+  product_id: 1
+}
+
+body:json {
+  {
+    "options": [
+      {
+        "name": "Example",
+        "values": [
+          {
+            "value": "string"
+          }
+        ]
+      }
+    ],
+    "variants": [
+      {
+        "option_values": []
+      }
+    ]
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `ProductOptionsMatrixUpdate`:
+  - `options`: array[ProductOptionInput] (required)
+  - `variants`: array[ProductVariantInput] (required)
+
+**Responses:** 200, 422
+}
