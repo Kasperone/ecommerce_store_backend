@@ -1,4 +1,4 @@
-"""Admin product catalog tools — CSV export (and, in later PRs, import + bulk edit).
+"""Admin product catalog tools — CSV export + import (bulk edit ships in CSV-BE3).
 
 Mounted at ``/api/v1/admin/products``. All routes are admin-gated. The export is a
 read-only GET (no audit row, no persistence) that streams the catalog as RFC 4180
@@ -6,19 +6,40 @@ CSV (UTF-8 with BOM), inheriting the admin product-list filters (category / acti
 / search) so the file matches the on-screen filtered view. One row per product;
 variants are flagged via ``has_variants`` (not expanded to rows in v1). Free-text
 cells pass through the formula-injection guard (``csv_safe``).
+
+The import (``POST /import``) round-trips that same 31-column schema. ``dry_run``
+(default true) validates every row and writes NOTHING, returning a per-row report;
+``dry_run=false`` applies **all-or-nothing in one transaction** (any row error →
+rollback, nothing applied), reusing the product create/update path — slug/SKU
+uniqueness, OMNIBUS price-history, tag get-or-create — and ``apply_delta`` for
+stock (never ``Product.stock`` directly; variant products reject stock changes).
+On success the touched products are re-synced to Meili (incremental). Dry-run and
+apply share ONE validator (``_process_rows`` with ``apply`` toggled).
 """
 
 from datetime import date
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
+from app.api.v1.products import _reconcile_product_tags
 from app.core.dependencies import get_current_admin, get_db
+from app.crud import category as crud_category
+from app.crud import collection as crud_collection
+from app.crud import inventory as crud_inventory
+from app.crud import price_history as crud_price_history
 from app.crud import product as crud_product
+from app.models.inventory_movement import InventoryMovementReason
+from app.models.price_history import SUPPORTED_CURRENCIES
+from app.models.product import Product
 from app.models.user import User
-from app.services import product_export
+from app.schemas.product import ProductCreate, ProductUpdate
+from app.services import product_export, product_import, search_index
+from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+SUPPORTED_CURRENCIES_LC = tuple(c.lower() for c in SUPPORTED_CURRENCIES)
 
 
 def _export_filename(category_id: int | None, is_active: bool | None, search: str | None) -> str:
@@ -105,3 +126,337 @@ async def export_products(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# --------------------------------------------------------------------------- #
+# Import
+# --------------------------------------------------------------------------- #
+
+
+def _resolve_target(db: Session, parsed: product_import.ParsedRow) -> Product | None:
+    """Resolve the upsert target for a row: ``id`` → ``slug`` → ``sku`` (first hit)."""
+    if "id" in parsed.values:
+        return crud_product.get(db, id=parsed.values["id"])
+    slug = parsed.values.get("slug")
+    if slug:
+        existing = crud_product.get_by_slug(db, slug=str(slug))
+        if existing:
+            return existing
+    sku = parsed.values.get("sku")
+    if sku:
+        return crud_product.get_by_sku(db, sku=str(sku))
+    return None
+
+
+def _model_fields(parsed: product_import.ParsedRow) -> dict[str, object]:
+    """Pull the product column values present on the row (excludes id/stock/refs)."""
+    skip = {"id", "stock", "category_slug", "has_variants"}
+    return {k: v for k, v in parsed.values.items() if k not in skip}
+
+
+def _process_rows(
+    db: Session,
+    parsed_rows: list[product_import.ParsedRow],
+    *,
+    apply: bool,
+    audit: AuditWriter,
+    actor_id: int,
+) -> tuple[list[product_import.ReportRow], list[int]]:
+    """The single validator+applier shared by dry-run and apply.
+
+    Validates (and, when ``apply``, mutates) every row. Returns the per-row
+    report plus the list of touched product ids (for Meili re-sync on apply).
+    Stages writes only — the route owns the transaction boundary (commit on a
+    clean apply, rollback on any error or on dry-run).
+    """
+    report: list[product_import.ReportRow] = []
+    touched: list[int] = []
+
+    for row in parsed_rows:
+        errors = list(row.errors)
+        action: product_import.Action = "error"
+        product_id: int | None = None
+
+        # Resolve the upsert target up front (id/slug/sku). An ``id`` that points
+        # at nothing is a hard row error.
+        target: Product | None = None
+        if "id" in row.values:
+            target = crud_product.get(db, id=row.values["id"])
+            if target is None:
+                errors.append(f"No product with id {row.values['id']}")
+        else:
+            target = _resolve_target(db, row)
+        if target is not None:
+            product_id = target.id
+
+        # Resolve category_slug → id (unknown slug is a row error).
+        category_id: int | None = None
+        if "category_slug" in row.values:
+            cat = crud_category.get_by_slug(db, slug=str(row.values["category_slug"]))
+            if cat is None:
+                errors.append(f"Unknown category_slug {row.values['category_slug']!r}")
+            else:
+                category_id = cat.id
+
+        # Resolve collection_slugs → ids (any unknown slug is a row error).
+        collection_ids: list[int] | None = None
+        if row.collection_slugs is not None:
+            collection_ids = []
+            for slug in row.collection_slugs:
+                col = crud_collection.get_by_slug(db, slug=slug)
+                if col is None:
+                    errors.append(f"Unknown collection_slug {slug!r}")
+                else:
+                    collection_ids.append(col.id)
+
+        # Variant products: reject any stock change (variant stock lives at
+        # variant grain). ``bool(product.variants)`` is the inventory-grain check.
+        is_variant_product = target is not None and bool(target.variants)
+        wants_stock_change = "stock" in row.values
+        if is_variant_product and wants_stock_change:
+            errors.append(
+                "Cannot set stock on a variant product via CSV — stock lives at variant grain"
+            )
+
+        # New product (no target): requires name + at least one price.
+        is_create = target is None
+        if is_create:
+            if not row.values.get("name"):
+                errors.append("New product requires a name")
+            if not any(row.values.get(f"price_{c}") is not None for c in SUPPORTED_CURRENCIES_LC):
+                errors.append("New product requires at least one price (USD, PLN, or EUR)")
+            if not row.values.get("slug"):
+                errors.append("New product requires a slug")
+
+        if errors:
+            report.append(
+                product_import.ReportRow(
+                    row_number=row.row_number,
+                    action="error",
+                    product_id=product_id,
+                    errors=errors,
+                )
+            )
+            continue
+
+        action = "create" if is_create else "update"
+
+        if not apply:
+            report.append(
+                product_import.ReportRow(
+                    row_number=row.row_number, action=action, product_id=product_id, errors=[]
+                )
+            )
+            continue
+
+        # ---- apply path -----------------------------------------------------
+        try:
+            if is_create or target is None:
+                target = _apply_create(db, row, category_id, audit)
+            else:
+                _apply_update(db, target, row, category_id, audit)
+            product_id = target.id
+
+            if "tags" in row.present and row.tags is not None:
+                _reconcile_product_tags(db, target, row.tags)
+                audit.record_event(
+                    action="update",
+                    resource_type="product_tag_link",
+                    resource_id=target.id,
+                    payload={"tags": [t.name for t in target.tags]},
+                )
+
+            if collection_ids is not None:
+                crud_collection.set_product_collections(
+                    db, product_id=target.id, collection_ids=collection_ids
+                )
+
+            if wants_stock_change and not is_variant_product:
+                _apply_stock(db, target, int(row.values["stock"]), actor_id)  # type: ignore[arg-type]
+        except ValueError as exc:
+            # Route-layer uniqueness (slug/SKU) + apply_delta guards raise
+            # ValueError — surface as a row error, not a 500. All-or-nothing means
+            # the route rolls the whole batch back when any row errors.
+            report.append(
+                product_import.ReportRow(
+                    row_number=row.row_number,
+                    action="error",
+                    product_id=product_id,
+                    errors=[str(exc)],
+                )
+            )
+            continue
+
+        touched.append(target.id)
+        report.append(
+            product_import.ReportRow(
+                row_number=row.row_number, action=action, product_id=product_id, errors=[]
+            )
+        )
+
+    return report, touched
+
+
+def _record_price_history(db: Session, product: Product) -> None:
+    for currency in SUPPORTED_CURRENCIES:
+        crud_price_history.record_if_changed(
+            db,
+            product=product,
+            currency=currency,
+            new_price=getattr(product, f"price_{currency.lower()}"),
+        )
+
+
+def _apply_create(
+    db: Session,
+    row: product_import.ParsedRow,
+    category_id: int | None,
+    audit: AuditWriter,
+) -> Product:
+    """Create a product reusing the route-layer uniqueness checks + OMNIBUS history.
+
+    Raises ``ValueError`` on a slug/SKU collision (the importer surfaces it as a
+    row error). Mirrors ``products.create_product`` minus the per-route commit.
+    """
+    fields = _model_fields(row)
+    if category_id is not None:
+        fields["category_id"] = category_id
+    create_in = ProductCreate.model_validate(fields)
+
+    if crud_product.get_by_slug(db, slug=create_in.slug):
+        raise ValueError(f"slug {create_in.slug!r} already exists")
+    if create_in.sku and crud_product.get_by_sku(db, sku=create_in.sku):
+        raise ValueError(f"sku {create_in.sku!r} already exists")
+
+    product = crud_product.create(db, obj_in=create_in)
+    audit.record_create(resource_type="product", obj=product)
+    _record_price_history(db, product)
+    return product
+
+
+def _apply_update(
+    db: Session,
+    product: Product,
+    row: product_import.ParsedRow,
+    category_id: int | None,
+    audit: AuditWriter,
+) -> None:
+    """Update a product reusing the route-layer uniqueness checks + OMNIBUS history."""
+    fields = _model_fields(row)
+    if category_id is not None:
+        fields["category_id"] = category_id
+    update_in = ProductUpdate.model_validate(fields)
+
+    if (
+        update_in.slug
+        and update_in.slug != product.slug
+        and crud_product.get_by_slug(db, slug=update_in.slug)
+    ):
+        raise ValueError(f"slug {update_in.slug!r} already exists")
+    if (
+        update_in.sku
+        and update_in.sku != product.sku
+        and crud_product.get_by_sku(db, sku=update_in.sku)
+    ):
+        raise ValueError(f"sku {update_in.sku!r} already exists")
+
+    crud_product.update(db, db_obj=product, obj_in=update_in)
+    audit.record_update(resource_type="product", obj=product)
+    _record_price_history(db, product)
+
+
+def _apply_stock(db: Session, product: Product, target_stock: int, actor_id: int) -> None:
+    """Move a variantless product's stock TO ``target_stock`` via ``apply_delta``.
+
+    The CSV column is an absolute stock figure; we compute the delta and write it
+    through the inventory ledger (never ``Product.stock`` directly).
+    """
+    delta = target_stock - product.stock
+    if delta == 0:
+        return
+    crud_inventory.apply_delta(
+        db,
+        product=product,
+        delta=delta,
+        reason=InventoryMovementReason.MANUAL_ADJUSTMENT,
+        actor_user_id=actor_id,
+        note="CSV import",
+        allow_negative=target_stock < 0,
+    )
+
+
+@router.post("/import")
+async def import_products(
+    file: UploadFile = File(..., description="Product CSV (the export schema)"),
+    dry_run: bool = Query(True, description="Validate only (no writes) when true"),
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
+):
+    """Import products from a CSV (admin). The round-trip of the export schema.
+
+    ``dry_run=true`` (default) validates every row and **writes nothing**,
+    returning the per-row report so the admin can preview. ``dry_run=false``
+    applies the batch **all-or-nothing in one transaction**: any row error rolls
+    the whole batch back and returns the error report with nothing applied.
+
+    Upsert key per row: ``id`` → else ``slug`` → else ``sku``. A new product (no
+    id, new slug) is created (requires name + slug + ≥1 price). ``tags`` /
+    ``collection_slugs`` are split from their packed columns and REPLACE the
+    product's tags / collection membership. Stock changes go through the
+    inventory ledger (``apply_delta``); **variant products reject stock changes**
+    (variant stock lives at variant grain). Dry-run and apply share one
+    validator. On a successful apply the touched products are re-synced to Meili
+    (incremental). Audited (``resource_type="product"``, action ``import``).
+    """
+    raw = await file.read()
+    parsed = product_import.parse_csv(raw)
+    if parsed.header_errors:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="; ".join(parsed.header_errors),
+        )
+
+    report_rows, touched = _process_rows(
+        db, parsed.rows, apply=not dry_run, audit=audit, actor_id=current_admin.id
+    )
+    summary = product_import.build_summary(report_rows)
+
+    if dry_run:
+        # No writes happened, but the validator may have flushed lookups — be
+        # explicit and roll back so the request leaves the DB untouched.
+        db.rollback()
+        return {
+            "dry_run": True,
+            "applied": False,
+            "summary": summary,
+            "rows": [r.as_dict() for r in report_rows],
+        }
+
+    # Apply path: all-or-nothing. Any row error → roll the whole batch back.
+    if summary["errors"]:
+        db.rollback()
+        return {
+            "dry_run": False,
+            "applied": False,
+            "summary": summary,
+            "rows": [r.as_dict() for r in report_rows],
+        }
+
+    audit.record_event(
+        action="import",
+        resource_type="product",
+        resource_id=None,
+        payload={"creates": summary["creates"], "updates": summary["updates"]},
+    )
+    db.commit()
+    # Incremental Meili re-sync of the touched products (no settings change → no
+    # full reindex). Best-effort — never fails the import.
+    search_index.sync_products_bulk(db, touched)
+
+    return {
+        "dry_run": False,
+        "applied": True,
+        "summary": summary,
+        "rows": [r.as_dict() for r in report_rows],
+    }
