@@ -391,3 +391,146 @@ def test_movements_for_newest_first_with_product_name(db_session, product_factor
     # movements default to the default warehouse, so the joined name is populated.
     assert all(wname is not None for _, _, wname in rows)
     assert crud_inventory.count_movements(db_session, product_id=product.id) == 2
+
+
+# ---------------------------------------------------------------------------
+# global default threshold (effective-threshold = COALESCE(product, global))
+# ---------------------------------------------------------------------------
+
+
+def _set_global_default(db_session, value: int | None) -> None:
+    """Set store_config.low_stock_default_threshold (creates the singleton)."""
+    from app.crud import store_config as crud_store_config
+
+    config = crud_store_config.get_singleton(db_session)
+    config.low_stock_default_threshold = value
+    db_session.add(config)
+    db_session.flush()
+
+
+def test_low_stock_default_threshold_defaults_to_none(db_session):
+    """A freshly seeded singleton has no global default (NULL)."""
+    assert crud_inventory.low_stock_default_threshold(db_session) is None
+
+
+# --- status_for: NULL global default == today, byte-for-byte ---
+
+
+@pytest.mark.parametrize(
+    ("stock", "threshold", "expected"),
+    [
+        (0, None, "out_of_stock"),
+        (0, 5, "out_of_stock"),
+        (3, 5, "low_stock"),
+        (5, 5, "low_stock"),
+        (6, 5, "in_stock"),
+        (10, None, "in_stock"),  # null threshold + NULL global → never low
+        (1, 0, "in_stock"),
+    ],
+)
+def test_status_for_null_global_default_is_identical(
+    db_session, product_factory, stock, threshold, expected
+):
+    """With ``default_threshold=None`` (the seed default), status_for reproduces
+    the pre-global-default behaviour exactly — the regression guard."""
+    product = product_factory(stock=stock, low_stock_threshold=threshold)
+    assert crud_inventory.status_for(product, None) == expected
+    # And the no-arg call (the dashboard caller) stays identical too.
+    assert crud_inventory.status_for(product) == expected
+
+
+@pytest.mark.parametrize(
+    ("stock", "threshold", "global_default", "expected"),
+    [
+        # global applies where the product threshold is NULL
+        (3, None, 5, "low_stock"),
+        (5, None, 5, "low_stock"),  # at the global threshold is still low
+        (6, None, 5, "in_stock"),
+        # per-product override wins over the global default
+        (3, 2, 5, "in_stock"),  # own threshold 2 < stock 3 → not low (global ignored)
+        (3, 10, 1, "low_stock"),  # own threshold 10 wins over global 1
+        # out-of-stock + backorder unaffected by the global default
+        (0, None, 5, "out_of_stock"),
+    ],
+)
+def test_status_for_effective_threshold_matrix(
+    db_session, product_factory, stock, threshold, global_default, expected
+):
+    product = product_factory(stock=stock, low_stock_threshold=threshold)
+    assert crud_inventory.status_for(product, global_default) == expected
+
+
+# --- _admin_filtered_query / get_multi_admin: NULL global == today ---
+
+
+def test_admin_filter_null_global_default_is_identical(db_session, product_factory):
+    """The set-based low/in-stock filters with NULL global default match the
+    pre-global-default results exactly (regression guard)."""
+    out = product_factory(stock=0)
+    low = product_factory(stock=2, low_stock_threshold=5)
+    in_high = product_factory(stock=50, low_stock_threshold=5)
+    in_no_threshold = product_factory(stock=1)  # threshold None → in_stock (NULL global)
+
+    # No global default set.
+    assert crud_inventory.low_stock_default_threshold(db_session) is None
+    assert {p.id for p in crud_inventory.get_multi_admin(db_session, status="low_stock")} == {
+        low.id
+    }
+    assert {p.id for p in crud_inventory.get_multi_admin(db_session, status="in_stock")} == {
+        in_high.id,
+        in_no_threshold.id,
+    }
+    assert {p.id for p in crud_inventory.get_multi_admin(db_session, status="out_of_stock")} == {
+        out.id
+    }
+
+
+def test_admin_filter_global_default_applies_only_where_product_threshold_null(
+    db_session, product_factory
+):
+    """With a global default of 5: products with their own threshold keep it;
+    products with NULL threshold inherit the global; out-of-stock excluded."""
+    own_not_low = product_factory(stock=3, low_stock_threshold=2)  # own wins → in_stock
+    own_low = product_factory(stock=2, low_stock_threshold=5)  # own → low
+    inherit_low = product_factory(stock=4, low_stock_threshold=None)  # inherit 5 → low
+    inherit_high = product_factory(stock=50, low_stock_threshold=None)  # 50 > 5 → in_stock
+    out = product_factory(stock=0, low_stock_threshold=None)  # out_of_stock
+
+    low_ids = {
+        p.id
+        for p in crud_inventory.get_multi_admin(db_session, status="low_stock", default_threshold=5)
+    }
+    assert low_ids == {own_low.id, inherit_low.id}
+
+    in_ids = {
+        p.id
+        for p in crud_inventory.get_multi_admin(db_session, status="in_stock", default_threshold=5)
+    }
+    assert in_ids == {own_not_low.id, inherit_high.id}
+
+    assert crud_inventory.count_admin(db_session, status="low_stock", default_threshold=5) == 2
+    # out_of_stock is independent of the global default.
+    assert {p.id for p in crud_inventory.get_multi_admin(db_session, status="out_of_stock")} == {
+        out.id
+    }
+
+
+# --- low_stock_summary + low_stock_products read the global default ---
+
+
+def test_low_stock_summary_honours_global_default(db_session, product_factory):
+    # NULL product thresholds → not low without a global default.
+    near = product_factory(stock=4, low_stock_threshold=None)
+    product_factory(stock=50, low_stock_threshold=None)
+    product_factory(stock=0, allow_backorder=False, low_stock_threshold=None)
+    product_factory(stock=0, allow_backorder=True, low_stock_threshold=None)
+
+    # No global default: only out/backorder counted, low = 0.
+    summary = crud_inventory.low_stock_summary(db_session)
+    assert summary == {"low_stock_count": 0, "out_of_stock_count": 1, "backorder_count": 1}
+
+    # Set a global default of 5 → ``near`` (stock 4) becomes low.
+    _set_global_default(db_session, 5)
+    summary = crud_inventory.low_stock_summary(db_session)
+    assert summary == {"low_stock_count": 1, "out_of_stock_count": 1, "backorder_count": 1}
+    assert {p.id for p in crud_inventory.low_stock_products(db_session)} == {near.id}

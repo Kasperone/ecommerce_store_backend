@@ -10,7 +10,7 @@ adjust here plus the retrofitted order place/cancel paths — lands on the same
 from datetime import date
 from math import ceil
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_admin, get_db
@@ -28,13 +28,15 @@ from app.schemas.inventory import (
     InventoryMovementItem,
     InventoryMovementListResponse,
     InventoryStatus,
+    LowStockReportResult,
+    LowStockSummary,
     RestockRequest,
     StockAdjustRequest,
     StockLevelItem,
     TransferRequest,
     TransferResponse,
 )
-from app.services import inventory_export, search_index
+from app.services import inventory_email, inventory_export, search_index
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
@@ -115,12 +117,26 @@ async def list_inventory(
     ),
     search: str | None = Query(None, max_length=100, description="Search name / SKU"),
 ):
-    """List products with stock, threshold, and computed status (admin)."""
+    """List products with stock, threshold, and computed status (admin).
+
+    The computed status + the ``low_stock``/``in_stock`` filters honour the
+    store-wide ``low_stock_default_threshold`` (read once, threaded into the
+    set-based query + the per-row status). A NULL global default reproduces the
+    pre-global-default behaviour exactly.
+    """
     skip = (page - 1) * page_size
+    default_threshold = crud_inventory.low_stock_default_threshold(db)
     products = crud_inventory.get_multi_admin(
-        db, status=inventory_status, search=search, skip=skip, limit=page_size
+        db,
+        status=inventory_status,
+        search=search,
+        skip=skip,
+        limit=page_size,
+        default_threshold=default_threshold,
     )
-    total = crud_inventory.count_admin(db, status=inventory_status, search=search)
+    total = crud_inventory.count_admin(
+        db, status=inventory_status, search=search, default_threshold=default_threshold
+    )
     items = [
         InventoryListItem(
             id=p.id,
@@ -128,7 +144,7 @@ async def list_inventory(
             sku=p.sku,
             stock=p.stock,
             low_stock_threshold=p.low_stock_threshold,
-            status=crud_inventory.status_for(p),
+            status=crud_inventory.status_for(p, default_threshold),
         )
         for p in products
     ]
@@ -159,7 +175,10 @@ async def export_inventory(
     materialised, so the packed levels sum to the ``stock`` total). RFC 4180, UTF-8
     with BOM. Generated on demand — no persistence, no audit row (read-only GET).
     """
-    products = crud_inventory.get_for_export(db, status=inventory_status, search=search)
+    default_threshold = crud_inventory.low_stock_default_threshold(db)
+    products = crud_inventory.get_for_export(
+        db, status=inventory_status, search=search, default_threshold=default_threshold
+    )
     default = crud_warehouse.get_default(db)
     levels_map = crud_inventory.levels_by_product(db, product_ids=[p.id for p in products])
 
@@ -179,7 +198,7 @@ async def export_inventory(
                 sku=product.sku,
                 stock=product.stock,
                 low_stock_threshold=product.low_stock_threshold,
-                status=crud_inventory.status_for(product),
+                status=crud_inventory.status_for(product, default_threshold),
                 allow_backorder=product.allow_backorder,
                 warehouses=[(wh.code, qty) for wh, qty in levels],
             )
@@ -192,6 +211,61 @@ async def export_inventory(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/low-stock-summary", response_model=LowStockSummary)
+async def low_stock_summary(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+):
+    """Grouped stock-status counts for the dashboard low-stock badge (admin).
+
+    Three cheap set-based COUNTs (``low_stock`` / ``out_of_stock`` /
+    ``backorder``); the low/out-of-stock counts honour the store-wide
+    ``low_stock_default_threshold`` so the badge agrees with the filtered list.
+    Read-only — no audit row.
+    """
+    return crud_inventory.low_stock_summary(db)
+
+
+@router.post("/low-stock-report/email", response_model=LowStockReportResult)
+async def email_low_stock_report(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
+):
+    """Trigger the manual low-stock report email to the store admin (admin).
+
+    Resolves the current low-stock product set + the store-admin recipient,
+    queues the email **best-effort** off a ``BackgroundTask`` (so a Resend hiccup
+    never fails the request), and returns the resolved recipients + product count.
+    Audited (``resource_type="inventory"``, ``action="low_stock_report"``).
+
+    **There is no scheduler** in this app — this is an on-demand digest. An
+    external/OS cron can hit this endpoint with an admin token for periodic
+    delivery.
+    """
+    recipients = inventory_email.resolve_report_recipients(db)
+    products = crud_inventory.low_stock_products(db)
+    audit.record_event(
+        action="low_stock_report",
+        resource_type="inventory",
+        resource_id=None,
+        payload={
+            "low_stock_report": {
+                "recipients": recipients,
+                "product_count": len(products),
+            }
+        },
+    )
+    db.commit()
+    background_tasks.add_task(
+        inventory_email.send_low_stock_report_in_background,
+        recipients,
+        [p.id for p in products],
+    )
+    return LowStockReportResult(recipients=recipients, product_count=len(products))
 
 
 @router.get("/products/{product_id}/levels", response_model=list[StockLevelItem])
