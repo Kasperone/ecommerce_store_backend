@@ -15,10 +15,12 @@ are the stable contract the quotes vertical FKs against.
 from math import ceil
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_admin, get_db
 from app.crud import company as crud_company
+from app.models.quote import Quote
 from app.models.user import User
 from app.schemas.company import (
     CompanyCreate,
@@ -142,6 +144,26 @@ async def delete_company(
     company = crud_company.get(db, company_id)
     if company is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+
+    # ``quotes.company_id`` is ON DELETE RESTRICT — a company with any quote
+    # cannot be hard-deleted (would otherwise raise an unhandled FK 500).
+    # ``company_users.company_id`` is ON DELETE CASCADE, so members are cleaned
+    # up with the company and do not block. Remove the quotes first.
+    if db.query(Quote.id).filter(Quote.company_id == company_id).first() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Company has quotes; remove them first.",
+        )
+
     audit.record_delete(resource_type="company", obj=company)
     crud_company.delete(db, company=company)
-    db.commit()
+    # Defensive backstop: any other RESTRICT reference surfaces as an
+    # IntegrityError on commit rather than a 500 — roll back and return 409.
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Company is referenced by other records; remove them first.",
+        ) from exc

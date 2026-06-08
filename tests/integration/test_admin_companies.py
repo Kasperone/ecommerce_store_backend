@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.security import create_access_token
 from app.models.admin_audit_event import AdminAuditEvent
 from app.models.company import Company
+from app.models.quote import Quote
 from app.models.user import UserRole
 from tests.factories.company import CompanyFactory
 
@@ -279,6 +280,32 @@ async def test_delete_404(client, user_factory):
     assert (
         await client.delete("/api/v1/admin/companies/999999", headers=_headers(admin))
     ).status_code == 404
+
+
+async def test_delete_empty_company_204(client, user_factory, company_factory, db_session):
+    """A company with no quotes/members deletes cleanly."""
+    admin = user_factory(email="co-admin-del-empty@example.com", role=UserRole.ADMIN)
+    c = company_factory(name="EMPTY")
+    resp = await client.delete(f"/api/v1/admin/companies/{c.id}", headers=_headers(admin))
+    assert resp.status_code == 204
+    assert db_session.get(Company, c.id) is None
+
+
+async def test_delete_company_with_quotes_409(client, user_factory, company_factory, db_session):
+    """``quotes.company_id`` is ON DELETE RESTRICT — a referenced company must
+    return a clean 409, not an unhandled FK 500."""
+    admin = user_factory(email="co-admin-del-quotes@example.com", role=UserRole.ADMIN)
+    c = company_factory(name="HASQUOTES")
+    db_session.add(
+        Quote(company_id=c.id, status="draft", currency="USD", subtotal=10.0, total=10.0)
+    )
+    db_session.commit()
+
+    resp = await client.delete(f"/api/v1/admin/companies/{c.id}", headers=_headers(admin))
+    assert resp.status_code == 409, resp.text
+    assert "quote" in resp.json()["detail"].lower()
+    # The company survives — nothing was deleted.
+    assert db_session.get(Company, c.id) is not None
 
 
 # ---------------------------------------------------------------------------
