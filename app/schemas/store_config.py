@@ -43,6 +43,9 @@ class StoreConfigBase(BaseSchema):
     invoice_vat_rate: Annotated[int, Field(ge=0, le=100)]
     # Returns (RMA) eligibility window in days from delivery; 0 disables returns.
     returns_window_days: Annotated[int, Field(ge=0)]
+    # Store-wide default low-stock threshold; NULL = no global default (today's
+    # behaviour). Applies only where a product's own threshold is NULL.
+    low_stock_default_threshold: Annotated[int | None, Field(ge=0)] = None
 
 
 class StoreConfigUpdate(BaseSchema):
@@ -72,6 +75,9 @@ class StoreConfigUpdate(BaseSchema):
     social_youtube: Annotated[str | None, Field(max_length=255)] = None
     invoice_vat_rate: Annotated[int | None, Field(ge=0, le=100)] = None
     returns_window_days: Annotated[int | None, Field(ge=0)] = None
+    # Global default low-stock threshold. Send an explicit ``null`` to clear it
+    # back to "no global default"; omit the field to leave it unchanged.
+    low_stock_default_threshold: Annotated[int | None, Field(ge=0)] = None
 
 
 class StoreConfigResponse(StoreConfigBase, TimestampSchema):
