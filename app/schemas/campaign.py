@@ -24,7 +24,7 @@ from app.models.campaign import CAMPAIGN_AUDIENCE_VALUES, CAMPAIGN_STATUS_VALUES
 from app.schemas.base import BaseSchema, TimestampSchema
 
 # Hardcoded for pyright; the cross-checks below catch drift from the model.
-CampaignAudienceLiteral = Literal["all", "customers", "b2b"]
+CampaignAudienceLiteral = Literal["all", "customers", "b2b", "segment"]
 CampaignStatusLiteral = Literal["draft", "scheduled", "sent"]
 
 # Import-time drift catch: an enum value added to one side without the other
@@ -45,6 +45,17 @@ def validate_schedule(status: str, scheduled_at: datetime | None) -> None:
         raise ValueError("scheduled campaigns require a scheduled_at")
 
 
+def validate_segment_audience(audience: str, segment_id: int | None) -> None:
+    """Enforce ``audience='segment'`` ⟺ ``segment_id`` is set (mirrors the DB CHECK).
+
+    A ``segment`` campaign requires a ``segment_id``; any other audience must not
+    carry one. Raises ``ValueError`` on violation."""
+    if audience == "segment" and segment_id is None:
+        raise ValueError("segment campaigns require a segment_id")
+    if audience != "segment" and segment_id is not None:
+        raise ValueError("segment_id is only allowed when audience is 'segment'")
+
+
 class CampaignBase(BaseSchema):
     """Shared campaign fields (creation + response).
 
@@ -58,10 +69,12 @@ class CampaignBase(BaseSchema):
     status: CampaignStatusLiteral = "draft"
     body: str | None = None
     scheduled_at: datetime | None = None
+    segment_id: int | None = None
 
     @model_validator(mode="after")
     def _check_schedule(self) -> CampaignBase:
         validate_schedule(self.status, self.scheduled_at)
+        validate_segment_audience(self.audience, self.segment_id)
         return self
 
 
@@ -85,6 +98,7 @@ class CampaignUpdate(BaseSchema):
     status: CampaignStatusLiteral | None = None
     body: str | None = None
     scheduled_at: datetime | None = None
+    segment_id: int | None = None
 
 
 class CampaignResponse(CampaignBase, TimestampSchema):

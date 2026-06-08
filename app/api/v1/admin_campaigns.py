@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 from app.core import email as email_mod
 from app.core.dependencies import get_current_admin, get_db
 from app.crud import campaign as crud_campaign
+from app.crud.segment import segment as crud_segment
 from app.models.user import User
 from app.schemas.campaign import (
     CampaignAudienceLiteral,
@@ -36,6 +37,7 @@ from app.schemas.campaign import (
     CampaignStatusLiteral,
     CampaignUpdate,
     validate_schedule,
+    validate_segment_audience,
 )
 from app.services.audit import AuditWriter, get_audit_writer
 
@@ -80,7 +82,11 @@ async def create_campaign(
     audit: AuditWriter = Depends(get_audit_writer),
 ):
     """Create a campaign. ``status`` defaults to ``draft``; a ``scheduled`` status
-    requires ``scheduled_at`` (422 otherwise, enforced by the schema)."""
+    requires ``scheduled_at`` (422 otherwise, enforced by the schema). An
+    ``audience='segment'`` campaign requires a ``segment_id`` that references an
+    existing segment (422 / 404 otherwise)."""
+    if payload.segment_id is not None and crud_segment.get(db, payload.segment_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Segment not found")
     campaign = crud_campaign.create(db, obj_in=payload)
     audit.record_create(resource_type="campaign", obj=campaign)
     db.commit()
@@ -122,13 +128,21 @@ async def update_campaign(
     # without resending scheduled_at (or clear scheduled_at on a scheduled one).
     merged_status = data.get("status", campaign.status)
     merged_scheduled_at = data.get("scheduled_at", campaign.scheduled_at)
+    # Same merged-state re-check for the segment invariant: a PATCH may flip the
+    # audience or the segment_id without resending the other (mirrors the DB CHECK).
+    merged_audience = data.get("audience", campaign.audience)
+    merged_segment_id = data.get("segment_id", campaign.segment_id)
     try:
         validate_schedule(merged_status, merged_scheduled_at)
+        validate_segment_audience(merged_audience, merged_segment_id)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
+
+    if merged_segment_id is not None and crud_segment.get(db, merged_segment_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Segment not found")
 
     crud_campaign.update(db, campaign=campaign, obj_in=payload)
     audit.record_update(resource_type="campaign", obj=campaign)
@@ -147,8 +161,8 @@ async def send_campaign(
     """Send a campaign to its resolved audience, then mark it ``sent``.
 
     Only ``draft`` / ``scheduled`` campaigns may send (409 if already ``sent``).
-    The audience (``all`` / ``customers`` / ``b2b``) is resolved to recipient
-    emails, then each is mailed **best-effort** inside a per-recipient
+    The audience (``all`` / ``customers`` / ``b2b`` / ``segment``) is resolved to
+    recipient emails, then each is mailed **best-effort** inside a per-recipient
     try/except — one bad address never aborts the run (mirrors the order-email
     best-effort posture); failures are logged. On completion the campaign flips
     to ``sent`` with ``sent_at`` stamped, alongside an audit row, in one
@@ -163,7 +177,9 @@ async def send_campaign(
     if campaign.status == "sent":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="campaign already sent")
 
-    recipients = crud_campaign.resolve_recipient_emails(db, audience=campaign.audience)
+    recipients = crud_campaign.resolve_recipient_emails(
+        db, audience=campaign.audience, segment_id=campaign.segment_id
+    )
     sent_ok = 0
     failed = 0
     for recipient in recipients:
