@@ -1,0 +1,21 @@
+meta {
+  name: Upload Media
+  type: http
+  seq: 17
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/media
+  body: multipartForm
+  auth: inherit
+}
+
+body:multipart-form {
+  file: @file()
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 201, 422
+}

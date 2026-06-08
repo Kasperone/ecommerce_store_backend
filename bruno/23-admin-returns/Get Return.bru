@@ -1,0 +1,21 @@
+meta {
+  name: Get Return
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/returns/:return_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  return_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

@@ -1,0 +1,21 @@
+meta {
+  name: List Product Variants
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/api/v1/products/:product_id/variants
+  body: none
+  auth: inherit
+}
+
+params:path {
+  product_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

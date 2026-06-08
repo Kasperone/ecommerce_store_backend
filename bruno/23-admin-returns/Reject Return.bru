@@ -1,0 +1,26 @@
+meta {
+  name: Reject Return
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/returns/:return_id/reject
+  body: formUrlEncoded
+  auth: inherit
+}
+
+params:path {
+  return_id: 1
+}
+
+body:form-urlencoded {
+  username: {{email}}
+  password: {{password}}
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}
