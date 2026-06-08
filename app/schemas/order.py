@@ -140,6 +140,11 @@ class OrderResponse(OrderBase, TimestampSchema):
     tracking_number: str | None = None
     tracking_url: str | None = None
 
+    # When the order was marked delivered (set by the admin PATCH on the
+    # transition into ``delivered``; null before then and on legacy delivered
+    # orders). Anchors the returns-eligibility window.
+    delivered_at: datetime | None = None
+
     # Items
     items: list[OrderItemResponse] = Field(default_factory=list)
 

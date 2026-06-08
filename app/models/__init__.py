@@ -54,6 +54,14 @@ from app.models.quote import QUOTE_STATUS_VALUES, Quote, QuoteItem, QuoteStatus
 from app.models.refresh_token import RefreshToken
 from app.models.refund import REFUND_REASON_VALUES, Refund, RefundReason
 from app.models.refund_item import RefundItem
+from app.models.return_request import (
+    RETURN_REASON_VALUES,
+    RETURN_STATUS_VALUES,
+    ReturnItem,
+    ReturnReason,
+    ReturnRequest,
+    ReturnStatus,
+)
 from app.models.review import Review, ReviewStatus
 from app.models.review_vote import ReviewVote
 from app.models.shipping import (
@@ -130,6 +138,12 @@ __all__ = [
     "RefundItem",
     "RefundReason",
     "REFUND_REASON_VALUES",
+    "ReturnItem",
+    "ReturnReason",
+    "ReturnRequest",
+    "ReturnStatus",
+    "RETURN_REASON_VALUES",
+    "RETURN_STATUS_VALUES",
     "Review",
     "ReviewStatus",
     "ReviewVote",

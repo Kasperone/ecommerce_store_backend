@@ -41,6 +41,8 @@ class StoreConfigBase(BaseSchema):
     social_tiktok: Annotated[str, Field(max_length=255)]
     social_youtube: Annotated[str, Field(max_length=255)]
     invoice_vat_rate: Annotated[int, Field(ge=0, le=100)]
+    # Returns (RMA) eligibility window in days from delivery; 0 disables returns.
+    returns_window_days: Annotated[int, Field(ge=0)]
 
 
 class StoreConfigUpdate(BaseSchema):
@@ -69,6 +71,7 @@ class StoreConfigUpdate(BaseSchema):
     social_tiktok: Annotated[str | None, Field(max_length=255)] = None
     social_youtube: Annotated[str | None, Field(max_length=255)] = None
     invoice_vat_rate: Annotated[int | None, Field(ge=0, le=100)] = None
+    returns_window_days: Annotated[int | None, Field(ge=0)] = None
 
 
 class StoreConfigResponse(StoreConfigBase, TimestampSchema):
