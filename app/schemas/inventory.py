@@ -133,3 +133,27 @@ class InventoryMovementListResponse(BaseSchema):
     page: int
     page_size: int
     pages: int
+
+
+class LowStockSummary(BaseSchema):
+    """Grouped stock-status counts for the admin dashboard low-stock badge.
+
+    ``low_stock_count`` + ``out_of_stock_count`` honour the store-wide
+    ``low_stock_default_threshold``; ``backorder_count`` is independent of it.
+    """
+
+    low_stock_count: int
+    out_of_stock_count: int
+    backorder_count: int
+
+
+class LowStockReportResult(BaseSchema):
+    """Result of triggering the manual low-stock report email.
+
+    ``recipients`` is the resolved store-admin address(es) the report was queued
+    to; ``product_count`` is how many products were at/below threshold at trigger
+    time. The send itself is best-effort and runs off a ``BackgroundTask``.
+    """
+
+    recipients: list[str]
+    product_count: int

@@ -48,6 +48,10 @@ class StoreConfig(BaseModel):
             "returns_window_days >= 0",
             name="ck_store_config_returns_window_days_nonneg",
         ),
+        CheckConstraint(
+            "low_stock_default_threshold IS NULL OR low_stock_default_threshold >= 0",
+            name="ck_store_config_low_stock_default_threshold_nonneg",
+        ),
     )
 
     store_name: Mapped[str] = mapped_column(String(255), server_default="")
@@ -72,6 +76,13 @@ class StoreConfig(BaseModel):
     # Returns (RMA) eligibility window in days from delivery. 0 = returns
     # disabled. Guarded >= 0 by the CHECK above + the schema.
     returns_window_days: Mapped[int] = mapped_column(Integer, server_default="30")
+    # Store-wide default low-stock threshold. NULL (the seed default) means
+    # "no global default" → only products with their own ``low_stock_threshold``
+    # are ever flagged low (today's behaviour, byte-for-byte). When set, it
+    # applies as a fallback to every product whose own threshold is NULL — the
+    # effective threshold is ``COALESCE(product.low_stock_threshold, this)``.
+    # Guarded ``>= 0 OR NULL`` by the CHECK above + the schema.
+    low_stock_default_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     def __repr__(self) -> str:
         return f"<StoreConfig id={self.id} {self.store_name!r} vat={self.invoice_vat_rate}>"

@@ -14,13 +14,14 @@ movement log.
 
 from __future__ import annotations
 
-from sqlalchemy import and_, func, not_, or_
+from sqlalchemy import and_, func, literal, not_, or_
 from sqlalchemy.orm import Session
 
 from app.crud.warehouse import warehouse as crud_warehouse
 from app.models.inventory_movement import InventoryMovement, InventoryMovementReason
 from app.models.product import Product
 from app.models.product_variant import ProductVariant
+from app.models.store_config import StoreConfig
 from app.models.warehouse import StockLevel, Warehouse
 from app.schemas.inventory import InventoryStatus
 
@@ -226,13 +227,37 @@ class CRUDInventory:
         db.add(product)
         return movement
 
-    def status_for(self, product: Product) -> InventoryStatus:
+    def low_stock_default_threshold(self, db: Session) -> int | None:
+        """The store-wide default low-stock threshold (``None`` = no global default).
+
+        Read once per request and threaded into the SET-BASED queries below as a
+        bound literal — never per-row Python. A ``None`` result reproduces today's
+        behaviour exactly (only products with their own threshold are flagged).
+        Reads ``store_config.low_stock_default_threshold`` directly (no get-or-create
+        on this read path; a missing config row simply means "no global default").
+        """
+        return db.query(StoreConfig.low_stock_default_threshold).scalar()
+
+    def status_for(self, product: Product, default_threshold: int | None = None) -> InventoryStatus:
         """Stock status: ``backorder`` (<=0 and backorder allowed) / ``out_of_stock``
-        (<=0, no backorder) / ``low_stock`` (at or below a set threshold, but >0) /
-        ``in_stock``. A null threshold means never "low"."""
+        (<=0, no backorder) / ``low_stock`` (at or below the *effective* threshold,
+        but >0) / ``in_stock``.
+
+        The effective threshold is
+        ``COALESCE(product.low_stock_threshold, default_threshold)`` — a product's
+        own threshold wins; the global ``default_threshold`` applies only where the
+        product's own is NULL. When ``default_threshold`` is ``None`` (the seed
+        default), only products with their own threshold are ever "low" — identical
+        to the pre-global-default behaviour.
+        """
         if product.stock <= 0:
             return "backorder" if product.allow_backorder else "out_of_stock"
-        if product.low_stock_threshold is not None and product.stock <= product.low_stock_threshold:
+        effective = (
+            product.low_stock_threshold
+            if product.low_stock_threshold is not None
+            else default_threshold
+        )
+        if effective is not None and product.stock <= effective:
             return "low_stock"
         return "in_stock"
 
@@ -240,7 +265,30 @@ class CRUDInventory:
     # Admin stock list (products joined with computed status)
     # ------------------------------------------------------------------
 
-    def _admin_filtered_query(self, db: Session, *, status: str | None, search: str | None):
+    def _admin_filtered_query(
+        self,
+        db: Session,
+        *,
+        status: str | None,
+        search: str | None,
+        default_threshold: int | None = None,
+    ):
+        """Build the admin stock-list query for ``status``/``search``.
+
+        ``default_threshold`` is the store-wide global default folded into the
+        ``low_stock`` / ``in_stock`` predicates as the effective threshold
+        ``COALESCE(low_stock_threshold, default_threshold)`` — bound as a SQL
+        literal, set-based, no per-row Python. When it is ``None`` the predicates
+        are byte-for-byte the original ones (the ``coalesce`` collapses to the
+        bare column), so the NULL-global case reproduces today exactly.
+        """
+        # Effective threshold expression. With no global default, fall back to the
+        # bare column so the SQL is identical to the original.
+        effective = (
+            func.coalesce(Product.low_stock_threshold, literal(default_threshold))
+            if default_threshold is not None
+            else Product.low_stock_threshold
+        )
         query = db.query(Product)
         if search:
             like = f"%{search.strip()}%"
@@ -251,16 +299,16 @@ class CRUDInventory:
             query = query.filter(Product.stock <= 0, Product.allow_backorder.is_(True))
         elif status == "low_stock":
             query = query.filter(
-                Product.low_stock_threshold.isnot(None),
+                effective.isnot(None),
                 Product.stock > 0,
-                Product.stock <= Product.low_stock_threshold,
+                Product.stock <= effective,
             )
         elif status == "in_stock":
             query = query.filter(
                 Product.stock > 0,
                 or_(
-                    Product.low_stock_threshold.is_(None),
-                    Product.stock > Product.low_stock_threshold,
+                    effective.is_(None),
+                    Product.stock > effective,
                 ),
             )
         return query
@@ -273,10 +321,13 @@ class CRUDInventory:
         search: str | None = None,
         skip: int = 0,
         limit: int = 20,
+        default_threshold: int | None = None,
     ) -> list[Product]:
         """Admin stock list with optional status + search filters, by name."""
         return (
-            self._admin_filtered_query(db, status=status, search=search)
+            self._admin_filtered_query(
+                db, status=status, search=search, default_threshold=default_threshold
+            )
             .order_by(Product.name.asc(), Product.id.asc())
             .offset(skip)
             .limit(limit)
@@ -284,20 +335,61 @@ class CRUDInventory:
         )
 
     def count_admin(
-        self, db: Session, *, status: str | None = None, search: str | None = None
+        self,
+        db: Session,
+        *,
+        status: str | None = None,
+        search: str | None = None,
+        default_threshold: int | None = None,
     ) -> int:
-        return self._admin_filtered_query(db, status=status, search=search).count()
+        return self._admin_filtered_query(
+            db, status=status, search=search, default_threshold=default_threshold
+        ).count()
 
     def get_for_export(
-        self, db: Session, *, status: str | None = None, search: str | None = None
+        self,
+        db: Session,
+        *,
+        status: str | None = None,
+        search: str | None = None,
+        default_threshold: int | None = None,
     ) -> list[Product]:
         """Every product matching the status/search filters (no pagination) for CSV
         export — so the export mirrors the on-screen stock list."""
         return (
-            self._admin_filtered_query(db, status=status, search=search)
+            self._admin_filtered_query(
+                db, status=status, search=search, default_threshold=default_threshold
+            )
             .order_by(Product.name.asc(), Product.id.asc())
             .all()
         )
+
+    # ------------------------------------------------------------------
+    # Low-stock alerts (summary counts + the report's product set)
+    # ------------------------------------------------------------------
+
+    def low_stock_summary(self, db: Session) -> dict[str, int]:
+        """Grouped stock-status counts for the admin dashboard badge.
+
+        Three cheap set-based COUNTs over the same filtered query the list uses
+        (so the badge and the list agree): ``low_stock`` and ``out_of_stock``
+        both honour the global default threshold, ``backorder`` is independent of
+        it. Returns ``{low_stock_count, out_of_stock_count, backorder_count}``.
+        """
+        default_threshold = self.low_stock_default_threshold(db)
+        return {
+            "low_stock_count": self.count_admin(
+                db, status="low_stock", default_threshold=default_threshold
+            ),
+            "out_of_stock_count": self.count_admin(db, status="out_of_stock"),
+            "backorder_count": self.count_admin(db, status="backorder"),
+        }
+
+    def low_stock_products(self, db: Session) -> list[Product]:
+        """The full current low-stock product set (honouring the global default),
+        by name — the body of the manual email report."""
+        default_threshold = self.low_stock_default_threshold(db)
+        return self.get_for_export(db, status="low_stock", default_threshold=default_threshold)
 
     def levels_by_product(
         self, db: Session, *, product_ids: list[int]
