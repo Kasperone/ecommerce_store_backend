@@ -79,6 +79,13 @@ class Category(BaseModel):
     meta_title_pl: Mapped[str | None] = mapped_column(String(70))
     meta_description_pl: Mapped[str | None] = mapped_column(String(160))
 
+    # Google product category — the Merchant Center taxonomy id (e.g. "166"
+    # for "Apparel & Accessories"), inherited by every product in this category
+    # unless the product sets its own ``google_product_category`` override.
+    # Nullable: only consumed by the Google Shopping feed (Pillar E); admins
+    # fill it in per merchandised category at their pace.
+    google_product_category: Mapped[str | None] = mapped_column(String(20))
+
     # Hero image (single image, 1:1 with the row)
     hero_image_url: Mapped[str | None] = mapped_column(String(500))
     hero_image_alt: Mapped[str | None] = mapped_column(String(200))

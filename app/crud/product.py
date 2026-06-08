@@ -387,6 +387,29 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
         by_id = {p.id: p for p in products}
         return [by_id[pid] for pid in ranked_ids if pid in by_id]
 
+    def get_feed_entries(self, db: Session) -> list[Product]:
+        """All active products for the Google Shopping feed (Pillar E).
+
+        Eager-loads everything the feed serializer touches per product —
+        images, category, options (with values), and variants (with their
+        option-value links) — so the feed builds in a fixed number of queries
+        regardless of catalogue size. Currency-presence filtering happens in
+        the feed builder (a product is emitted only when it has a price in the
+        requested currency), not here. ``id`` order keeps output stable.
+        """
+        return (
+            db.query(Product)
+            .options(
+                selectinload(Product.images),
+                joinedload(Product.category),
+                selectinload(Product.options).selectinload(ProductOption.values),
+                selectinload(Product.variants).selectinload(ProductVariant.option_values),
+            )
+            .filter(Product.is_active.is_(True))
+            .order_by(Product.id)
+            .all()
+        )
+
     def get_sitemap_entries(self, db: Session) -> list[Product]:
         """
         All active products with their images eagerly loaded, for the public

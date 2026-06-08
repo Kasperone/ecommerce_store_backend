@@ -90,6 +90,13 @@ class Product(BaseModel):
     mpn: Mapped[str | None] = mapped_column(String(70))
     condition: Mapped[str] = mapped_column(String(20), default="new", server_default="new")
 
+    # Per-product override for the Google product category (the Merchant Center
+    # taxonomy id, e.g. "166" for Apparel & Accessories). NULL = inherit the
+    # value from the product's category (categories.google_product_category).
+    # Only consumed by the Google Shopping feed (Pillar E); nullable so legacy
+    # products and most products never set it.
+    google_product_category: Mapped[str | None] = mapped_column(String(20))
+
     # SEO meta (per locale) — mirrors Category; PDP fallback chain is
     # meta_title -> name (+ _pl), meta_description -> description excerpt.
     meta_title: Mapped[str | None] = mapped_column(String(70))
