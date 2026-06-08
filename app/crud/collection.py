@@ -162,5 +162,53 @@ class CRUDCollection(CRUDBase[Collection, CollectionCreate, CollectionUpdate]):
         )
         return True
 
+    def set_product_collections(
+        self, db: Session, *, product_id: int, collection_ids: list[int]
+    ) -> list[int]:
+        """Replace a single product's collection membership with ``collection_ids``.
+
+        The per-product mirror of ``set_products`` (which is per-collection): used
+        by the CSV importer, where one row carries a product's full
+        ``collection_slugs`` set. Deletes every existing membership row for the
+        product, then appends it to each target collection at the end of that
+        collection's order (max ``position`` + 1). De-duplicates, preserving
+        first-seen order. Returns the set of *affected* collection ids (old + new)
+        for caller bookkeeping. Stages only — caller commits.
+        """
+        previous = {
+            row[0]
+            for row in db.execute(
+                select(collection_products.c.collection_id).where(
+                    collection_products.c.product_id == product_id
+                )
+            ).all()
+        }
+
+        ordered: list[int] = []
+        seen: set[int] = set()
+        for cid in collection_ids:
+            if cid not in seen:
+                seen.add(cid)
+                ordered.append(cid)
+
+        db.execute(
+            delete(collection_products).where(collection_products.c.product_id == product_id)
+        )
+        for cid in ordered:
+            max_position = (
+                db.query(func.max(collection_products.c.position))
+                .filter(collection_products.c.collection_id == cid)
+                .scalar()
+            )
+            next_position = 0 if max_position is None else max_position + 1
+            db.execute(
+                insert(collection_products).values(
+                    collection_id=cid,
+                    product_id=product_id,
+                    position=next_position,
+                )
+            )
+        return sorted(previous | set(ordered))
+
 
 collection = CRUDCollection(Collection)
