@@ -1,7 +1,7 @@
 from typing import Any
 
 from sqlalchemy import func, nulls_last, or_, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.crud.base import CRUDBase
 from app.models.collection import collection_products
@@ -180,6 +180,46 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
 
         # Pagination
         return query.offset(skip).limit(limit).all()
+
+    def get_for_export(
+        self,
+        db: Session,
+        *,
+        category_id: int | None = None,
+        is_active: bool | None = None,
+        search: str | None = None,
+    ) -> list[Product]:
+        """Fetch products (unpaginated) for the admin CSV export.
+
+        Mirrors the admin product-list filters (category / active / search) so the
+        export matches the on-screen filtered view. Eager-loads tags, collections,
+        the category, and variants so the per-row CSV assembly (``has_variants`` +
+        packed ``tags`` / ``collection_slugs`` + ``category_slug``) never N+1s.
+        ``is_active`` defaults to ``None`` here (export all by default — the route
+        owns the "active only" default if any), unlike the public list.
+        """
+        query = db.query(Product)
+
+        if is_active is not None:
+            query = query.filter(Product.is_active == is_active)
+        if category_id:
+            query = query.filter(Product.category_id == category_id)
+        if search:
+            query = query.filter(
+                or_(
+                    Product.name.ilike(f"%{search}%"),
+                    Product.description.ilike(f"%{search}%"),
+                )
+            )
+
+        query = query.options(
+            selectinload(Product.variants),
+            selectinload(Product.tags),
+            selectinload(Product.collections),
+            joinedload(Product.category),
+        ).order_by(Product.id.asc())
+
+        return query.all()
 
     def count_with_filters(
         self,
