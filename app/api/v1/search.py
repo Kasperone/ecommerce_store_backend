@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.core.dependencies import get_db
 from app.core.search import CATEGORIES_INDEX, PRODUCTS_INDEX, get_meili_client
 from app.models.category import Category
+from app.models.collection import Collection
 from app.schemas.search import (
     FacetBucket,
     SearchResponse,
@@ -73,6 +74,7 @@ def build_filters(
     in_stock: bool | None,
     currency: str,
     tag: str | None = None,
+    collection: str | None = None,
 ) -> list[str]:
     """Build Meili filter expressions. All inputs are typed — no injection."""
     filters: list[str] = []
@@ -82,6 +84,8 @@ def build_filters(
         filters.append(f"in_stock = {'true' if in_stock else 'false'}")
     if tag:
         filters.append(f"tags = {_quote(tag)}")
+    if collection:
+        filters.append(f"collection_slugs = {_quote(collection)}")
     price_field = _price_field(currency)
     if min_price is not None:
         filters.append(f"{price_field} >= {min_price}")
@@ -183,6 +187,30 @@ def _build_tag_facets(facet_distribution: dict) -> dict[str, list[FacetBucket]]:
     return {"tags": buckets}
 
 
+def _build_collection_facets(
+    db: Session, facet_distribution: dict, locale: str
+) -> dict[str, list[FacetBucket]]:
+    """Turn Meili's ``{collection_slugs: {"slug": 5}}`` distribution into labeled
+    buckets, resolving the localized collection name from the DB (like categories).
+    """
+    counts: dict[str, int] = facet_distribution.get("collection_slugs", {})
+    if not counts:
+        return {}
+    slugs = list(counts)
+    rows = db.execute(
+        select(Collection.slug, Collection.name, Collection.name_pl).where(
+            Collection.slug.in_(slugs)
+        )
+    ).all()
+    labels = {row.slug: (row.name_pl or row.name) if locale == "pl" else row.name for row in rows}
+    buckets = [
+        FacetBucket(value=slug, label=labels.get(slug, slug), count=count)
+        for slug, count in counts.items()
+    ]
+    buckets.sort(key=lambda bucket: bucket.count, reverse=True)
+    return {"collection_slugs": buckets}
+
+
 # ---------------------------------------------------------------------------
 # Endpoints.
 # ---------------------------------------------------------------------------
@@ -197,6 +225,7 @@ async def search_products(
     currency: Currency = Query("USD", description="Currency for price filter/sort"),
     category_id: int | None = Query(None, description="Filter by category"),
     tag: str | None = Query(None, max_length=50, description="Filter by tag name"),
+    collection: str | None = Query(None, max_length=100, description="Filter by collection slug"),
     min_price: float | None = Query(None, ge=0, description="Min price (selected currency)"),
     max_price: float | None = Query(None, ge=0, description="Max price (selected currency)"),
     in_stock: bool | None = Query(None, description="Filter by stock availability"),
@@ -208,12 +237,12 @@ async def search_products(
     opts: dict[str, Any] = {
         "page": page,
         "hitsPerPage": page_size,
-        "facets": ["category_id", "tags"],
+        "facets": ["category_id", "tags", "collection_slugs"],
         "attributesToHighlight": ["name", "name_pl"],
         "highlightPreTag": HIGHLIGHT_PRE,
         "highlightPostTag": HIGHLIGHT_POST,
     }
-    filters = build_filters(category_id, min_price, max_price, in_stock, currency, tag)
+    filters = build_filters(category_id, min_price, max_price, in_stock, currency, tag, collection)
     if filters:
         opts["filter"] = filters
     sort_arg = build_sort(sort, currency)
@@ -227,6 +256,7 @@ async def search_products(
     facets = {
         **_build_category_facets(db, facet_distribution, locale),
         **_build_tag_facets(facet_distribution),
+        **_build_collection_facets(db, facet_distribution, locale),
     }
     return SearchResponse(
         items=items,

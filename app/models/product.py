@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from app.models.category import Category
+    from app.models.collection import Collection
     from app.models.inventory_movement import InventoryMovement
     from app.models.order import OrderItem
     from app.models.product_image import ProductImage
@@ -179,6 +180,16 @@ class Product(BaseModel):
         secondary="product_tag_links",
         back_populates="products",
         order_by="func.lower(ProductTag.name)",
+    )
+    # Manual collections this product belongs to. Read-only on the product side —
+    # membership is managed from the collection (the collection_products join is
+    # written by the admin membership endpoints). Used to denormalize
+    # collection_slugs onto the Meili doc.
+    collections: Mapped[list["Collection"]] = relationship(
+        "Collection",
+        secondary="collection_products",
+        viewonly=True,
+        order_by="Collection.sort_order",
     )
 
     def __repr__(self):

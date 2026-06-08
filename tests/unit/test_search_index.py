@@ -74,6 +74,8 @@ def test_build_product_document_full(db_session, product_factory):
     assert doc["category_id"] == product.category_id
     # Untagged product → empty tag list (additive field, always present).
     assert doc["tags"] == []
+    # Product in no collections → empty collection_slugs (additive, always present).
+    assert doc["collection_slugs"] == []
     assert isinstance(doc["created_at"], int)
 
 
@@ -103,6 +105,7 @@ def test_build_product_document_minimal(db_session, product_factory):
     assert doc["has_variants"] is False
     assert doc["option_values"] == []
     assert doc["tags"] == []
+    assert doc["collection_slugs"] == []
     assert doc["price_usd"] == product.price_usd
 
 
@@ -175,6 +178,30 @@ def test_build_product_document_includes_tag_names(db_session, product_factory):
     doc = search_index.build_product_document(product)
 
     assert sorted(doc["tags"]) == ["new-arrival", "sale"]
+
+
+def test_build_product_document_includes_collection_slugs(db_session, product_factory):
+    """A product in collections flattens their slugs into ``collection_slugs``."""
+    from app.models.collection import Collection, collection_products
+
+    product = product_factory()
+    summer = Collection(name="Summer", slug="summer", sort_order=0)
+    sale = Collection(name="Sale", slug="sale-collection", sort_order=1)
+    db_session.add_all([summer, sale])
+    db_session.flush()
+    db_session.execute(
+        collection_products.insert(),
+        [
+            {"collection_id": summer.id, "product_id": product.id, "position": 0},
+            {"collection_id": sale.id, "product_id": product.id, "position": 0},
+        ],
+    )
+    db_session.commit()
+    db_session.refresh(product)
+
+    doc = search_index.build_product_document(product)
+
+    assert sorted(doc["collection_slugs"]) == ["sale-collection", "summer"]
 
 
 def test_build_category_document(db_session, category_factory):

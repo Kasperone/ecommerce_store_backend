@@ -4,6 +4,7 @@ from sqlalchemy import func, nulls_last, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.crud.base import CRUDBase
+from app.models.collection import collection_products
 from app.models.order import Order, OrderItem, OrderStatus
 from app.models.product import Product
 from app.models.product_tag import ProductTag, product_tag_links
@@ -91,6 +92,7 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
         in_stock: bool | None = None,
         search: str | None = None,
         tag: str | None = None,
+        collection_id: int | None = None,
         sort_by: str = "created_at",
         order: str = "desc",
     ) -> list[Product]:
@@ -153,12 +155,23 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
         if tag:
             query = self._apply_tag_filter(query, tag)
 
-        # Ordering — resolve through the whitelist so the param can't reach
-        # arbitrary SQL. nulls_last keeps price-less products off the top of a
-        # ``price_usd asc`` sort; the id tiebreak makes paging deterministic.
-        column = SORTABLE_COLUMNS.get(sort_by, Product.created_at)
-        ordering = column.asc() if order == "asc" else column.desc()
-        query = query.order_by(nulls_last(ordering), Product.id.asc())
+        # Filter by collection membership via the collection_products join.
+        if collection_id is not None:
+            query = query.join(
+                collection_products, collection_products.c.product_id == Product.id
+            ).filter(collection_products.c.collection_id == collection_id)
+
+        # Ordering. A collection query is ordered by the curated ``position`` (the
+        # admin's display order); otherwise resolve the requested sort through the
+        # whitelist so the param can't reach arbitrary SQL. nulls_last keeps
+        # price-less products off the top of a ``price_usd asc`` sort; the id
+        # tiebreak makes paging deterministic.
+        if collection_id is not None:
+            query = query.order_by(collection_products.c.position.asc(), Product.id.asc())
+        else:
+            column = SORTABLE_COLUMNS.get(sort_by, Product.created_at)
+            ordering = column.asc() if order == "asc" else column.desc()
+            query = query.order_by(nulls_last(ordering), Product.id.asc())
 
         # The list response carries ``has_variants`` (a property over
         # Product.variants) + the ``tags`` chips — selectin passes instead of
@@ -180,6 +193,7 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
         in_stock: bool | None = None,
         search: str | None = None,
         tag: str | None = None,
+        collection_id: int | None = None,
     ) -> int:
         """
         Count products with filters
@@ -215,6 +229,10 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
             query = query.filter(search_filter)
         if tag:
             query = self._apply_tag_filter(query, tag)
+        if collection_id is not None:
+            query = query.join(
+                collection_products, collection_products.c.product_id == Product.id
+            ).filter(collection_products.c.collection_id == collection_id)
 
         return query.count()
 
