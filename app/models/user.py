@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from app.models.tag import Tag
     from app.models.user_consent import UserConsent
     from app.models.verification_token import VerificationToken
+    from app.models.wishlist import WishlistItem
 
 
 class UserRole(str, enum.Enum):
@@ -123,6 +124,10 @@ class User(BaseModel):
     # Append-only consent audit log (latest row per type = current value).
     consents: Mapped[list["UserConsent"]] = relationship(
         "UserConsent", back_populates="user", cascade="all, delete-orphan"
+    )
+    # Saved products (optionally a specific variant). Cascade-deletes with the user.
+    wishlist_items: Mapped[list["WishlistItem"]] = relationship(
+        "WishlistItem", back_populates="user", cascade="all, delete-orphan"
     )
 
     def __repr__(self):

@@ -76,6 +76,7 @@ from app.models.user import User
 from app.models.user_consent import UserConsent
 from app.models.verification_token import VerificationToken
 from app.models.warehouse import StockLevel, Warehouse
+from app.models.wishlist import WishlistItem
 
 __all__ = [
     "Address",
@@ -159,4 +160,5 @@ __all__ = [
     "RefreshToken",
     "Warehouse",
     "StockLevel",
+    "WishlistItem",
 ]
