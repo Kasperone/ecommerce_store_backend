@@ -182,6 +182,40 @@ async def get_lowest_30d(
     return LowestPriceResponse(currency=currency, lowest_price=lowest, since=since)
 
 
+@router.get("/{slug}/related", response_model=list[ProductResponse])
+async def get_related_products(
+    slug: str,
+    db: Session = Depends(get_db),
+    limit: int = Query(8, ge=1, le=24, description="Maximum number of related products"),
+):
+    """
+    Related products for the PDP ("You may also like" / "Customers also bought").
+
+    Public + unauthenticated. Resolves ``slug`` like the product-detail route
+    (404 if the slug is unknown or the product is inactive). Returns a ranked
+    list of ``ProductResponse`` cards — the same shape the storefront product
+    listing renders — so the frontend reuses its existing product-card
+    component.
+
+    Ranking (computed at read time, no new table):
+
+    - **Primary — "customers also bought":** other products that co-appear in
+      the same non-cancelled orders, ranked by the number of distinct orders
+      they share with this product (desc), newest product id as a tiebreak.
+    - **Fallback fill:** if fewer than ``limit`` co-occurrence results, the rest
+      is filled with other active, in-stock products from the same category
+      (newest first), excluding the subject and any already chosen.
+
+    The subject is always excluded; inactive products are never returned;
+    results are de-duped and capped at ``limit``. Returns ``[]`` when a product
+    has neither co-occurrence nor same-category peers.
+    """
+    product = crud_product.get_by_slug(db, slug=slug)
+    if not product or not product.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+    return crud_product.get_related(db, product=product, limit=limit)
+
+
 @router.post("/", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
 async def create_product(
     product_in: ProductCreate,
