@@ -7,7 +7,10 @@ from sqlalchemy.orm import Session
 from app.core.dependencies import get_current_admin, get_db
 from app.crud import price_history as crud_price_history
 from app.crud import product as crud_product
+from app.crud import product_tag as crud_product_tag
+from app.crud.product_tag import normalize_name
 from app.models.price_history import SUPPORTED_CURRENCIES
+from app.models.product import Product
 from app.models.user import User
 from app.schemas.price_history import LowestPriceResponse
 from app.schemas.product import (
@@ -23,6 +26,33 @@ from app.services.audit import AuditWriter, get_audit_writer
 router = APIRouter()
 
 
+def _reconcile_product_tags(db: Session, product: Product, names: list[str]) -> None:
+    """Replace ``product.tags`` with the get-or-create vocabulary rows for ``names``.
+
+    Names are trimmed / whitespace-collapsed and de-duplicated case-insensitively;
+    blanks are dropped. Each surviving name is resolved through
+    ``crud_product_tag.get_or_create`` (case-insensitive), so existing tags are
+    reused and new ones created on the fly. The join is fully replaced — passing
+    ``[]`` clears every tag.
+
+    Must run AFTER ``audit.record_update`` on the product: ``get_or_create`` may
+    flush (creating a new tag row), which would clear the ``get_history`` the
+    audit writer reads for the product column diff.
+    """
+    resolved: list = []
+    seen: set[str] = set()
+    for raw in names:
+        norm = normalize_name(raw)
+        if not norm:
+            continue
+        key = norm.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        resolved.append(crud_product_tag.get_or_create(db, name=norm))
+    product.tags = resolved
+
+
 @router.get("/", response_model=ProductListResponse)
 async def list_products(
     db: Session = Depends(get_db),
@@ -35,6 +65,9 @@ async def list_products(
     max_price: float | None = Query(None, ge=0, description="Maximum price (USD)"),
     in_stock: bool | None = Query(None, description="Filter by stock availability"),
     search: str | None = Query(None, max_length=100, description="Search in name and description"),
+    tag: str | None = Query(
+        None, max_length=50, description="Filter by tag name (case-insensitive)"
+    ),
     sort_by: Literal["created_at", "price_usd", "name"] = Query(
         "created_at", description="Field to sort by"
     ),
@@ -68,6 +101,7 @@ async def list_products(
         max_price_usd=max_price,
         in_stock=in_stock,
         search=search,
+        tag=tag,
         sort_by=sort_by,
         order=order,
     )
@@ -82,6 +116,7 @@ async def list_products(
         max_price_usd=max_price,
         in_stock=in_stock,
         search=search,
+        tag=tag,
     )
 
     pages = ceil(total / page_size) if total > 0 else 1
@@ -256,6 +291,17 @@ async def create_product(
             currency=currency,
             new_price=getattr(product, f"price_{currency.lower()}"),
         )
+    # Reconcile the tag join (get-or-create the vocabulary, sync links). Done
+    # after the audit record so the product's column diff stays clean; the link
+    # change is captured separately below.
+    if product_in.tags is not None:
+        _reconcile_product_tags(db, product, product_in.tags)
+        audit.record_event(
+            action="update",
+            resource_type="product_tag_link",
+            resource_id=product.id,
+            payload={"tags": [t.name for t in product.tags]},
+        )
     db.commit()
     db.refresh(product)
     # Best-effort: keep the search index in step (no-op when Meili unconfigured).
@@ -313,6 +359,17 @@ async def update_product(
             product=product,
             currency=currency,
             new_price=getattr(product, f"price_{currency.lower()}"),
+        )
+    # Reconcile the tag join when ``tags`` was provided. ``None`` (omitted) leaves
+    # tags unchanged; ``[]`` clears them. Must run AFTER ``audit.record_update``
+    # (its flush would otherwise clear the product's ``get_history`` diff).
+    if product_in.tags is not None:
+        _reconcile_product_tags(db, product, product_in.tags)
+        audit.record_event(
+            action="update",
+            resource_type="product_tag_link",
+            resource_id=product.id,
+            payload={"tags": [t.name for t in product.tags]},
         )
     db.commit()
     db.refresh(product)

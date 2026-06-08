@@ -71,10 +71,10 @@ async def test_search_maps_results_and_enriches_facets(client, mock_meili_client
     # Facet count enriched with the DB category name.
     facet = body["facets"]["category_id"][0]
     assert facet == {"value": str(category.id), "label": "Electronics", "count": 1}
-    # Page-based pagination + category facet requested.
+    # Page-based pagination + category & tag facets requested.
     _q, opts = mock_meili_client.index.return_value.search.call_args.args
     assert opts["page"] == 1
-    assert opts["facets"] == ["category_id"]
+    assert opts["facets"] == ["category_id", "tags"]
 
 
 async def test_search_passes_filters_and_sort(client, mock_meili_client):

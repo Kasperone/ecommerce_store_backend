@@ -55,12 +55,24 @@ def _localized(data: dict, field: str, locale: str) -> str | None:
     return data.get(field)
 
 
+def _quote(value: str) -> str:
+    """Quote a string for a Meili filter expression (escape ``\\`` and ``"``).
+
+    The free-text query is handled by Meili's ``q`` param; a *filter* value must
+    be a quoted literal. Escaping keeps the typed tag value from breaking out of
+    the quoted string — no filter-injection surface.
+    """
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 def build_filters(
     category_id: int | None,
     min_price: float | None,
     max_price: float | None,
     in_stock: bool | None,
     currency: str,
+    tag: str | None = None,
 ) -> list[str]:
     """Build Meili filter expressions. All inputs are typed — no injection."""
     filters: list[str] = []
@@ -68,6 +80,8 @@ def build_filters(
         filters.append(f"category_id = {category_id}")
     if in_stock is not None:
         filters.append(f"in_stock = {'true' if in_stock else 'false'}")
+    if tag:
+        filters.append(f"tags = {_quote(tag)}")
     price_field = _price_field(currency)
     if min_price is not None:
         filters.append(f"{price_field} >= {min_price}")
@@ -155,6 +169,20 @@ def _build_category_facets(
     return {"category_id": buckets}
 
 
+def _build_tag_facets(facet_distribution: dict) -> dict[str, list[FacetBucket]]:
+    """Turn Meili's ``{tags: {"sale": 5}}`` distribution into labeled buckets.
+
+    Tag names are single-locale merchandising labels — the value *is* the label,
+    so no DB round-trip is needed.
+    """
+    counts: dict[str, int] = facet_distribution.get("tags", {})
+    if not counts:
+        return {}
+    buckets = [FacetBucket(value=name, label=name, count=count) for name, count in counts.items()]
+    buckets.sort(key=lambda bucket: bucket.count, reverse=True)
+    return {"tags": buckets}
+
+
 # ---------------------------------------------------------------------------
 # Endpoints.
 # ---------------------------------------------------------------------------
@@ -168,6 +196,7 @@ async def search_products(
     locale: Locale = Query("en", description="Locale for localized fields"),
     currency: Currency = Query("USD", description="Currency for price filter/sort"),
     category_id: int | None = Query(None, description="Filter by category"),
+    tag: str | None = Query(None, max_length=50, description="Filter by tag name"),
     min_price: float | None = Query(None, ge=0, description="Min price (selected currency)"),
     max_price: float | None = Query(None, ge=0, description="Max price (selected currency)"),
     in_stock: bool | None = Query(None, description="Filter by stock availability"),
@@ -179,12 +208,12 @@ async def search_products(
     opts: dict[str, Any] = {
         "page": page,
         "hitsPerPage": page_size,
-        "facets": ["category_id"],
+        "facets": ["category_id", "tags"],
         "attributesToHighlight": ["name", "name_pl"],
         "highlightPreTag": HIGHLIGHT_PRE,
         "highlightPostTag": HIGHLIGHT_POST,
     }
-    filters = build_filters(category_id, min_price, max_price, in_stock, currency)
+    filters = build_filters(category_id, min_price, max_price, in_stock, currency, tag)
     if filters:
         opts["filter"] = filters
     sort_arg = build_sort(sort, currency)
@@ -194,13 +223,18 @@ async def search_products(
     result = await run_in_threadpool(client.index(PRODUCTS_INDEX).search, q, opts)
 
     items = [map_product_hit(hit, locale) for hit in result.get("hits", [])]
+    facet_distribution = result.get("facetDistribution", {})
+    facets = {
+        **_build_category_facets(db, facet_distribution, locale),
+        **_build_tag_facets(facet_distribution),
+    }
     return SearchResponse(
         items=items,
         total=result.get("totalHits", len(items)),
         page=result.get("page", page),
         page_size=page_size,
         pages=result.get("totalPages", 1),
-        facets=_build_category_facets(db, result.get("facetDistribution", {}), locale),
+        facets=facets,
         query=q,
         processing_time_ms=result.get("processingTimeMs", 0),
     )
