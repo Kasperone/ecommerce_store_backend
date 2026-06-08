@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.crud.base import CRUDBase
 from app.models.order import Order, OrderItem, OrderStatus
 from app.models.product import Product
+from app.models.product_tag import ProductTag, product_tag_links
 from app.models.product_variant import ProductOption, ProductVariant
 from app.schemas.product import ProductCreate, ProductUpdate
 
@@ -30,6 +31,21 @@ _DETAIL_OPTIONS = (
 
 class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
     """CRUD operations for Product model"""
+
+    def create(self, db: Session, *, obj_in: ProductCreate) -> Product:
+        """Create a product, ignoring the write-only ``tags`` field.
+
+        ``tags`` is a list of names, not a column — the route reconciles the
+        ``product_tag_links`` join separately (after the audit record, to keep
+        the column diff clean). Excluding it here keeps ``Product(**data)`` from
+        trying to assign strings to the relationship.
+        """
+        data = obj_in.model_dump(exclude={"tags"})
+        db_obj = Product(**data)
+        db.add(db_obj)
+        db.flush()
+        db.refresh(db_obj)
+        return db_obj
 
     def get(self, db: Session, id: Any) -> Product | None:
         """Get a single product by ID with the variant matrix eager-loaded."""
@@ -74,6 +90,7 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
         max_price_usd: float | None = None,
         in_stock: bool | None = None,
         search: str | None = None,
+        tag: str | None = None,
         sort_by: str = "created_at",
         order: str = "desc",
     ) -> list[Product]:
@@ -132,6 +149,10 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
             )
             query = query.filter(search_filter)
 
+        # Filter by tag name (case-insensitive) via the product_tag_links join.
+        if tag:
+            query = self._apply_tag_filter(query, tag)
+
         # Ordering — resolve through the whitelist so the param can't reach
         # arbitrary SQL. nulls_last keeps price-less products off the top of a
         # ``price_usd asc`` sort; the id tiebreak makes paging deterministic.
@@ -140,8 +161,9 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
         query = query.order_by(nulls_last(ordering), Product.id.asc())
 
         # The list response carries ``has_variants`` (a property over
-        # Product.variants) — one selectin pass instead of a per-row lazy load.
-        query = query.options(selectinload(Product.variants))
+        # Product.variants) + the ``tags`` chips — selectin passes instead of
+        # per-row lazy loads.
+        query = query.options(selectinload(Product.variants), selectinload(Product.tags))
 
         # Pagination
         return query.offset(skip).limit(limit).all()
@@ -157,6 +179,7 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
         max_price_usd: float | None = None,
         in_stock: bool | None = None,
         search: str | None = None,
+        tag: str | None = None,
     ) -> int:
         """
         Count products with filters
@@ -190,8 +213,25 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
                 Product.description.ilike(f"%{search}%"),
             )
             query = query.filter(search_filter)
+        if tag:
+            query = self._apply_tag_filter(query, tag)
 
         return query.count()
+
+    @staticmethod
+    def _apply_tag_filter(query: Any, tag: str) -> Any:
+        """Constrain a Product query to rows carrying ``tag`` (case-insensitive).
+
+        Joins through ``product_tag_links`` → ``product_tags``; the name is
+        whitespace-collapsed + lowercased and compared to ``lower(name)`` (the
+        functional-unique index column), so the match is exact and CI.
+        """
+        normalized = " ".join(tag.split()).lower()
+        return (
+            query.join(product_tag_links, product_tag_links.c.product_id == Product.id)
+            .join(ProductTag, ProductTag.id == product_tag_links.c.tag_id)
+            .filter(func.lower(ProductTag.name) == normalized)
+        )
 
     def get_featured(self, db: Session, *, limit: int = 10) -> list[Product]:
         """

@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.models.inventory_movement import InventoryMovement
     from app.models.order import OrderItem
     from app.models.product_image import ProductImage
+    from app.models.product_tag import ProductTag
     from app.models.product_variant import ProductOption, ProductVariant
     from app.models.review import Review
     from app.models.warehouse import StockLevel
@@ -169,6 +170,15 @@ class Product(BaseModel):
         back_populates="product",
         cascade="all, delete-orphan",
         order_by="ProductVariant.position",
+    )
+    # Merchandising tags — a normalized vocabulary shared across products via the
+    # product_tag_links join. Distinct from the customer-tag system. Ordered by
+    # lower(name) for a stable, human-friendly chip order.
+    tags: Mapped[list["ProductTag"]] = relationship(
+        "ProductTag",
+        secondary="product_tag_links",
+        back_populates="products",
+        order_by="func.lower(ProductTag.name)",
     )
 
     def __repr__(self):

@@ -72,6 +72,8 @@ def test_build_product_document_full(db_session, product_factory):
     assert doc["image_url"] == "https://cdn/primary.webp"
     assert doc["category_name"] == product.category.name
     assert doc["category_id"] == product.category_id
+    # Untagged product → empty tag list (additive field, always present).
+    assert doc["tags"] == []
     assert isinstance(doc["created_at"], int)
 
 
@@ -100,6 +102,7 @@ def test_build_product_document_minimal(db_session, product_factory):
     # Variantless product: prices are the product columns, no option values.
     assert doc["has_variants"] is False
     assert doc["option_values"] == []
+    assert doc["tags"] == []
     assert doc["price_usd"] == product.price_usd
 
 
@@ -156,6 +159,22 @@ def test_build_product_document_variant_min_price_and_option_values(db_session, 
         "Niebieski",
         "Green",
     ]
+
+
+def test_build_product_document_includes_tag_names(db_session, product_factory):
+    """A tagged product flattens its tag names into the ``tags`` field."""
+    from app.models.product_tag import ProductTag
+
+    product = product_factory()
+    sale = ProductTag(name="sale")
+    arrival = ProductTag(name="new-arrival")
+    product.tags = [sale, arrival]
+    db_session.commit()
+    db_session.refresh(product)
+
+    doc = search_index.build_product_document(product)
+
+    assert sorted(doc["tags"]) == ["new-arrival", "sale"]
 
 
 def test_build_category_document(db_session, category_factory):
