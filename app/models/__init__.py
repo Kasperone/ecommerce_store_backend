@@ -44,6 +44,7 @@ from app.models.page import (
 from app.models.price_history import SUPPORTED_CURRENCIES, PriceHistory
 from app.models.product import Product
 from app.models.product_image import ProductImage
+from app.models.product_tag import ProductTag, product_tag_links
 from app.models.product_variant import (
     ProductOption,
     ProductOptionValue,
@@ -110,6 +111,8 @@ __all__ = [
     "CustomerNote",
     "Product",
     "ProductImage",
+    "ProductTag",
+    "product_tag_links",
     "ProductOption",
     "ProductOptionValue",
     "ProductVariant",

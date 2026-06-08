@@ -34,6 +34,29 @@ def test_build_filters_in_stock_false():
     assert filters == ["in_stock = false"]
 
 
+def test_build_filters_tag_is_quoted():
+    filters = search.build_filters(None, None, None, None, "USD", tag="Eco Friendly")
+    assert filters == ['tags = "Eco Friendly"']
+
+
+def test_build_filters_tag_escapes_quotes():
+    # A tag value with a double quote must not break out of the filter literal.
+    filters = search.build_filters(None, None, None, None, "USD", tag='12" screen')
+    assert filters == ['tags = "12\\" screen"']
+
+
+def test_build_tag_facets_labels_are_raw_names_sorted_by_count():
+    buckets = search._build_tag_facets({"tags": {"sale": 2, "new": 5}})["tags"]
+    assert [(b.value, b.label, b.count) for b in buckets] == [
+        ("new", "new", 5),
+        ("sale", "sale", 2),
+    ]
+
+
+def test_build_tag_facets_empty_when_absent():
+    assert search._build_tag_facets({}) == {}
+
+
 def test_build_sort_relevance_is_none():
     assert search.build_sort("relevance", "USD") is None
 

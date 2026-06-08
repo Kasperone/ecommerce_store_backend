@@ -57,6 +57,8 @@ PRODUCT_INDEX_SETTINGS: dict = {
         # Flattened option values (EN+PL, e.g. "Red", "XL", "Czerwony") so a
         # query like "red shirt" matches variant products.
         "option_values",
+        # Merchandising tag names so a free-text query can match a tag label.
+        "tags",
     ],
     "filterableAttributes": [
         "category_id",
@@ -68,6 +70,8 @@ PRODUCT_INDEX_SETTINGS: dict = {
         # For a future facet sidebar over option values (out of scope in v1 —
         # /api/v1/search's build_filters is untouched).
         "option_values",
+        # Merchandising tag names — drives the /api/v1/search tag filter + facet.
+        "tags",
     ],
     "sortableAttributes": ["price_usd", "price_pln", "price_eur", "created_at", "name"],
     # Meili defaults + a featured boost appended (applies within the "sort" tie).
@@ -175,6 +179,11 @@ def _option_values(product: Product) -> list[str]:
     return values
 
 
+def _tag_names(product: Product) -> list[str]:
+    """Member tag names (single-locale merchandising labels)."""
+    return [tag.name for tag in product.tags]
+
+
 def build_product_document(product: Product) -> dict:
     """Flatten a product (+ its category + primary image + variants) into one
     Meili doc."""
@@ -200,6 +209,7 @@ def build_product_document(product: Product) -> dict:
         "stock": product.stock,
         "has_variants": product.has_variants,
         "option_values": _option_values(product),
+        "tags": _tag_names(product),
         "created_at": _epoch(product.created_at),
     }
 

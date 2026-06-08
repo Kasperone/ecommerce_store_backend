@@ -18,6 +18,7 @@ from app.crud.page import page
 from app.crud.price_history import price_history
 from app.crud.product import product
 from app.crud.product_image import product_image
+from app.crud.product_tag import product_tag
 from app.crud.product_variant import product_variant
 from app.crud.quote import quote
 from app.crud.refresh_token import refresh_token
@@ -49,6 +50,7 @@ __all__ = [
     "dashboard",
     "product",
     "product_image",
+    "product_tag",
     "product_variant",
     "quote",
     "category",

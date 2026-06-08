@@ -4,6 +4,7 @@ from pydantic import Field, computed_field, model_validator
 
 from app.schemas.base import BaseSchema, TimestampSchema
 from app.schemas.category import CategoryResponse
+from app.schemas.product_tag import ProductTagChip
 from app.schemas.product_variant import ProductOptionResponse, ProductVariantPublic
 
 
@@ -115,6 +116,12 @@ class ProductCreate(ProductBase):
     # ``crud_inventory.apply_delta``, never through this schema.
     stock: Annotated[int, Field(ge=0)] = 0
 
+    # Merchandising tags by name — free-form get-or-create on the product form
+    # (the Shopify "type tags on the product" model). The backend trims/collapses
+    # whitespace, case-insensitively get-or-creates the vocabulary rows, and syncs
+    # the join. ``None`` = no tags on create.
+    tags: list[str] | None = None
+
     @model_validator(mode="after")
     def _at_least_one_currency(self) -> "ProductCreate":
         if self.price_usd is None and self.price_pln is None and self.price_eur is None:
@@ -163,6 +170,11 @@ class ProductUpdate(BaseSchema):
 
     category_id: int | None = None
 
+    # Merchandising tags by name. ``None`` (omitted) = leave the product's tags
+    # unchanged; ``[]`` = clear all tags; a list = replace with the get-or-create
+    # vocabulary rows for those names.
+    tags: list[str] | None = None
+
     @model_validator(mode="after")
     def _at_least_one_currency_if_all_provided(self) -> "ProductUpdate":
         # Only block the "clear all three at once" case. Partial patches that
@@ -182,6 +194,10 @@ class ProductResponse(ProductBase, TimestampSchema):
     """Schema for product response"""
 
     images: list[ProductImageResponse] = Field(default_factory=list)
+    # Merchandising tag chips (the product's ``tags`` relationship). Additive:
+    # defaults to ``[]`` so untagged products are byte-for-byte unchanged. List
+    # endpoints eager-load ``Product.tags`` so this doesn't N+1.
+    tags: list[ProductTagChip] = Field(default_factory=list)
     # True when the product has at least one active variant (read from the
     # model's ``has_variants`` property). Additive: variantless products keep
     # today's shape with ``has_variants=False``. List endpoints eager-load
