@@ -86,6 +86,7 @@ from app.api.v1 import (  # noqa: E402
     admin_pages,
     admin_quotes,
     admin_reports,
+    admin_returns,
     admin_reviews,
     admin_settings,
     admin_shipping,
@@ -144,6 +145,7 @@ app.include_router(
     admin_audit.router, prefix="/api/v1/admin/audit-events", tags=["Admin Audit Log"]
 )
 app.include_router(admin_reports.router, prefix="/api/v1/admin/reports", tags=["Admin Reports"])
+app.include_router(admin_returns.router, prefix="/api/v1/admin/returns", tags=["Admin Returns"])
 app.include_router(admin_reviews.router, prefix="/api/v1/admin/reviews", tags=["Admin Reviews"])
 app.include_router(admin_tags.router, prefix="/api/v1/admin/tags", tags=["Admin Tags"])
 app.include_router(admin_banners.router, prefix="/api/v1/admin/banners", tags=["Admin Banners"])

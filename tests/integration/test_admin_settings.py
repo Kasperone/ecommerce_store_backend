@@ -71,6 +71,8 @@ async def test_get_returns_seeded_singleton(client, user_factory):
     # Seeded from config.py defaults.
     assert body["store_name"] == "E-commerce Store"
     assert body["invoice_vat_rate"] == 23
+    # Returns window seeded by the RMA migration's server_default.
+    assert body["returns_window_days"] == 30
     # Response shape includes the full contract C-fe builds against.
     for key in (
         "address_line",
@@ -166,3 +168,29 @@ async def test_patch_accepts_boundary_vat(client, user_factory, ok_rate):
     )
     assert resp.status_code == 200
     assert resp.json()["invoice_vat_rate"] == ok_rate
+
+
+# ---------------------------------------------------------------------------
+# returns_window_days (RMA)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("ok_days", [0, 14, 365])
+async def test_patch_updates_returns_window(client, user_factory, ok_days):
+    admin = user_factory(email=f"set-admin-ret{ok_days}@example.com", role=UserRole.ADMIN)
+    resp = await client.patch(
+        SETTINGS_URL, json={"returns_window_days": ok_days}, headers=_headers(admin)
+    )
+    assert resp.status_code == 200
+    assert resp.json()["returns_window_days"] == ok_days
+
+    reget = await client.get(SETTINGS_URL, headers=_headers(admin))
+    assert reget.json()["returns_window_days"] == ok_days
+
+
+async def test_patch_rejects_negative_returns_window(client, user_factory):
+    admin = user_factory(email="set-admin-retneg@example.com", role=UserRole.ADMIN)
+    resp = await client.patch(
+        SETTINGS_URL, json={"returns_window_days": -1}, headers=_headers(admin)
+    )
+    assert resp.status_code == 422

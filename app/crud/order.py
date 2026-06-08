@@ -477,7 +477,16 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         """
         update_data = obj_in.model_dump(exclude_unset=True)
         if "status" in update_data and obj_in.status is not None:
-            order.status = OrderStatus(obj_in.status)
+            new_status = OrderStatus(obj_in.status)
+            # Stamp the delivery timestamp on the transition INTO delivered —
+            # it anchors the returns-eligibility window. A no-op
+            # delivered→delivered PATCH must not move it.
+            if (
+                new_status == OrderStatus.DELIVERED
+                and OrderStatus(order.status) != OrderStatus.DELIVERED
+            ):
+                order.delivered_at = datetime.now(UTC).replace(tzinfo=None)
+            order.status = new_status
         for field in (
             "payment_method",
             "payment_intent_id",

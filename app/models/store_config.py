@@ -44,6 +44,10 @@ class StoreConfig(BaseModel):
             "invoice_vat_rate >= 0 AND invoice_vat_rate <= 100",
             name="ck_store_config_invoice_vat_rate_range",
         ),
+        CheckConstraint(
+            "returns_window_days >= 0",
+            name="ck_store_config_returns_window_days_nonneg",
+        ),
     )
 
     store_name: Mapped[str] = mapped_column(String(255), server_default="")
@@ -65,6 +69,9 @@ class StoreConfig(BaseModel):
     social_tiktok: Mapped[str] = mapped_column(String(255), server_default="")
     social_youtube: Mapped[str] = mapped_column(String(255), server_default="")
     invoice_vat_rate: Mapped[int] = mapped_column(Integer, server_default="23")
+    # Returns (RMA) eligibility window in days from delivery. 0 = returns
+    # disabled. Guarded >= 0 by the CHECK above + the schema.
+    returns_window_days: Mapped[int] = mapped_column(Integer, server_default="30")
 
     def __repr__(self) -> str:
         return f"<StoreConfig id={self.id} {self.store_name!r} vat={self.invoice_vat_rate}>"
