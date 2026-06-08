@@ -78,7 +78,7 @@ async def test_create_checkout_returns_redirect(
     respx.post(f"{SANDBOX}/pl/standard/user/oauth/authorize").mock(
         return_value=httpx.Response(200, json={"access_token": "tok"}),
     )
-    respx.post(f"{SANDBOX}/api/v2_1/orders").mock(
+    create_route = respx.post(f"{SANDBOX}/api/v2_1/orders").mock(
         return_value=httpx.Response(
             302,
             json={
@@ -98,6 +98,11 @@ async def test_create_checkout_returns_redirect(
 
     assert resp.status_code == 200
     assert resp.json()["redirect_uri"] == "https://secure.snd.payu.com/pay/abc"
+    # Authed orders keep the exact pre-guest return URL — no track token.
+    sent = json.loads(create_route.calls.last.request.content)
+    assert sent["continueUrl"] == (
+        f"{settings.FRONTEND_URL.rstrip('/')}/checkout/payment/return?order={order.order_number}"
+    )
 
 
 async def test_create_checkout_503_when_unconfigured(
@@ -156,6 +161,12 @@ async def test_create_checkout_guest_token_ok(
     # The provider sees the guest contact as the buyer.
     sent = json.loads(create_route.calls.last.request.content)
     assert sent["buyer"]["email"] == "guest@example.com"
+    # The hosted-redirect return URL carries the guest track token so the
+    # return page can offer the "view order" CTA (guests have no /account).
+    assert sent["continueUrl"] == (
+        f"{settings.FRONTEND_URL.rstrip('/')}/checkout/payment/return"
+        f"?order={order.order_number}&token={order.guest_token}"
+    )
 
 
 async def test_create_checkout_401_without_auth(client):
