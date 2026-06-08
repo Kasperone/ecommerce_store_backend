@@ -1,4 +1,4 @@
-"""Admin product catalog tools — CSV export + import (bulk edit ships in CSV-BE3).
+"""Admin product catalog tools — CSV export + import + bulk edit.
 
 Mounted at ``/api/v1/admin/products``. All routes are admin-gated. The export is a
 read-only GET (no audit row, no persistence) that streams the catalog as RFC 4180
@@ -15,6 +15,13 @@ uniqueness, OMNIBUS price-history, tag get-or-create — and ``apply_delta`` for
 stock (never ``Product.stock`` directly; variant products reject stock changes).
 On success the touched products are re-synced to Meili (incremental). Dry-run and
 apply share ONE validator (``_process_rows`` with ``apply`` toggled).
+
+Bulk edit (``PATCH /bulk``) applies a narrow ``set`` — price (per currency),
+``is_active``, ``low_stock_threshold`` — to a list of products in one
+all-or-nothing transaction. **Stock is never settable** here (it moves only
+through the inventory ledger; the ``set`` schema is ``extra="forbid"``). Any
+unknown id fails the whole request with 404. Price changes record OMNIBUS
+price-history (shared helper); touched products are re-synced to Meili.
 """
 
 from datetime import date
@@ -33,7 +40,12 @@ from app.models.inventory_movement import InventoryMovementReason
 from app.models.price_history import SUPPORTED_CURRENCIES
 from app.models.product import Product
 from app.models.user import User
-from app.schemas.product import ProductCreate, ProductUpdate
+from app.schemas.product import (
+    ProductBulkUpdate,
+    ProductBulkUpdateResult,
+    ProductCreate,
+    ProductUpdate,
+)
 from app.services import product_export, product_import, search_index
 from app.services.audit import AuditWriter, get_audit_writer
 
@@ -460,3 +472,78 @@ async def import_products(
         "summary": summary,
         "rows": [r.as_dict() for r in report_rows],
     }
+
+
+# --------------------------------------------------------------------------- #
+# Bulk edit
+# --------------------------------------------------------------------------- #
+
+
+@router.patch("/bulk", response_model=ProductBulkUpdateResult)
+async def bulk_update_products(
+    payload: ProductBulkUpdate,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
+):
+    """Apply a narrow set of fields to many products at once (admin).
+
+    Body: ``{ product_ids: [int], set: { price_usd?, price_pln?, price_eur?,
+    is_active?, low_stock_threshold? } }``. The ``set`` is applied to **every**
+    listed product in ONE transaction (all-or-nothing).
+
+    **Stock is not a settable field** — it is the maintained sum of per-warehouse
+    levels and may only move through the inventory ledger (``apply_delta``); the
+    ``set`` schema is ``extra="forbid"`` so a ``stock`` key is rejected (422).
+
+    Unknown-id handling is all-or-nothing: if any ``product_ids`` entry does not
+    resolve to a product, the whole request fails with **404** (no partial writes)
+    and the response lists the missing ids. On a price change, an OMNIBUS
+    price-history row is recorded per changed product (reusing the shared helper).
+    After commit, the touched products are re-synced to Meili (incremental — no
+    settings change, no full reindex). Audited (``resource_type="product"``,
+    action ``bulk_update``).
+    """
+    # ``model_fields_set`` on the validated ``set`` model tells us exactly which
+    # fields the admin chose to write (distinguishing "omitted" from "set to its
+    # default value" — e.g. ``is_active=False`` vs absent).
+    set_fields = payload.set.model_fields_set
+    update_values = {field: getattr(payload.set, field) for field in set_fields}
+    touches_price = any(f.startswith("price_") for f in set_fields)
+
+    # Resolve every id up front. Any miss → all-or-nothing 404, nothing written.
+    products: list[Product] = []
+    missing: list[int] = []
+    for pid in payload.product_ids:
+        product = crud_product.get(db, id=pid)
+        if product is None:
+            missing.append(pid)
+        else:
+            products.append(product)
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No product(s) with id(s): {', '.join(str(m) for m in missing)}",
+        )
+
+    touched: list[int] = []
+    for product in products:
+        for field, value in update_values.items():
+            setattr(product, field, value)
+        db.add(product)
+        audit.record_update(resource_type="product", obj=product)
+        # OMNIBUS: append a price-history row for any currency whose price changed.
+        # ``record_if_changed`` no-ops when the new price equals the most recent
+        # row, so calling it for all three currencies is safe. Must run AFTER
+        # ``audit.record_update`` — its flush would otherwise clear the diff the
+        # audit writer reads (banked ordering from products PUT).
+        if touches_price:
+            _record_price_history(db, product)
+        touched.append(product.id)
+
+    db.commit()
+    # Incremental Meili re-sync of the touched products (no settings change → no
+    # full reindex). Best-effort — never fails the bulk edit.
+    search_index.sync_products_bulk(db, touched)
+
+    return ProductBulkUpdateResult(updated=len(touched), product_ids=touched)
