@@ -107,6 +107,10 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "RUF", "ASYNC", "S"]
 "tests/**" = ["S101", "S105", "S106", "S107"]
 # Auto-generated migrations.
 "alembic/versions/**" = ["ALL"]
+# Google-feed tests parse the feed endpoint's OWN trusted XML output with
+# stdlib ElementTree to assert structure — S314's untrusted-XML warning is
+# not applicable to our own response bytes.
+"tests/integration/test_feeds_google.py" = ["S314"]
 # HTML email templates: breaking long lines mid-attribute hurts readability.
 "app/core/email.py" = ["E501"]
 # Order-email subjects + intro markup read better unwrapped (same rationale).
