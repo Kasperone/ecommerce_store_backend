@@ -7,7 +7,7 @@ meta {
 post {
   url: {{baseUrl}}/api/v1/orders/
   body: json
-  auth: inherit
+  auth: none
 }
 
 body:json {
@@ -27,7 +27,7 @@ body:json {
 }
 
 docs {
-**Access:** Customer (bearer)
+**Access:** Public (no token)
 
 **Request body** `OrderCreate`:
   - `shipping_address`: string (required)
@@ -39,6 +39,8 @@ docs {
   - `currency`: string
   - `shipping_method_id`: integer (required)
   - `coupon_code`: string|null
+  - `guest_email`: string|null
+  - `locale`: string|null
 
 **Responses:** 201, 422
 }

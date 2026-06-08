@@ -1,0 +1,39 @@
+meta {
+  name: Update Product Variant
+  type: http
+  seq: 15
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/products/:product_id/variants/:variant_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  product_id: 1
+  variant_id: 1
+}
+
+body:json {
+  {
+    "sku": "string",
+    "price_usd": 10.0,
+    "price_pln": 10.0
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `ProductVariantUpdate`:
+  - `sku`: string|null
+  - `price_usd`: number|null
+  - `price_pln`: number|null
+  - `price_eur`: number|null
+  - `image_id`: integer|null
+  - `is_active`: boolean|null
+  - `position`: integer|null
+
+**Responses:** 200, 422
+}

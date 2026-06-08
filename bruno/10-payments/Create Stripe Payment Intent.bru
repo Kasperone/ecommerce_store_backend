@@ -7,15 +7,19 @@ meta {
 post {
   url: {{baseUrl}}/api/v1/payments/stripe/payment-intent/:order_id
   body: none
-  auth: inherit
+  auth: none
 }
 
 params:path {
   order_id: 1
 }
 
+params:query {
+  ~guest_token:
+}
+
 docs {
-**Access:** Customer (bearer)
+**Access:** Public (no token)
 
 **Responses:** 200, 422
 }

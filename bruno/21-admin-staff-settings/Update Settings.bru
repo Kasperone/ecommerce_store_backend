@@ -13,8 +13,8 @@ patch {
 body:json {
   {
     "store_name": "Example",
-    "legal_name": "Example",
-    "address_line": "string"
+    "brand_tagline": "string",
+    "logo_url": "https://example.com/image.jpg"
   }
 }
 
@@ -23,6 +23,8 @@ docs {
 
 **Request body** `StoreConfigUpdate`:
   - `store_name`: string|null
+  - `brand_tagline`: string|null
+  - `logo_url`: string|null
   - `legal_name`: string|null
   - `address_line`: string|null
   - `address_line2`: string|null
@@ -39,6 +41,7 @@ docs {
   - `social_tiktok`: string|null
   - `social_youtube`: string|null
   - `invoice_vat_rate`: integer|null
+  - `returns_window_days`: integer|null
 
 **Responses:** 200, 422
 }

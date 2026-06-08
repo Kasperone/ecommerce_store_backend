@@ -13,8 +13,7 @@ post {
 body:json {
   {
     "code": "EXAMPLE10",
-    "discount_type": "percent",
-    "value": 10.0
+    "discount_type": "percent"
   }
 }
 
@@ -24,8 +23,8 @@ docs {
 **Request body** `CouponCreate`:
   - `code`: string (required)
   - `description`: string|null
-  - `discount_type`: string (required) — one of ['percent', 'fixed']
-  - `value`: number (required)
+  - `discount_type`: string (required) — one of ['percent', 'fixed', 'free_shipping']
+  - `value`: number
   - `currency`: string|null
   - `min_order_amount`: number|null
   - `max_uses`: integer|null
@@ -33,6 +32,7 @@ docs {
   - `starts_at`: string|null
   - `ends_at`: string|null
   - `is_active`: boolean
+  - `is_automatic`: boolean
 
 **Responses:** 201, 422
 }

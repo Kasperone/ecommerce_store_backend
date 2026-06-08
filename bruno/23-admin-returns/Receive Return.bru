@@ -1,0 +1,26 @@
+meta {
+  name: Receive Return
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/returns/:return_id/receive
+  body: formUrlEncoded
+  auth: inherit
+}
+
+params:path {
+  return_id: 1
+}
+
+body:form-urlencoded {
+  username: {{email}}
+  password: {{password}}
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

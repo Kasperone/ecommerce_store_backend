@@ -7,25 +7,25 @@ meta {
 post {
   url: {{baseUrl}}/api/v1/coupons/validate
   body: json
-  auth: inherit
+  auth: none
 }
 
 body:json {
   {
-    "code": "EXAMPLE10",
     "subtotal": 1.0,
     "currency": "USD"
   }
 }
 
 docs {
-**Access:** Customer (bearer)
+**Access:** Public (no token)
 
 **Rate limit:** 20/minute
 
 **Request body** `CouponValidateRequest`:
-  - `code`: string (required)
+  - `code`: string|null
   - `subtotal`: number (required)
+  - `shipping_amount`: number
   - `currency`: string (required) — one of ['USD', 'PLN', 'EUR']
 
 **Responses:** 200, 422
