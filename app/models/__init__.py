@@ -66,6 +66,7 @@ from app.models.return_request import (
 )
 from app.models.review import Review, ReviewStatus
 from app.models.review_vote import ReviewVote
+from app.models.segment import Segment
 from app.models.shipping import (
     ShippingMethod,
     ShippingRate,
@@ -154,6 +155,7 @@ __all__ = [
     "Review",
     "ReviewStatus",
     "ReviewVote",
+    "Segment",
     "ShippingMethod",
     "ShippingRate",
     "ShippingZone",
