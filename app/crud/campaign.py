@@ -12,10 +12,13 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
+from app.crud.segment import segment as crud_segment
 from app.models.campaign import Campaign
 from app.models.company import Company
+from app.models.segment import Segment
 from app.models.user import User, UserRole
 from app.schemas.campaign import CampaignCreate, CampaignUpdate
+from app.schemas.segment import SegmentFilters
 
 
 class CRUDCampaign:
@@ -77,6 +80,7 @@ class CRUDCampaign:
             status=obj_in.status,
             body=obj_in.body,
             scheduled_at=obj_in.scheduled_at,
+            segment_id=obj_in.segment_id,
         )
         db.add(campaign)
         db.flush()
@@ -96,16 +100,45 @@ class CRUDCampaign:
     def delete(self, db: Session, *, campaign: Campaign) -> None:
         db.delete(campaign)
 
-    def resolve_recipient_emails(self, db: Session, *, audience: str) -> list[str]:
+    def resolve_recipient_emails(
+        self, db: Session, *, audience: str, segment_id: int | None = None
+    ) -> list[str]:
         """Resolve a campaign ``audience`` to a list of recipient email addresses.
 
         - ``all`` → every ``User`` with a non-empty email.
         - ``customers`` → users whose ``role`` is ``CUSTOMER`` (non-empty email).
         - ``b2b`` → distinct, non-null ``companies.email``.
+        - ``segment`` → the ``User`` rows resolved by the referenced segment's
+          typed filters (``crud_segment.resolve_user_ids``), mapped to their
+          non-empty emails. If ``segment_id`` is missing or the segment row no
+          longer exists (e.g. it was deleted → ``ON DELETE SET NULL`` nulled the
+          FK), the result is empty — the send route then mails nobody.
 
         Empty / NULL emails are filtered out so the send loop never hands a blank
         address to the transport.
         """
+        if audience == "segment":
+            if segment_id is None:
+                return []
+            segment = db.get(Segment, segment_id)
+            if segment is None:
+                return []
+            user_ids = crud_segment.resolve_user_ids(
+                db, SegmentFilters.model_validate(segment.filters)
+            )
+            if not user_ids:
+                return []
+            rows = (
+                db.query(User.email)
+                .filter(
+                    User.id.in_(user_ids),
+                    User.email.isnot(None),
+                    User.email != "",
+                )
+                .all()
+            )
+            return [email for (email,) in rows if email]
+
         if audience == "b2b":
             rows = (
                 db.query(Company.email)

@@ -19,10 +19,13 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
+from app.crud.segment import segment as crud_segment
 from app.models.admin_audit_event import AdminAuditEvent
 from app.models.campaign import Campaign
 from app.models.company import Company
+from app.models.segment import Segment
 from app.models.user import UserRole
+from app.schemas.segment import SegmentCreate, SegmentFilters
 from tests.factories.campaign import CampaignFactory
 from tests.factories.company import CompanyFactory
 
@@ -474,3 +477,143 @@ async def test_send_failing_recipient_does_not_abort_run(
     # Both recipients were attempted (the good one still got mailed after the bad one).
     assert admin.email in seen
     assert cust.email in seen
+
+
+# ---------------------------------------------------------------------------
+# segment audience
+# ---------------------------------------------------------------------------
+
+
+def _make_segment(db_session: Session, **filter_kwargs) -> Segment:
+    seg = crud_segment.create(
+        db_session,
+        obj_in=SegmentCreate(name="RouteSeg", filters=SegmentFilters(**filter_kwargs)),
+    )
+    db_session.commit()
+    db_session.refresh(seg)
+    return seg
+
+
+async def test_create_segment_audience_requires_segment_id(client, user_factory):
+    admin = user_factory(email="cmp-seg-noid@example.com", role=UserRole.ADMIN)
+    resp = await client.post(
+        "/api/v1/admin/campaigns/",
+        json={"name": "SegNoId", "subject": "x", "audience": "segment"},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 422
+
+
+async def test_create_segment_id_rejected_for_non_segment_audience(
+    client, user_factory, db_session
+):
+    admin = user_factory(email="cmp-seg-wrongaud@example.com", role=UserRole.ADMIN)
+    seg = _make_segment(db_session, role="customer")
+    resp = await client.post(
+        "/api/v1/admin/campaigns/",
+        json={"name": "WrongAud", "subject": "x", "audience": "all", "segment_id": seg.id},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 422
+
+
+async def test_create_segment_audience_unknown_segment_404(client, user_factory):
+    admin = user_factory(email="cmp-seg-404@example.com", role=UserRole.ADMIN)
+    resp = await client.post(
+        "/api/v1/admin/campaigns/",
+        json={"name": "GhostSeg", "subject": "x", "audience": "segment", "segment_id": 999999},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 404
+
+
+async def test_create_segment_audience_ok(client, user_factory, db_session):
+    admin = user_factory(email="cmp-seg-ok@example.com", role=UserRole.ADMIN)
+    seg = _make_segment(db_session, role="customer")
+    resp = await client.post(
+        "/api/v1/admin/campaigns/",
+        json={"name": "SegOK", "subject": "x", "audience": "segment", "segment_id": seg.id},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["audience"] == "segment"
+    assert body["segment_id"] == seg.id
+
+
+async def test_patch_to_segment_without_segment_id_422(client, user_factory, campaign_factory):
+    """Merged-state re-check: flipping audience to segment without a segment_id 422s."""
+    admin = user_factory(email="cmp-seg-patch422@example.com", role=UserRole.ADMIN)
+    c = campaign_factory(name="FLIPSEG", audience="all")
+    resp = await client.patch(
+        f"/api/v1/admin/campaigns/{c.id}",
+        json={"audience": "segment"},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 422
+
+
+async def test_patch_to_segment_with_segment_id_ok(
+    client, user_factory, campaign_factory, db_session
+):
+    admin = user_factory(email="cmp-seg-patchok@example.com", role=UserRole.ADMIN)
+    seg = _make_segment(db_session, role="customer")
+    c = campaign_factory(name="FLIPSEG2", audience="all")
+    resp = await client.patch(
+        f"/api/v1/admin/campaigns/{c.id}",
+        json={"audience": "segment", "segment_id": seg.id},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["audience"] == "segment"
+    assert body["segment_id"] == seg.id
+
+
+async def test_send_segment_audience_mails_exactly_members(
+    client, user_factory, campaign_factory, captured_emails, db_session
+):
+    """A segment campaign mails exactly the segment's resolved members."""
+    admin = user_factory(email="cmp-seg-send-admin@example.com", role=UserRole.ADMIN)
+    member = user_factory(email="cmp-seg-send-member@example.com", role=UserRole.CUSTOMER)
+    seg = _make_segment(db_session, role="customer")
+    c = campaign_factory(
+        name="SEGSEND", subject="for segment", audience="segment", segment_id=seg.id
+    )
+
+    resp = await client.post(f"/api/v1/admin/campaigns/{c.id}/send", headers=_headers(admin))
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "sent"
+
+    recipients = _sent_to(captured_emails)
+    # role=customer segment → the customer is mailed, the admin is not.
+    assert member.email in recipients
+    assert admin.email not in recipients
+
+
+async def test_delete_segment_orphans_campaign_segment_id(
+    client, user_factory, campaign_factory, db_session
+):
+    """Deleting the referenced segment SET-NULLs the campaign's segment_id; the
+    campaign then resolves to no recipients."""
+    user_factory(email="cmp-seg-orphan-cust@example.com", role=UserRole.CUSTOMER)
+    seg = _make_segment(db_session, role="customer")
+    c = campaign_factory(name="ORPHAN", subject="x", audience="segment", segment_id=seg.id)
+    cid = c.id
+
+    crud_segment.delete(db_session, segment=seg)
+    db_session.commit()
+    db_session.expire_all()
+
+    orphaned = db_session.get(Campaign, cid)
+    assert orphaned is not None
+    assert orphaned.segment_id is None
+    assert orphaned.audience == "segment"
+    from app.crud import campaign as crud_campaign
+
+    assert (
+        crud_campaign.resolve_recipient_emails(
+            db_session, audience=orphaned.audience, segment_id=orphaned.segment_id
+        )
+        == []
+    )

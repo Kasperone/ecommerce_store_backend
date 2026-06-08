@@ -17,16 +17,21 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
+    ForeignKey,
     String,
     Text,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import BaseModel
+
+if TYPE_CHECKING:
+    from app.models.segment import Segment
 
 
 class CampaignAudience(str, enum.Enum):
@@ -34,12 +39,15 @@ class CampaignAudience(str, enum.Enum):
 
     Stored as the lowercase value in a ``String(16)`` column (mirrors
     ``RefundReason``). ``ALL`` is every user; ``CUSTOMERS`` is the retail
-    customer base; ``B2B`` is business accounts.
+    customer base; ``B2B`` is business accounts; ``SEGMENT`` targets the
+    customers resolved by a referenced :class:`~app.models.segment.Segment`
+    (``segment_id`` then required — see the table CHECK).
     """
 
     ALL = "all"
     CUSTOMERS = "customers"
     B2B = "b2b"
+    SEGMENT = "segment"
 
 
 class CampaignStatus(str, enum.Enum):
@@ -83,6 +91,19 @@ class Campaign(BaseModel):
             "status IN ('" + "', '".join(CAMPAIGN_STATUS_VALUES) + "')",
             name="ck_campaigns_status_enum",
         ),
+        # ``segment_id`` may only be set when ``audience='segment'`` — a
+        # non-segment campaign must never carry one. This is the DB half of the
+        # invariant; the *other* half (a segment campaign REQUIRES a segment_id)
+        # is enforced at the schema/route layer at write time, NOT here.
+        # Deliberately one-directional so ``ON DELETE SET NULL`` can null the FK
+        # when the referenced segment is deleted without tripping the CHECK on
+        # the resulting (audience='segment', segment_id=NULL) orphan row — that
+        # degraded state is intended (the campaign then resolves to no
+        # recipients; see ``crud_campaign.resolve_recipient_emails``).
+        CheckConstraint(
+            "segment_id IS NULL OR audience = 'segment'",
+            name="ck_campaigns_segment_audience",
+        ),
     )
 
     name: Mapped[str] = mapped_column(String(255))
@@ -92,6 +113,15 @@ class Campaign(BaseModel):
     body: Mapped[str | None] = mapped_column(Text)
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Set only when ``audience='segment'``. ON DELETE SET NULL: deleting the
+    # referenced segment nulls this out (the campaign no longer resolves a
+    # segment audience — the route/resolver then treats it as having no
+    # recipients; see ``resolve_recipient_emails``).
+    segment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("segments.id", ondelete="SET NULL"), nullable=True
+    )
+
+    segment: Mapped[Segment | None] = relationship("Segment")
 
     def __repr__(self) -> str:
         return f"<Campaign {self.id} {self.status!r} {self.name!r}>"
