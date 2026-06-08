@@ -115,6 +115,7 @@ from app.api.v1 import (  # noqa: E402
     sitemap,
     store_config,
     uploads,
+    wishlist,
 )
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
@@ -177,6 +178,7 @@ app.include_router(reviews.router, prefix="/api/v1/products", tags=["Reviews"])
 app.include_router(product_variants.router, prefix="/api/v1/products", tags=["Product Variants"])
 app.include_router(account.router, prefix="/api/v1/me", tags=["Account"])
 app.include_router(addresses.router, prefix="/api/v1/addresses", tags=["Addresses"])
+app.include_router(wishlist.router, prefix="/api/v1/wishlist", tags=["Wishlist"])
 app.include_router(quotes.router, prefix="/api/v1/quotes", tags=["Quotes"])
 app.include_router(companies.router, prefix="/api/v1/companies", tags=["Companies"])
 # TM-be (Wave D slice 5) — company team management. Distinct path from
