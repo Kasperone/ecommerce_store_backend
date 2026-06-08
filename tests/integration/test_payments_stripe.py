@@ -144,14 +144,19 @@ def unconfigured_stripe(monkeypatch):
 
 @pytest.fixture
 def fake_session(monkeypatch):
-    """Stub the Stripe SDK's create call with a fake hosted-checkout session."""
-    monkeypatch.setattr(
-        stripe.checkout.Session,
-        "create",
-        lambda **k: SimpleNamespace(
-            url="https://checkout.stripe.com/c/pay/cs_test_1", id="cs_test_1"
-        ),
-    )
+    """Stub the Stripe SDK's create call with a fake hosted-checkout session.
+
+    Yields the list of captured call kwargs so tests can assert on what the
+    service sent to Stripe (e.g. success_url / cancel_url shapes).
+    """
+    calls: list[dict] = []
+
+    def _create(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(url="https://checkout.stripe.com/c/pay/cs_test_1", id="cs_test_1")
+
+    monkeypatch.setattr(stripe.checkout.Session, "create", _create)
+    return calls
 
 
 @pytest.fixture
@@ -188,6 +193,11 @@ async def test_create_checkout_returns_url(
 
     assert resp.status_code == 200
     assert resp.json()["checkout_url"] == "https://checkout.stripe.com/c/pay/cs_test_1"
+    # Authed orders keep the exact pre-guest URLs — no track token anywhere.
+    frontend = settings.FRONTEND_URL.rstrip("/")
+    sent = fake_session[-1]
+    assert sent["success_url"] == (f"{frontend}/checkout/payment/return?order={order.order_number}")
+    assert sent["cancel_url"] == f"{frontend}/account/orders/{order.id}"
 
 
 async def test_create_checkout_503_when_unconfigured(
@@ -250,6 +260,15 @@ async def test_create_checkout_guest_token_ok(
     )
     assert resp.status_code == 200
     assert resp.json()["checkout_url"] == "https://checkout.stripe.com/c/pay/cs_test_1"
+    # The hosted-redirect return URL carries the guest track token so the
+    # return page can offer the "view order" CTA (guests have no /account);
+    # cancel goes back to the token track view.
+    frontend = settings.FRONTEND_URL.rstrip("/")
+    sent = fake_session[-1]
+    assert sent["success_url"] == (
+        f"{frontend}/checkout/payment/return?order={order.order_number}&token={order.guest_token}"
+    )
+    assert sent["cancel_url"] == f"{frontend}/orders/track/{order.guest_token}"
 
 
 async def test_create_checkout_guest_wrong_token_404(

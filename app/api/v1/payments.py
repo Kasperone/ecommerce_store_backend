@@ -126,6 +126,25 @@ def _buyer_email(order: Order, current_user: User | None) -> str:
     return order.guest_email or ""
 
 
+def _payment_return_url(order: Order) -> str:
+    """Frontend return-page URL for the hosted-redirect flows (PayU continueUrl,
+    Stripe Checkout success_url).
+
+    Guest orders additionally carry the track token (``&token=…``) so the
+    return page can offer the "view order" CTA — guests have no
+    ``/account/orders``, only ``/orders/track/{token}``. The token is
+    ``secrets.token_urlsafe`` output (unreserved URL characters only), so no
+    extra encoding is needed. Authed orders keep the exact pre-guest URL.
+    """
+    url = (
+        f"{settings.FRONTEND_URL.rstrip('/')}"
+        f"/checkout/payment/return?order={order.order_number}"
+    )
+    if order.user_id is None and order.guest_token:
+        url += f"&token={order.guest_token}"
+    return url
+
+
 @router.post("/payu/orders/{order_id}", response_model=PayUCheckoutResponse)
 async def create_payu_checkout(
     order_id: int,
@@ -163,10 +182,7 @@ async def create_payu_checkout(
             customer_ip=(request.client.host if request.client else "127.0.0.1"),
             products=products,
             notify_url=f"{settings.BACKEND_URL.rstrip('/')}/api/v1/payments/payu/notify",
-            continue_url=(
-                f"{settings.FRONTEND_URL.rstrip('/')}"
-                f"/checkout/payment/return?order={order.order_number}"
-            ),
+            continue_url=_payment_return_url(order),
         )
     except PayUError as exc:
         raise HTTPException(
@@ -256,10 +272,7 @@ async def create_stripe_checkout(
             currency=order.currency,
             description=f"Order {order.order_number}",
             buyer_email=_buyer_email(order, current_user),
-            success_url=(
-                f"{settings.FRONTEND_URL.rstrip('/')}"
-                f"/checkout/payment/return?order={order.order_number}"
-            ),
+            success_url=_payment_return_url(order),
             cancel_url=cancel_url,
         )
     except StripeError as exc:
