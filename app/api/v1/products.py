@@ -2,6 +2,7 @@ from math import ceil
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_admin, get_db
@@ -9,8 +10,10 @@ from app.crud import price_history as crud_price_history
 from app.crud import product as crud_product
 from app.crud import product_tag as crud_product_tag
 from app.crud.product_tag import normalize_name
+from app.models.order import OrderItem
 from app.models.price_history import SUPPORTED_CURRENCIES
 from app.models.product import Product
+from app.models.quote import QuoteItem
 from app.models.user import User
 from app.schemas.price_history import LowestPriceResponse
 from app.schemas.product import (
@@ -399,10 +402,35 @@ async def delete_product(
     if not product:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
 
+    # Pre-check the meaningful business case: a product referenced by order or
+    # quote history cannot be hard-deleted (``order_items.product_id`` is
+    # ON DELETE RESTRICT / NO ACTION; ``quote_items.product_id`` is SET NULL but
+    # we still refuse so the history stays attributable). Admins deactivate
+    # (``is_active=False``) such products instead. Other references
+    # (images, reviews, inventory, variants, wishlist, collections, price
+    # history) are ON DELETE CASCADE and clean up with the product.
+    if (
+        db.query(OrderItem.id).filter(OrderItem.product_id == product_id).first() is not None
+        or db.query(QuoteItem.id).filter(QuoteItem.product_id == product_id).first() is not None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Product has order or quote history; deactivate it instead.",
+        )
+
     # Snapshot before delete — the writer needs ``obj`` readable.
     audit.record_delete(resource_type="product", obj=product)
     crud_product.delete(db, id=product_id)
-    db.commit()
+    # Defensive backstop: any FK reference the pre-check missed surfaces as an
+    # IntegrityError on commit rather than a 500 — roll back and return 409.
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Product is referenced by other records; deactivate it instead.",
+        ) from exc
     # Best-effort: drop the product from the search index.
     search_index.delete_product(product_id)
     return None
