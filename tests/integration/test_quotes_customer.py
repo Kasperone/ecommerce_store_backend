@@ -20,9 +20,11 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
+from app.models.company_user import CompanyMemberStatus, CompanyRole
 from app.models.quote import Quote
 from app.models.user import UserRole
 from tests.factories.company import CompanyFactory
+from tests.factories.company_user import CompanyUserFactory
 from tests.factories.quote import QuoteFactory, QuoteItemFactory
 
 pytestmark = pytest.mark.integration
@@ -52,6 +54,17 @@ def quote_factory(db_session: Session):
 
     def _make(**kwargs):
         return QuoteFactory(**kwargs)
+
+    return _make
+
+
+@pytest.fixture
+def company_user_factory(db_session: Session):
+    CompanyUserFactory._meta.sqlalchemy_session = db_session  # pyright: ignore[reportAttributeAccessIssue]
+    CompanyUserFactory._meta.sqlalchemy_session_persistence = "commit"  # pyright: ignore[reportAttributeAccessIssue]
+
+    def _make(**kwargs):
+        return CompanyUserFactory(**kwargs)
 
     return _make
 
@@ -553,3 +566,93 @@ async def test_convert_variant_quote_decrements_variant_stock(
     db_session.refresh(product)
     assert red.stock == 2
     assert product.stock == 8
+
+
+# ---------------------------------------------------------------------------
+# F5: membership-aware access — non-primary company_users members
+# ---------------------------------------------------------------------------
+# Before the fix the quote routes resolved the company via
+# ``companies.primary_user_id`` only, so an active BUYER/APPROVER/VIEWER member
+# who is NOT the primary contact saw an empty quote list and a 403 on request —
+# even though ``GET /companies/me`` (membership-aware) showed them the portal.
+
+
+def _member(user_factory, company_user_factory, company, *, email, role):
+    """A second user who is an ACTIVE ``company_users`` member of ``company``."""
+    user = user_factory(email=email, role=UserRole.CUSTOMER)
+    company_user_factory(
+        company=company,
+        user=user,
+        role=role,
+        status=CompanyMemberStatus.ACTIVE.value,
+    )
+    return user
+
+
+async def test_non_primary_buyer_can_request_quote(
+    client, user_factory, company_factory, company_user_factory, product_factory, db_session
+):
+    _, company = _b2b_user(user_factory, company_factory, email="f5-owner1@example.com")
+    buyer = _member(
+        user_factory,
+        company_user_factory,
+        company,
+        email="f5-buyer1@example.com",
+        role=CompanyRole.BUYER.value,
+    )
+    product = product_factory(price_usd=10.0)
+    resp = await client.post(
+        "/api/v1/quotes/",
+        json={"currency": "USD", "items": [{"product_id": product.id, "quantity": 2}]},
+        headers=_headers(buyer),
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["company_id"] == company.id
+    assert body["subtotal"] == 20.0
+    # Attribution is to the actual requesting member, not the primary contact.
+    quote = db_session.query(Quote).filter(Quote.id == body["id"]).first()
+    assert quote is not None
+    assert quote.requested_by_user_id == buyer.id
+
+
+async def test_non_primary_member_sees_company_quotes(
+    client, user_factory, company_factory, company_user_factory, quote_factory
+):
+    _, company = _b2b_user(user_factory, company_factory, email="f5-owner2@example.com")
+    quote_factory(company=company, status="sent")
+    viewer = _member(
+        user_factory,
+        company_user_factory,
+        company,
+        email="f5-viewer2@example.com",
+        role=CompanyRole.VIEWER.value,
+    )
+    resp = await client.get("/api/v1/quotes/", headers=_headers(viewer))
+    assert resp.status_code == 200
+    quotes = resp.json()
+    # The non-primary member sees their company's quote (was [] before the fix).
+    assert len(quotes) == 1
+    assert quotes[0]["company_id"] == company.id
+
+
+async def test_viewer_member_cannot_request_quote_403(
+    client, user_factory, company_factory, company_user_factory, product_factory
+):
+    _, company = _b2b_user(user_factory, company_factory, email="f5-owner3@example.com")
+    viewer = _member(
+        user_factory,
+        company_user_factory,
+        company,
+        email="f5-viewer3@example.com",
+        role=CompanyRole.VIEWER.value,
+    )
+    product = product_factory()
+    resp = await client.post(
+        "/api/v1/quotes/",
+        json={"currency": "USD", "items": [{"product_id": product.id, "quantity": 1}]},
+        headers=_headers(viewer),
+    )
+    # A read-only VIEWER may browse quotes but not create them.
+    assert resp.status_code == 403
+    assert resp.json()["detail"] == "Not enough permissions"
