@@ -32,6 +32,11 @@ class CategoryBase(BaseSchema):
     meta_title_pl: Annotated[str | None, Field(max_length=META_TITLE_MAX)] = None
     meta_description_pl: Annotated[str | None, Field(max_length=META_DESCRIPTION_MAX)] = None
 
+    google_product_category: Annotated[
+        str | None,
+        Field(max_length=20, description="Google product taxonomy numeric ID, e.g. '5613'"),
+    ] = None
+
 
 class CategoryCreate(CategoryBase):
     """Schema for creating a category"""
@@ -61,6 +66,8 @@ class CategoryUpdate(BaseSchema):
     meta_description: Annotated[str | None, Field(max_length=META_DESCRIPTION_MAX)] = None
     meta_title_pl: Annotated[str | None, Field(max_length=META_TITLE_MAX)] = None
     meta_description_pl: Annotated[str | None, Field(max_length=META_DESCRIPTION_MAX)] = None
+
+    google_product_category: Annotated[str | None, Field(max_length=20)] = None
 
 
 class CategoryHero(BaseSchema):
