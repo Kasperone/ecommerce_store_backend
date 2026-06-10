@@ -460,3 +460,26 @@ async def test_delete_non_admin_rejected(client, user_factory, category_factory)
         headers=_customer_headers(user_factory),
     )
     assert response.status_code == 403
+
+
+async def test_create_category_with_google_product_category(client, user_factory):
+    headers = _admin_headers(user_factory, email="gpc-cat-create@example.com")
+    response = await client.post(
+        "/api/v1/categories/",
+        json={"name": "GPC Category", "slug": "gpc-cat-create", "google_product_category": "5613"},
+        headers=headers,
+    )
+    assert response.status_code == 201
+    assert response.json()["google_product_category"] == "5613"
+
+
+async def test_update_category_google_product_category(client, user_factory, category_factory):
+    headers = _admin_headers(user_factory, email="gpc-cat-update@example.com")
+    category = category_factory(slug="gpc-cat-update")
+    response = await client.put(
+        f"/api/v1/categories/{category.id}",
+        json={"name": category.name, "slug": category.slug, "google_product_category": "2271"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["google_product_category"] == "2271"

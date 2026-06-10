@@ -64,6 +64,10 @@ class ProductBase(BaseSchema):
     gtin: Annotated[str | None, Field(max_length=14)] = None
     mpn: Annotated[str | None, Field(max_length=70)] = None
     condition: Literal["new", "refurbished", "used"] = "new"
+    google_product_category: Annotated[
+        str | None,
+        Field(max_length=20, description="Google product taxonomy numeric ID, e.g. '5613'"),
+    ] = None
 
     # SEO meta (per locale) — mirrors CategoryBase; PDP falls back to
     # name / description when unset. Lengths match the DB CHECKs (70/160).
@@ -148,6 +152,7 @@ class ProductUpdate(BaseSchema):
     gtin: Annotated[str | None, Field(max_length=14)] = None
     mpn: Annotated[str | None, Field(max_length=70)] = None
     condition: Literal["new", "refurbished", "used"] | None = None
+    google_product_category: Annotated[str | None, Field(max_length=20)] = None
 
     meta_title: Annotated[str | None, Field(max_length=70)] = None
     meta_description: Annotated[str | None, Field(max_length=160)] = None
