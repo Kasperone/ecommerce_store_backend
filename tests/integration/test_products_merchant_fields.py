@@ -135,3 +135,61 @@ async def test_invalid_condition_is_422(client, user_factory, category_factory):
     )
 
     assert resp.status_code == 422
+
+
+async def test_create_product_with_google_product_category(client, user_factory, category_factory):
+    admin = user_factory(email="mf-gpc-create@example.com", role=UserRole.ADMIN)
+    cat = category_factory()
+
+    resp = await client.post(
+        "/api/v1/products/",
+        json={
+            "name": "GPC Product",
+            "slug": "mf-gpc-create",
+            "price_usd": 12.0,
+            "category_id": cat.id,
+            "google_product_category": "5613",
+        },
+        headers=_headers(admin),
+    )
+
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["google_product_category"] == "5613"
+
+    public = await client.get("/api/v1/products/slug/mf-gpc-create")
+    assert public.status_code == 200
+    assert public.json()["google_product_category"] == "5613"
+
+
+async def test_update_product_google_product_category(client, user_factory, product_factory):
+    admin = user_factory(email="mf-gpc-update@example.com", role=UserRole.ADMIN)
+    product = product_factory(slug="mf-gpc-update")
+
+    resp = await client.put(
+        f"/api/v1/products/{product.id}",
+        json={"google_product_category": "2271"},
+        headers=_headers(admin),
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["google_product_category"] == "2271"
+
+
+async def test_google_product_category_over_20_chars_is_422(client, user_factory, category_factory):
+    admin = user_factory(email="mf-gpc-len@example.com", role=UserRole.ADMIN)
+    cat = category_factory()
+
+    resp = await client.post(
+        "/api/v1/products/",
+        json={
+            "name": "GPC Too Long",
+            "slug": "mf-gpc-len",
+            "price_usd": 5.0,
+            "category_id": cat.id,
+            "google_product_category": "x" * 21,
+        },
+        headers=_headers(admin),
+    )
+
+    assert resp.status_code == 422
