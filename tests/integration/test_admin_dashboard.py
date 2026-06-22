@@ -7,6 +7,8 @@ and the ``window_days`` query param. Aggregation correctness is unit-tested in
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from app.core.security import create_access_token
@@ -101,3 +103,59 @@ async def test_kpis_window_days_param(client, user_factory):
 
     bad = await client.get("/api/v1/admin/dashboard/kpis?window_days=0", headers=_headers(admin))
     assert bad.status_code == 422
+
+
+async def test_kpis_custom_date_range(client, user_factory):
+    admin = user_factory(email="dash-range@example.com", role=UserRole.ADMIN)
+    resp = await client.get(
+        "/api/v1/admin/dashboard/kpis?start_date=2026-01-01&end_date=2026-01-10",
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["window_days"] == 10  # effective inclusive span
+    assert len(body["sales_trend"]) == 10
+    assert body["sales_trend"][0]["date"] == "2026-01-01"
+    assert body["sales_trend"][-1]["date"] == "2026-01-10"
+
+
+async def test_kpis_start_date_defaults_end_to_today(
+    client, user_factory, product_factory, test_shipping_method_id
+):
+    admin = user_factory(email="dash-range-today@example.com", role=UserRole.ADMIN)
+    customer = user_factory(email="dash-range-cust@example.com")
+    product = product_factory(stock=10, price_usd=15.0)
+    created = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(product.id, shipping_method_id=test_shipping_method_id),
+        headers=_headers(customer),
+    )
+    assert created.status_code == 201
+
+    today = datetime.now(UTC).date()
+    start = today - timedelta(days=2)
+    resp = await client.get(
+        f"/api/v1/admin/dashboard/kpis?start_date={start.isoformat()}",
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["window_days"] == 3  # start, +1 day, today (inclusive)
+    assert body["sales_trend"][-1]["date"] == today.isoformat()
+    assert body["orders_window"] >= 1  # today's order falls inside the range
+
+
+async def test_kpis_range_validation(client, user_factory):
+    admin = user_factory(email="dash-range-bad@example.com", role=UserRole.ADMIN)
+    # end before start
+    inverted = await client.get(
+        "/api/v1/admin/dashboard/kpis?start_date=2026-02-10&end_date=2026-02-01",
+        headers=_headers(admin),
+    )
+    assert inverted.status_code == 422
+    # range longer than the 366-day cap
+    too_long = await client.get(
+        "/api/v1/admin/dashboard/kpis?start_date=2024-01-01&end_date=2026-01-01",
+        headers=_headers(admin),
+    )
+    assert too_long.status_code == 422
