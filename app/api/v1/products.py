@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db
+from app.core.dependencies import get_current_admin, get_db, get_optional_user
 from app.crud import price_history as crud_price_history
 from app.crud import product as crud_product
 from app.crud import product_tag as crud_product_tag
@@ -14,7 +14,7 @@ from app.models.order import OrderItem
 from app.models.price_history import SUPPORTED_CURRENCIES
 from app.models.product import Product
 from app.models.quote import QuoteItem
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.price_history import LowestPriceResponse
 from app.schemas.product import (
     ProductCreate,
@@ -59,10 +59,17 @@ def _reconcile_product_tags(db: Session, product: Product, names: list[str]) -> 
 @router.get("/", response_model=ProductListResponse)
 async def list_products(
     db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_user),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
     category_id: int | None = Query(None, description="Filter by category ID"),
-    is_active: bool | None = Query(True, description="Filter by active status"),
+    is_active: bool | None = Query(
+        None,
+        description=(
+            "Filter by active status. Admin-only — non-admin callers always "
+            "receive active products regardless of this value (omit = all, for admins)."
+        ),
+    ),
     is_featured: bool | None = Query(None, description="Filter by featured status"),
     min_price: float | None = Query(None, ge=0, description="Minimum price (USD)"),
     max_price: float | None = Query(None, ge=0, description="Maximum price (USD)"),
@@ -85,7 +92,8 @@ async def list_products(
     - **page**: Page number (starts from 1)
     - **page_size**: Number of items per page (1-100)
     - **category_id**: Filter by category
-    - **is_active**: Show only active products (default: true)
+    - **is_active**: Admin-only filter. Non-admins always get active products;
+      an admin may pass ``false`` (inactive only) or omit it for all
     - **is_featured**: Filter featured products
     - **min_price/max_price**: Price range filter (USD)
     - **in_stock**: Filter by stock availability
@@ -93,6 +101,13 @@ async def list_products(
     - **sort_by**: Field to sort by (created_at, price_usd, name)
     - **order**: Sort direction (asc or desc)
     """
+    # This list endpoint is public. Only admins may see inactive products (or the
+    # unfiltered "all" view via is_active=None); for every other caller we force
+    # the active-only filter regardless of what was requested, so a guest can
+    # never enumerate inactive / unpublished products through this route.
+    if current_user is None or current_user.role != UserRole.ADMIN:
+        is_active = True
+
     skip = (page - 1) * page_size
 
     # Get products with filters
