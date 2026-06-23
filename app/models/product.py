@@ -1,7 +1,8 @@
 import logging
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, CheckConstraint, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, CheckConstraint, Float, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import BaseModel
@@ -106,9 +107,9 @@ class Product(BaseModel):
 
     # Pricing (multi-currency) — individually nullable; ck_products_at_least_one_price
     # guarantees at least one is set at the DB level
-    price_usd: Mapped[float | None] = mapped_column(Float)
-    price_pln: Mapped[float | None] = mapped_column(Float)
-    price_eur: Mapped[float | None] = mapped_column(Float)
+    price_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    price_pln: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    price_eur: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
 
     # Physical weight in kilograms (nullable — legacy products start at NULL;
     # the order-create resolver treats NULL as 0 so a missing weight contributes
@@ -222,11 +223,11 @@ class Product(BaseModel):
         """Active variants only — what the public product detail exposes."""
         return [variant for variant in self.variants if variant.is_active]
 
-    def get_price(self, currency: str = "USD") -> float:
+    def get_price(self, currency: str = "USD") -> Decimal:
         """Return price in ``currency`` with deterministic fallback (PLN → USD → EUR).
 
         The DB CHECK constraint guarantees at least one currency is set, so the
-        ``0.0`` return is only reachable for rows inserted before that constraint
+        zero return is only reachable for rows inserted before that constraint
         shipped — logged as a warning rather than raising to keep storefront reads
         resilient.
         """
@@ -242,4 +243,4 @@ class Product(BaseModel):
             if fallback is not None:
                 return fallback
         logger.warning("Product %s has no prices set in any currency", self.id)
-        return 0.0
+        return Decimal("0.00")

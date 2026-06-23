@@ -12,10 +12,12 @@ hint. Caller owns the commit (same contract as ``crud_inventory.apply_delta``).
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
 
+from app.core.money import quantize_money
 from app.models.price_history import PriceHistory
 
 if TYPE_CHECKING:
@@ -86,11 +88,11 @@ class CRUDPriceHistory:
             return None
         if currency not in {"USD", "PLN", "EUR"}:
             raise ValueError(f"Unsupported currency: {currency!r}")
-        rounded = round(float(new_price), 2)
+        rounded = quantize_money(new_price)
         latest = self.get_latest(
             db, product_id=product.id, currency=currency, variant_id=variant_id
         )
-        if latest is not None and round(latest.price, 2) == rounded:
+        if latest is not None and quantize_money(latest.price) == rounded:
             return latest
 
         row = PriceHistory(
@@ -106,7 +108,7 @@ class CRUDPriceHistory:
 
     def lowest_in_last_30_days(
         self, db: Session, *, product_id: int, currency: str, variant_id: int | None = None
-    ) -> tuple[float, datetime] | None:
+    ) -> tuple[Decimal, datetime] | None:
         """Return ``(lowest_price, since)`` for the 30-day window, or None.
 
         ``variant_id=None`` reads the product-grain trail (NULL rows),

@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session
 
+from app.core.money import to_money
 from app.crud.inventory import inventory as crud_inventory
 from app.models.inventory_movement import InventoryMovementReason
 from app.models.product import Product
@@ -344,9 +345,9 @@ class CRUDProductVariant:
                     title=title,
                     title_pl=title_pl,
                     sku=variant_in.sku,
-                    price_usd=variant_in.price_usd,
-                    price_pln=variant_in.price_pln,
-                    price_eur=variant_in.price_eur,
+                    price_usd=to_money(variant_in.price_usd),
+                    price_pln=to_money(variant_in.price_pln),
+                    price_eur=to_money(variant_in.price_eur),
                     stock=0,
                     image_id=variant_in.image_id,
                     position=variant_in.position,
@@ -377,9 +378,9 @@ class CRUDProductVariant:
                 existing.title = title
                 existing.title_pl = title_pl
                 existing.sku = variant_in.sku
-                existing.price_usd = variant_in.price_usd
-                existing.price_pln = variant_in.price_pln
-                existing.price_eur = variant_in.price_eur
+                existing.price_usd = to_money(variant_in.price_usd)
+                existing.price_pln = to_money(variant_in.price_pln)
+                existing.price_eur = to_money(variant_in.price_eur)
                 existing.image_id = variant_in.image_id
                 existing.position = variant_in.position
                 existing.is_active = variant_in.is_active

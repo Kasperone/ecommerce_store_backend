@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_admin, get_db, get_optional_user
+from app.core.money import as_float
 from app.crud import price_history as crud_price_history
 from app.crud import product as crud_product
 from app.crud import product_tag as crud_product_tag
@@ -237,7 +238,7 @@ async def get_lowest_30d(
     if result is None:
         return LowestPriceResponse(currency=currency, lowest_price=None, since=None)
     lowest, since = result
-    return LowestPriceResponse(currency=currency, lowest_price=lowest, since=since)
+    return LowestPriceResponse(currency=currency, lowest_price=as_float(lowest), since=since)
 
 
 @router.get("/{slug}/related", response_model=list[ProductResponse])

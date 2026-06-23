@@ -26,6 +26,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
+from app.core.money import as_float
 from app.core.search import (
     CATEGORIES_INDEX,
     PRODUCTS_INDEX,
@@ -157,9 +158,11 @@ def _min_variant_price(product: Product, attr: str) -> float | None:
     inherits the product's; all-NULL candidates collapse to None (not for
     sale in that currency).
     """
+    # Money columns are Decimal; the search document must be JSON-serializable
+    # (Meilisearch), so emit float.
     active = [variant for variant in product.variants if variant.is_active]
     if not active:
-        return getattr(product, attr)
+        return as_float(getattr(product, attr))
     candidates = [
         price
         for price in (
@@ -168,7 +171,7 @@ def _min_variant_price(product: Product, attr: str) -> float | None:
         )
         if price is not None
     ]
-    return min(candidates) if candidates else None
+    return as_float(min(candidates)) if candidates else None
 
 
 def _option_values(product: Product) -> list[str]:

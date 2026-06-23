@@ -43,6 +43,7 @@ subtotal-tier / flat branches.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
@@ -51,6 +52,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -191,8 +193,8 @@ class ShippingRate(BaseModel):
         Integer, ForeignKey("shipping_methods.id", ondelete="CASCADE"), index=True
     )
     currency: Mapped[str] = mapped_column(String(3))
-    amount: Mapped[float] = mapped_column(Float)
-    free_above_subtotal: Mapped[float | None] = mapped_column(Float)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    free_above_subtotal: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     # Tiers shape: [{"min_subtotal": 0, "amount": 19.99}, {"min_subtotal": 200, "amount": 14.99}]
     # Stored sorted ascending by min_subtotal (the CRUD canonicalises on insert/update).
     # Pydantic enforces each band's non-negativity + uniqueness of min_subtotal.

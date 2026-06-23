@@ -14,6 +14,7 @@ line items, subtotal/total, and the current status.
 from __future__ import annotations
 
 import datetime as dt
+from decimal import Decimal
 from io import BytesIO
 from typing import TYPE_CHECKING
 
@@ -122,7 +123,7 @@ def build_quote_pdf(
     issued_at = issued_at or dt.date.today()
     quote_number = derive_quote_number(quote)
 
-    def money(amount: float) -> str:
+    def money(amount: Decimal) -> str:
         return f"{amount:,.2f} {currency}"
 
     buf = BytesIO()

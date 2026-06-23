@@ -93,7 +93,8 @@ async def test_add_returns_201_with_product_card(client, user_factory, product_f
     assert body["variant_id"] is None
     assert body["product_slug"] == "wl-card"
     assert body["product_name"] == "Card Product"
-    assert body["price_usd"] == product.price_usd
+    # Wire format is a JSON number (float); the column is a money Decimal.
+    assert body["price_usd"] == float(product.price_usd)
     assert body["is_active"] is True
     assert body["in_stock"] is True
     assert body["variant_sku"] is None

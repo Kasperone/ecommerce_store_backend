@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.dependencies import get_current_user, get_db
+from app.core.money import as_float
 from app.models.product import Product
 from app.models.product_variant import ProductVariant
 from app.models.user import User
@@ -74,9 +75,9 @@ def _to_read(item: WishlistItem) -> WishlistItemRead:
         product_name=product.name,
         product_name_pl=product.name_pl,
         product_image_url=_primary_image_url(product),
-        price_usd=price_usd,
-        price_pln=price_pln,
-        price_eur=price_eur,
+        price_usd=as_float(price_usd),
+        price_pln=as_float(price_pln),
+        price_eur=as_float(price_eur),
         is_active=is_active,
         in_stock=in_stock,
         variant_sku=variant_sku,

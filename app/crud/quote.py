@@ -17,8 +17,11 @@ scope and live elsewhere (when they exist).
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from sqlalchemy.orm import Query, Session, selectinload
 
+from app.core.money import ZERO_MONEY, quantize_money
 from app.crud.inventory import inventory as crud_inventory
 from app.crud.order import (
     InsufficientStockError,
@@ -80,17 +83,19 @@ class QuoteNotConvertibleError(Exception):
         super().__init__(message)
 
 
-def _build_items(lines: list[QuoteItemCreate]) -> tuple[list[QuoteItem], float]:
+def _build_items(lines: list[QuoteItemCreate]) -> tuple[list[QuoteItem], Decimal]:
     """Build ``QuoteItem`` rows with computed ``line_total`` + return the subtotal.
 
-    ``line_total = round(quantity * unit_price, 2)``; the subtotal is the rounded
-    sum of the line totals. Pure — no DB access (``product_id`` is stored as-is,
-    not validated).
+    ``line_total = quantize_money(quantity * unit_price)``; the subtotal is the
+    quantized sum of the line totals. Inbound ``unit_price`` is a wire float, so
+    it's converted to a money ``Decimal`` here. Pure — no DB access
+    (``product_id`` is stored as-is, not validated).
     """
     items: list[QuoteItem] = []
-    subtotal = 0.0
+    subtotal = ZERO_MONEY
     for line in lines:
-        line_total = round(line.quantity * line.unit_price, 2)
+        unit_price = quantize_money(line.unit_price)
+        line_total = quantize_money(line.quantity * unit_price)
         subtotal += line_total
         items.append(
             QuoteItem(
@@ -98,11 +103,11 @@ def _build_items(lines: list[QuoteItemCreate]) -> tuple[list[QuoteItem], float]:
                 variant_id=line.variant_id,
                 description=line.description,
                 quantity=line.quantity,
-                unit_price=line.unit_price,
+                unit_price=unit_price,
                 line_total=line_total,
             )
         )
-    return items, round(subtotal, 2)
+    return items, quantize_money(subtotal)
 
 
 class CRUDQuote:
@@ -262,8 +267,10 @@ class CRUDQuote:
             priced_lines.append(
                 QuoteItemCreate(
                     description=description,
+                    # QuoteItemCreate is the wire schema (float); _build_items
+                    # re-quantizes to a money Decimal.
+                    unit_price=float(unit_price),
                     quantity=line.quantity,
-                    unit_price=unit_price,
                     product_id=product.id,
                     variant_id=variant.id if variant is not None else None,
                 )
@@ -445,7 +452,7 @@ class CRUDQuote:
                     else product.sku,
                     quantity=line.quantity,
                     unit_price=line.unit_price,  # honour the quoted price — do NOT re-price
-                    total_price=round(line.unit_price * line.quantity, 2),
+                    total_price=quantize_money(line.unit_price * line.quantity),
                 )
             )
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Annotated, Literal
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
@@ -249,8 +250,8 @@ class ShippingRateUpdate(BaseSchema):
 
 
 def _classify_pricing(
-    amount: float,
-    free_above_subtotal: float | None,
+    amount: Decimal | float,
+    free_above_subtotal: Decimal | float | None,
     tiers: list[ShippingRateTier] | list[dict] | None,
     weight_tiers: list[ShippingRateWeightTier] | list[dict] | None = None,
 ) -> PricingKind:

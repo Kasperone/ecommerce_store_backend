@@ -21,9 +21,10 @@ follow-up provider-integration PR populates it.
 from __future__ import annotations
 
 import enum
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, CheckConstraint, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import BaseModel
@@ -88,7 +89,7 @@ class Refund(BaseModel):
     order_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("orders.id", ondelete="RESTRICT"), index=True
     )
-    amount: Mapped[float] = mapped_column(Float)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     currency: Mapped[str] = mapped_column(String(3))
     reason: Mapped[str] = mapped_column(String(32))
     note: Mapped[str | None] = mapped_column(Text)

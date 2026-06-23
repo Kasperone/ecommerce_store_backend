@@ -1,8 +1,9 @@
 import enum
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -69,13 +70,15 @@ class Order(BaseModel):
     status: Mapped[OrderStatus] = mapped_column(SQLEnum(OrderStatus), default=OrderStatus.PENDING)
 
     # Pricing
-    subtotal: Mapped[float] = mapped_column(Float)
-    tax: Mapped[float] = mapped_column(Float, default=0)
-    shipping: Mapped[float] = mapped_column(Float, default=0)
+    subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    tax: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    shipping: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
     # Coupon discount applied to the goods subtotal (never to shipping). 0 when no
-    # coupon was redeemed. ``total == round(subtotal - discount + shipping, 2)``.
-    discount: Mapped[float] = mapped_column(Float, default=0, server_default="0")
-    total: Mapped[float] = mapped_column(Float)
+    # coupon was redeemed. ``total == quantize_money(subtotal - discount + shipping)``.
+    discount: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=Decimal("0"), server_default="0"
+    )
+    total: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     currency: Mapped[str] = mapped_column(String(3), default="USD")  # USD, PLN, EUR
 
     # Redeemed coupon (nullable — most orders carry none). ``coupon_id`` SET NULL
@@ -175,8 +178,8 @@ class OrderItem(BaseModel):
     variant_title: Mapped[str | None] = mapped_column(String(200))
     product_sku: Mapped[str | None] = mapped_column(String(100))
     quantity: Mapped[int] = mapped_column(Integer)
-    unit_price: Mapped[float] = mapped_column(Float)
-    total_price: Mapped[float] = mapped_column(Float)
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    total_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
 
     # Relationships
     order: Mapped["Order"] = relationship("Order", back_populates="items")

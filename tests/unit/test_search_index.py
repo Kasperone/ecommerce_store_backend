@@ -106,7 +106,8 @@ def test_build_product_document_minimal(db_session, product_factory):
     assert doc["option_values"] == []
     assert doc["tags"] == []
     assert doc["collection_slugs"] == []
-    assert doc["price_usd"] == product.price_usd
+    # Search docs are JSON (float); the column is a money Decimal.
+    assert doc["price_usd"] == float(product.price_usd)
 
 
 def _add_variant(db_session, product, *, value, value_pl=None, **overrides):
