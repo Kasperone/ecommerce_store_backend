@@ -14,6 +14,7 @@ from app.models.user import User
 from app.services.invoice import (
     StoreIdentity,
     build_invoice_pdf,
+    compute_vat_breakdown,
     decompose_gross,
     derive_proforma_number,
 )
@@ -82,6 +83,59 @@ def _company_user() -> User:
 
 def _person_user() -> User:
     return User(email="john@example.com", first_name="John", last_name="Doe")
+
+
+def _vat_order(items, *, discount=0.0, shipping=0.0, total) -> Order:
+    """Minimal order carrying line items with explicit vat_rate (for breakdown)."""
+    order = Order(
+        order_number="ORD-VAT",
+        status=OrderStatus.PAID,
+        subtotal=sum(tp for _, tp, _ in items),
+        tax=0.0,
+        shipping=shipping,
+        discount=discount,
+        total=total,
+        currency="PLN",
+        shipping_address="ul. Polna 7/3",
+        shipping_city="Kraków",
+        shipping_postal_code="30-001",
+        shipping_country="Polska",
+    )
+    order.items = [
+        OrderItem(product_name=name, quantity=1, unit_price=tp, total_price=tp, vat_rate=rate)
+        for name, tp, rate in items
+    ]
+    return order
+
+
+class TestComputeVatBreakdown:
+    def test_mixed_rates_groups_and_reconciles_to_total(self):
+        # 100 @ 23% goods + 50 @ 5% goods + 10 shipping (standard 23%) = 160 gross.
+        order = _vat_order([("std", 100.0, 23), ("book", 50.0, 5)], shipping=10.0, total=160.0)
+        groups = compute_vat_breakdown(order, shipping_vat_rate=23)
+        # Sorted by rate desc; shipping folds into the 23% group.
+        assert [g.rate for g in groups] == [23, 5]
+        assert {g.rate: g.gross for g in groups} == {23: Decimal("110.00"), 5: Decimal("50.00")}
+        # Each group reconciles net + VAT == gross, and grosses sum to the total.
+        for g in groups:
+            assert g.net + g.vat == g.gross
+        assert sum(g.gross for g in groups) == order.total
+
+    def test_discount_allocated_proportionally_last_group_absorbs_remainder(self):
+        # 100 @ 23% + 100 @ 5%, 20 discount, no shipping → each group loses 10.
+        order = _vat_order([("std", 100.0, 23), ("book", 100.0, 5)], discount=20.0, total=180.0)
+        groups = compute_vat_breakdown(order, shipping_vat_rate=23)
+        assert {g.rate: g.gross for g in groups} == {23: Decimal("90.00"), 5: Decimal("90.00")}
+        assert sum(g.gross for g in groups) == order.total
+
+    def test_single_rate_matches_whole_order_decomposition(self):
+        # One rate → the single group's gross is the whole total, identical to
+        # decompose_gross(total, rate).
+        order = _vat_order([("a", 200.0, 23)], shipping=14.98, total=214.98)
+        groups = compute_vat_breakdown(order, shipping_vat_rate=23)
+        assert len(groups) == 1
+        net, vat = decompose_gross(Decimal("214.98"), 23)
+        assert (groups[0].net, groups[0].vat) == (net, vat)
 
 
 # --- decompose_gross -------------------------------------------------------

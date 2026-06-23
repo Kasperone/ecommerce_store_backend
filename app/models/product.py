@@ -110,6 +110,9 @@ class Product(BaseModel):
     price_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     price_pln: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     price_eur: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    # Polish VAT rate (%) for this product — 23 standard, 8/5/0 for reduced-rate
+    # goods (books/food/etc.). Drives per-line faktura VAT decomposition.
+    vat_rate: Mapped[int] = mapped_column(Integer, default=23, server_default="23")
 
     # Physical weight in kilograms (nullable — legacy products start at NULL;
     # the order-create resolver treats NULL as 0 so a missing weight contributes

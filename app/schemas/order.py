@@ -3,6 +3,7 @@ from typing import Literal
 
 from pydantic import EmailStr, Field, field_validator
 
+from app.core.validators import is_valid_nip, normalize_nip
 from app.models.order import OrderStatus
 from app.schemas.base import BaseSchema, TimestampSchema
 from app.schemas.refund import RefundResponse
@@ -81,6 +82,22 @@ class OrderCreate(OrderBase):
     # Guest email language (stored as ``orders.guest_locale``); ignored for
     # authenticated orders (their ``User.locale`` preference wins).
     locale: Literal["en", "pl"] | None = None
+    # B2C faktura request ("Chcę fakturę / na firmę"). Optional: a consumer or
+    # guest buying for their business supplies the company name + NIP to print on
+    # the faktura. The NIP is checksum-validated (a typo'd NIP on a legal invoice
+    # is rejected); whitespace/dashes are normalized to digits on the way in.
+    invoice_nip: str | None = Field(default=None, max_length=16)
+    invoice_name: str | None = Field(default=None, max_length=200)
+
+    @field_validator("invoice_nip", mode="before")
+    @classmethod
+    def _validate_nip(cls, value: str | None) -> str | None:
+        if value is None or not str(value).strip():
+            return None
+        normalized = normalize_nip(str(value))
+        if not is_valid_nip(normalized):
+            raise ValueError("Invalid NIP (Polish tax identification number).")
+        return normalized
 
 
 class OrderUpdate(BaseSchema):
@@ -126,6 +143,10 @@ class OrderResponse(OrderBase, TimestampSchema):
     coupon_code: str | None = None
     total: float
     currency: str
+
+    # B2C faktura request (null on a plain consumer order).
+    invoice_nip: str | None = None
+    invoice_name: str | None = None
 
     # Payment
     payment_method: str | None

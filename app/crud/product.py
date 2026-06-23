@@ -48,6 +48,23 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
         db.refresh(db_obj)
         return db_obj
 
+    def update(
+        self, db: Session, *, db_obj: Product, obj_in: ProductUpdate | dict[str, Any]
+    ) -> Product:
+        """Update a product, ignoring the write-only ``tags`` field.
+
+        Mirrors ``create``: ``tags`` is a list of names reconciled by the route
+        (after the audit diff), not a column. Excluding it keeps
+        ``CRUDBase.update`` from assigning tag-name strings onto the ``tags``
+        relationship — which raises ``'str' has no attribute '_sa_instance_state'``
+        once the relationship is loaded on the instance.
+        """
+        if isinstance(obj_in, dict):
+            data = {k: v for k, v in obj_in.items() if k != "tags"}
+        else:
+            data = obj_in.model_dump(exclude_unset=True, exclude={"tags"})
+        return super().update(db, db_obj=db_obj, obj_in=data)
+
     def get(self, db: Session, id: Any) -> Product | None:
         """Get a single product by ID with the variant matrix eager-loaded."""
         return db.query(Product).options(*_DETAIL_OPTIONS).filter(Product.id == id).first()
