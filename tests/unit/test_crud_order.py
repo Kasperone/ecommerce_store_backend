@@ -31,6 +31,7 @@ def _order_in(
     *,
     shipping_method_id: int,
     currency: str = "USD",
+    payment_method: str | None = None,
 ) -> OrderCreate:
     """Build an OrderCreate from ``(product_id, quantity)`` tuples.
 
@@ -46,6 +47,7 @@ def _order_in(
         shipping_postal_code="00-001",
         shipping_country="PL",
         shipping_method_id=shipping_method_id,
+        payment_method=payment_method,  # type: ignore[arg-type]
     )
 
 
@@ -67,6 +69,39 @@ def _order_in(
 )
 def test_is_inpost_locker_method(code, expected):
     assert is_inpost_locker_method(ShippingMethod(name="m", code=code)) is expected
+
+
+def test_create_persists_cod_payment_method(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
+    """Cash-on-delivery is chosen at create: payment_method='cod' persists and
+    the order stays PENDING (no PSP capture)."""
+    user = user_factory()
+    product = product_factory(stock=5, price_usd=20.0)
+    order = crud_order.create_with_items(
+        db_session,
+        user_id=user.id,
+        obj_in=_order_in(
+            [(product.id, 1)], shipping_method_id=test_shipping_method_id, payment_method="cod"
+        ),
+    )
+    assert order.payment_method == "cod"
+    assert order.status == OrderStatus.PENDING
+
+
+def test_create_defaults_payment_method_null_for_online(
+    db_session, user_factory, product_factory, test_shipping_method_id
+):
+    """An online order carries no payment_method at create (set later by the
+    payment-start flow)."""
+    user = user_factory()
+    product = product_factory(stock=5, price_usd=20.0)
+    order = crud_order.create_with_items(
+        db_session,
+        user_id=user.id,
+        obj_in=_order_in([(product.id, 1)], shipping_method_id=test_shipping_method_id),
+    )
+    assert order.payment_method is None
 
 
 def test_create_computes_totals_and_decrements_stock(

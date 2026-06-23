@@ -412,6 +412,9 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             shipping_method_name=ship_method.name,
             inpost_point_id=(obj_in.inpost_point_id or None) if is_locker else None,
             inpost_point_name=(obj_in.inpost_point_name or None) if is_locker else None,
+            # Cash-on-delivery is the only method chosen at create; online
+            # methods are set later by the payment-start flow (NULL until then).
+            payment_method=obj_in.payment_method,
             notes=obj_in.notes,
             items=items,
         )
