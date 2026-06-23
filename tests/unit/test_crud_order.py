@@ -13,11 +13,13 @@ from app.crud import warehouse as crud_warehouse
 from app.crud.order import (
     InsufficientStockError,
     ProductUnavailableError,
+    is_inpost_locker_method,
     status_transition_error,
 )
 from app.models.inventory_movement import InventoryMovement
 from app.models.order import OrderStatus
 from app.models.product import Product
+from app.models.shipping import ShippingMethod
 from app.models.user import UserRole
 from app.schemas.order import OrderCreate, OrderItemCreate
 
@@ -50,6 +52,21 @@ def _order_in(
 # ---------------------------------------------------------------------------
 # create_with_items
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("inpost_paczkomat", True),
+        ("INPOST_LOCKER", True),
+        ("inpost", True),
+        ("dpd_classic", False),
+        ("standard", False),
+        (None, False),
+    ],
+)
+def test_is_inpost_locker_method(code, expected):
+    assert is_inpost_locker_method(ShippingMethod(name="m", code=code)) is expected
 
 
 def test_create_computes_totals_and_decrements_stock(
