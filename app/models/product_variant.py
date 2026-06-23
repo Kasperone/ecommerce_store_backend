@@ -17,15 +17,16 @@ rows, maintained only by ``crud_inventory.apply_delta`` (the same chokepoint
 discipline as ``Product.stock``).
 """
 
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
-    Float,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     Table,
     UniqueConstraint,
@@ -151,9 +152,9 @@ class ProductVariant(BaseModel):
     sku: Mapped[str | None] = mapped_column(String(100), unique=True, index=True)
 
     # NULL = inherit the product's price in that currency.
-    price_usd: Mapped[float | None] = mapped_column(Float)
-    price_pln: Mapped[float | None] = mapped_column(Float)
-    price_eur: Mapped[float | None] = mapped_column(Float)
+    price_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    price_pln: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    price_eur: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
 
     stock: Mapped[int] = mapped_column(Integer, default=0)
     # Optional per-variant image from the existing R2 gallery.
@@ -185,17 +186,17 @@ class ProductVariant(BaseModel):
         return [value.id for value in self.option_values]
 
     @property
-    def effective_price_usd(self) -> float | None:
+    def effective_price_usd(self) -> Decimal | None:
         """USD price with NULL = inherit from the parent product."""
         return self.price_usd if self.price_usd is not None else self.product.price_usd
 
     @property
-    def effective_price_pln(self) -> float | None:
+    def effective_price_pln(self) -> Decimal | None:
         """PLN price with NULL = inherit from the parent product."""
         return self.price_pln if self.price_pln is not None else self.product.price_pln
 
     @property
-    def effective_price_eur(self) -> float | None:
+    def effective_price_eur(self) -> Decimal | None:
         """EUR price with NULL = inherit from the parent product."""
         return self.price_eur if self.price_eur is not None else self.product.price_eur
 
@@ -209,7 +210,7 @@ class ProductVariant(BaseModel):
                 return image.url
         return None
 
-    def get_price(self, currency: str = "USD") -> float:
+    def get_price(self, currency: str = "USD") -> Decimal:
         """Price in ``currency``; a NULL variant price inherits the product's.
 
         Mirrors ``Product.get_price`` but the fallback for an unset variant

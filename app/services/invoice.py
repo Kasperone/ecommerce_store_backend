@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -36,6 +37,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy.orm import Session
 
+from app.core.money import ZERO_MONEY, quantize_money
 from app.crud import corrective_invoice as crud_corrective
 from app.crud import invoice as crud_invoice
 
@@ -177,16 +179,19 @@ class StoreIdentity:
         )
 
 
-def decompose_gross(total_gross: float, vat_rate_pct: int) -> tuple[float, float]:
+def decompose_gross(total_gross: Decimal | float, vat_rate_pct: int) -> tuple[Decimal, Decimal]:
     """Split a VAT-inclusive (gross) amount into ``(net, vat)`` at the given rate.
 
-    Returns ``(round(total_gross, 2), 0.0)`` when the rate is <= 0. Both
-    components are rounded to 2 decimals and sum back to ``total_gross``.
+    Returns ``(quantize_money(total_gross), 0.00)`` when the rate is <= 0. Both
+    components are quantized to 2 decimals (ROUND_HALF_UP, the PL/EU VAT rule)
+    and sum back to ``total_gross``; ``vat`` is derived as ``gross - net`` so the
+    two always reconcile exactly to the gross (no penny gap on the faktura).
     """
+    gross = quantize_money(total_gross)
     if vat_rate_pct <= 0:
-        return round(total_gross, 2), 0.0
-    net = round(total_gross / (1 + vat_rate_pct / 100), 2)
-    vat = round(total_gross - net, 2)
+        return gross, ZERO_MONEY
+    net = quantize_money(gross / (1 + Decimal(vat_rate_pct) / 100))
+    vat = quantize_money(gross - net)
     return net, vat
 
 
@@ -328,7 +333,7 @@ def build_invoice_pdf(
     number_label = labels["proforma_no"] if is_proforma else labels["invoice_no"]
     currency = order.currency
 
-    def money(amount: float) -> str:
+    def money(amount: Decimal) -> str:
         return f"{amount:,.2f} {currency}"
 
     buf = BytesIO()
@@ -461,7 +466,7 @@ def build_invoice_pdf(
     # amount between subtotal and shipping. The VAT decomposition above already
     # works off the discounted ``order.total``, so net/VAT stay internally
     # consistent.
-    discount = getattr(order, "discount", 0) or 0
+    discount = order.discount or ZERO_MONEY
     if discount > 0:
         discount_label = labels["discount"]
         if order.coupon_code:
@@ -594,7 +599,7 @@ def build_corrective_invoice_pdf(
     labels = _LABELS.get(lang, _LABELS["en"])
     currency = order.currency
 
-    def money(amount: float) -> str:
+    def money(amount: Decimal) -> str:
         return f"{amount:,.2f} {currency}"
 
     buf = BytesIO()
@@ -725,14 +730,14 @@ def build_corrective_invoice_pdf(
     # already supports partials (refund.amount can hold any value); the
     # `after = original - amount` math below makes the partial-refund PR a
     # one-line UI relaxation.
-    original_gross = round(order.total, 2)
-    refunded_gross = round(refund.amount, 2)
-    after_gross = round(original_gross - refunded_gross, 2)
+    original_gross = quantize_money(order.total)
+    refunded_gross = quantize_money(refund.amount)
+    after_gross = quantize_money(original_gross - refunded_gross)
     original_net, original_vat = decompose_gross(original_gross, store.vat_rate)
     after_net, after_vat = decompose_gross(after_gross, store.vat_rate)
-    diff_net = round(after_net - original_net, 2)
-    diff_vat = round(after_vat - original_vat, 2)
-    diff_gross = round(after_gross - original_gross, 2)
+    diff_net = quantize_money(after_net - original_net)
+    diff_vat = quantize_money(after_vat - original_vat)
+    diff_gross = quantize_money(after_gross - original_gross)
 
     totals_rows: list[list[str]] = [
         ["", labels["before_correction"], labels["after_correction"], labels["difference"]],

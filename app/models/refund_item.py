@@ -20,11 +20,13 @@ part of a legal/financial trail that points at the original sale.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import CheckConstraint, ForeignKey, Integer, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.money import quantize_money
 from app.models.base import BaseModel
 
 if TYPE_CHECKING:
@@ -68,14 +70,14 @@ class RefundItem(BaseModel):
         return self.order_item.product_name if self.order_item is not None else None
 
     @property
-    def unit_price(self) -> float | None:
+    def unit_price(self) -> Decimal | None:
         return self.order_item.unit_price if self.order_item is not None else None
 
     @property
-    def line_subtotal(self) -> float | None:
+    def line_subtotal(self) -> Decimal | None:
         if self.order_item is None:
             return None
-        return round(self.order_item.unit_price * self.quantity, 2)
+        return quantize_money(self.order_item.unit_price * self.quantity)
 
     def __repr__(self) -> str:
         return (

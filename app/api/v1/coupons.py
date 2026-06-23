@@ -79,7 +79,7 @@ async def validate_coupon(
     return CouponValidateResponse(
         code=applied.coupon.code,
         discount_type=applied.coupon.discount_type,  # type: ignore[arg-type]
-        discount_amount=applied.saving,
+        discount_amount=float(applied.saving),
         is_automatic=applied.coupon.is_automatic,
         free_shipping=applied.free_shipping,
         currency=payload.currency,

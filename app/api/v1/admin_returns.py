@@ -23,6 +23,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_admin, get_db
+from app.core.money import ZERO_MONEY, quantize_money
 from app.crud import refund as crud_refund
 from app.crud import return_request as crud_return_request
 from app.crud.refund import (
@@ -213,7 +214,7 @@ async def refund_return(
     items = [(item.order_item_id, item.quantity) for item in ret.items]
     amount = payload.amount
     if amount is None:
-        amount = round(sum((item.line_subtotal or 0.0) for item in ret.items), 2)
+        amount = quantize_money(sum((item.line_subtotal or ZERO_MONEY) for item in ret.items))
     order = ret.order
 
     try:

@@ -31,10 +31,12 @@ v3 TODO in ``app/services/invoice.py``.
 from __future__ import annotations
 
 import math
+from decimal import Decimal
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload, selectinload
 
+from app.core.money import quantize_money
 from app.crud.corrective_invoice import corrective_invoice as crud_corrective
 from app.crud.inventory import inventory as crud_inventory
 from app.crud.invoice import invoice as crud_invoice
@@ -75,7 +77,7 @@ class OrderNotRefundableError(Exception):
 class RefundOverError(Exception):
     """Cumulative refund amount would exceed ``order.total``."""
 
-    def __init__(self, amount: float, prior_total: float, order_total: float) -> None:
+    def __init__(self, amount: Decimal, prior_total: Decimal, order_total: Decimal) -> None:
         self.amount = amount
         self.prior_total = prior_total
         self.order_total = order_total
@@ -165,7 +167,7 @@ class CRUDRefund:
         db: Session,
         *,
         order: Order,
-        amount: float,
+        amount: Decimal | float,
         reason: str,
         note: str | None,
         restock: bool,
@@ -216,15 +218,16 @@ class CRUDRefund:
         # we don't depend on ``order.refunds`` being eagerly loaded or back-populated
         # by a prior refund in the same session (the v1 path set ``Refund.order_id``
         # by FK int, which doesn't trigger ``back_populates``).
-        prior_total_raw: float | None = (
+        prior_total_raw: Decimal | None = (
             db.query(func.coalesce(func.sum(Refund.amount), 0.0))
             .filter(Refund.order_id == order.id)
             .scalar()
         )
-        prior_total = round(prior_total_raw or 0.0, 2)
-        amount_r = round(amount, 2)
-        if prior_total + amount_r > round(order.total, 2) + _AMOUNT_TOL:
-            raise RefundOverError(amount_r, prior_total, round(order.total, 2))
+        prior_total = quantize_money(prior_total_raw or 0)
+        amount_r = quantize_money(amount)
+        order_total = quantize_money(order.total)
+        if prior_total + amount_r > order_total + Decimal(str(_AMOUNT_TOL)):
+            raise RefundOverError(amount_r, prior_total, order_total)
 
         # Per-line validation (only when items provided).
         if items_list:
@@ -316,9 +319,11 @@ class CRUDRefund:
         if original_invoice is not None:
             crud_corrective.issue_for_refund(db, refund=refund, original_invoice=original_invoice)
 
-        # Status flip based on the new cumulative total.
+        # Status flip based on the new cumulative total. math.isclose needs
+        # floats (its default rel_tol multiply rejects Decimal), so compare the
+        # float views — this is an equality/tolerance check, not money math.
         new_cumulative = prior_total + amount_r
-        if math.isclose(new_cumulative, round(order.total, 2), abs_tol=_AMOUNT_TOL):
+        if math.isclose(float(new_cumulative), float(order_total), abs_tol=_AMOUNT_TOL):
             order.status = OrderStatus.REFUNDED
         else:
             order.status = OrderStatus.PARTIALLY_REFUNDED

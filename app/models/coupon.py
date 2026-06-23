@@ -22,15 +22,16 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
-    Float,
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     text,
@@ -103,9 +104,9 @@ class Coupon(BaseModel):
     code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     description: Mapped[str | None] = mapped_column(Text)
     discount_type: Mapped[str] = mapped_column(String(16))
-    value: Mapped[float] = mapped_column(Float)
+    value: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     currency: Mapped[str | None] = mapped_column(String(3))
-    min_order_amount: Mapped[float | None] = mapped_column(Float)
+    min_order_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     # Global cap across all customers (NULL = unlimited).
     max_uses: Mapped[int | None] = mapped_column(Integer)
     # Per-customer cap (NULL = unlimited per user). Independent of max_uses, so a

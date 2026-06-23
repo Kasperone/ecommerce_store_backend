@@ -7,6 +7,7 @@ exercised in isolation from the route/session layer.
 from __future__ import annotations
 
 import datetime as dt
+from decimal import Decimal
 
 from app.models.order import Order, OrderItem, OrderStatus
 from app.models.user import User
@@ -96,9 +97,9 @@ def test_decompose_gross_23pct():
 def test_decompose_gross_rounding_edge():
     # 100 gross @ 23% → 81.30 net + 18.70 VAT, summing back exactly.
     net, vat = decompose_gross(100.00, 23)
-    assert net == 81.30
-    assert vat == 18.70
-    assert round(net + vat, 2) == 100.00
+    assert net == Decimal("81.30")
+    assert vat == Decimal("18.70")
+    assert net + vat == Decimal("100.00")
 
 
 def test_decompose_gross_zero_rate():
