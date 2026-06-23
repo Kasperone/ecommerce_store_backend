@@ -91,6 +91,14 @@ class Order(BaseModel):
     )
     coupon_code: Mapped[str | None] = mapped_column(String(64))
 
+    # B2C faktura request ("Chcę fakturę / na firmę"). A consumer (or guest)
+    # buying for their business supplies a NIP + the buyer name to print on the
+    # faktura; both NULL on a plain consumer order. The NIP is checksum-validated
+    # at the API boundary (``app/core/validators.py``). When set, these take
+    # precedence over the user/guest identity in the invoice buyer block.
+    invoice_nip: Mapped[str | None] = mapped_column(String(16))
+    invoice_name: Mapped[str | None] = mapped_column(String(200))
+
     # Shipping address
     shipping_address: Mapped[str] = mapped_column(Text)
     shipping_city: Mapped[str] = mapped_column(String(100))
@@ -180,6 +188,9 @@ class OrderItem(BaseModel):
     quantity: Mapped[int] = mapped_column(Integer)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     total_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    # VAT rate (%) snapshotted from the product at purchase time, so a faktura
+    # reissued after the product's rate changes still shows what was sold.
+    vat_rate: Mapped[int] = mapped_column(Integer, default=23, server_default="23")
 
     # Relationships
     order: Mapped["Order"] = relationship("Order", back_populates="items")

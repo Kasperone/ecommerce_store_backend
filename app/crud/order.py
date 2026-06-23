@@ -262,6 +262,7 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
                     quantity=line.quantity,
                     unit_price=unit_price,
                     total_price=line_total,
+                    vat_rate=product.vat_rate,
                 )
             )
 
@@ -371,13 +372,15 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             order_number=self._generate_order_number(db),
             status=OrderStatus.PENDING,
             subtotal=subtotal,
-            tax=0.0,
+            tax=ZERO_MONEY,
             shipping=shipping_amount,
             discount=discount,
             total=total,
             currency=currency,
             coupon_id=redeemed_coupon.id if redeemed_coupon is not None else None,
             coupon_code=redeemed_coupon.code if redeemed_coupon is not None else None,
+            invoice_nip=obj_in.invoice_nip,
+            invoice_name=obj_in.invoice_name,
             shipping_address=obj_in.shipping_address,
             shipping_city=obj_in.shipping_city,
             shipping_postal_code=obj_in.shipping_postal_code,
