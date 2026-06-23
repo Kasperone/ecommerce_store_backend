@@ -82,6 +82,9 @@ class ProductBase(BaseSchema):
     price_usd: Annotated[float | None, Field(gt=0)] = None
     price_pln: Annotated[float | None, Field(gt=0)] = None
     price_eur: Annotated[float | None, Field(gt=0)] = None
+    # Polish VAT rate (%) — 23 standard, 8/5/0 for reduced-rate goods. Drives
+    # per-line faktura VAT decomposition; defaults to standard.
+    vat_rate: Annotated[int, Field(ge=0, le=100)] = 23
 
     # Stock can go negative at runtime when ``allow_backorder=True`` and an
     # order is placed for more units than are on hand (see
@@ -162,6 +165,7 @@ class ProductUpdate(BaseSchema):
     price_usd: Annotated[float | None, Field(gt=0)] = None
     price_pln: Annotated[float | None, Field(gt=0)] = None
     price_eur: Annotated[float | None, Field(gt=0)] = None
+    vat_rate: Annotated[int | None, Field(ge=0, le=100)] = None
 
     # `stock` is intentionally NOT updatable here: under multi-warehouse it is the
     # maintained sum of per-warehouse levels, mutated only through the inventory

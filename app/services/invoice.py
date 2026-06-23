@@ -99,6 +99,23 @@ def _buyer_lines(order: Order, labels: dict[str, str]) -> list[str]:
     """
     user = order.user
     buyer = [f"<b>{labels['bill_to']}</b>"]
+    # B2C "na firmę": when the buyer requested a faktura on a NIP, that identity
+    # (company name + NIP + the order's shipping address) takes precedence over
+    # the account/guest identity — for both guest and authenticated orders.
+    if order.invoice_nip:
+        if order.invoice_name:
+            buyer.append(_esc(order.invoice_name))
+        buyer.append(f"{labels['tax_id']}: {_esc(order.invoice_nip)}")
+        buyer.append(_esc(order.shipping_address))
+        addr_city = " ".join(p for p in (order.shipping_postal_code, order.shipping_city) if p)
+        if addr_city:
+            buyer.append(_esc(addr_city))
+        if order.shipping_country:
+            buyer.append(_esc(order.shipping_country))
+        contact = order.guest_email if user is None else user.email
+        if contact:
+            buyer.append(_esc(contact))
+        return buyer
     if user is None:
         if order.guest_email:
             buyer.append(_esc(order.guest_email))
@@ -193,6 +210,69 @@ def decompose_gross(total_gross: Decimal | float, vat_rate_pct: int) -> tuple[De
     net = quantize_money(gross / (1 + Decimal(vat_rate_pct) / 100))
     vat = quantize_money(gross - net)
     return net, vat
+
+
+@dataclass(frozen=True)
+class VatGroup:
+    """One VAT-rate group on a faktura: the rate (%) and its net / VAT / gross."""
+
+    rate: int
+    net: Decimal
+    vat: Decimal
+    gross: Decimal
+
+
+def compute_vat_breakdown(order: Order, shipping_vat_rate: int) -> list[VatGroup]:
+    """Per-rate VAT breakdown for a (possibly mixed-rate) faktura.
+
+    Goods lines are grouped by their snapshotted ``vat_rate`` (a line with no
+    snapshot falls back to ``shipping_vat_rate`` — the store standard). The
+    goods-only order discount is allocated across groups in proportion to each
+    group's gross, the last group absorbing the rounding remainder so the parts
+    sum to the discount exactly. Shipping is its own group at ``shipping_vat_rate``
+    (delivery is a standard-rate service in PL). Each group's discounted gross is
+    split into net + VAT, so every group reconciles and the group grosses sum to
+    ``order.total``. Returned sorted by rate descending (23, 8, 5, 0) — the
+    conventional faktura order.
+
+    For a single-rate order the one group's gross equals ``order.total``, so the
+    decomposition is identical to ``decompose_gross(order.total, rate)``.
+    """
+    goods_gross: dict[int, Decimal] = {}
+    for item in order.items:
+        rate = item.vat_rate if item.vat_rate is not None else shipping_vat_rate
+        goods_gross[rate] = goods_gross.get(rate, ZERO_MONEY) + quantize_money(item.total_price)
+
+    subtotal = quantize_money(sum(goods_gross.values(), ZERO_MONEY))
+    discount = quantize_money(order.discount or ZERO_MONEY)
+
+    discounted: dict[int, Decimal] = {}
+    rates = sorted(goods_gross, reverse=True)
+    allocated = ZERO_MONEY
+    for i, rate in enumerate(rates):
+        gross = goods_gross[rate]
+        if discount > 0 and subtotal > 0:
+            if i == len(rates) - 1:
+                share = discount - allocated  # last group absorbs the remainder
+            else:
+                share = quantize_money(discount * gross / subtotal)
+                allocated += share
+        else:
+            share = ZERO_MONEY
+        discounted[rate] = gross - share
+
+    shipping = quantize_money(order.shipping or ZERO_MONEY)
+    if shipping > 0:
+        discounted[shipping_vat_rate] = discounted.get(shipping_vat_rate, ZERO_MONEY) + shipping
+
+    groups: list[VatGroup] = []
+    for rate in sorted(discounted, reverse=True):
+        gross = discounted[rate]
+        if gross <= 0:
+            continue
+        net, vat = decompose_gross(gross, rate)
+        groups.append(VatGroup(rate=rate, net=net, vat=vat, gross=gross))
+    return groups
 
 
 def derive_proforma_number(order: Order) -> str:
@@ -457,15 +537,16 @@ def build_invoice_pdf(
         )
     )
 
-    # Totals — gross-inclusive VAT decomposition when the rate is set.
-    net, vat = decompose_gross(order.total, store.vat_rate)
+    # Totals. When the seller is a VAT payer (store.vat_rate > 0) the faktura
+    # shows a per-rate net/VAT breakdown (a mixed-rate cart bills 23/8/5/0
+    # separately); for a single-rate cart this collapses to one net/VAT pair
+    # whose values equal decompose_gross(order.total, rate).
     totals_rows = [
         [labels["subtotal"], money(order.subtotal)],
     ]
     # Coupon discount line (only when one was applied) — shown as a negative
-    # amount between subtotal and shipping. The VAT decomposition above already
-    # works off the discounted ``order.total``, so net/VAT stay internally
-    # consistent.
+    # amount between subtotal and shipping. The per-rate breakdown allocates the
+    # discount across groups, so net/VAT stay internally consistent.
     discount = order.discount or ZERO_MONEY
     if discount > 0:
         discount_label = labels["discount"]
@@ -474,8 +555,9 @@ def build_invoice_pdf(
         totals_rows.append([discount_label, f"-{money(discount)}"])
     totals_rows.append([labels["shipping"], money(order.shipping)])
     if store.vat_rate > 0:
-        totals_rows.append([labels["net"], money(net)])
-        totals_rows.append([f"{labels['vat']} ({store.vat_rate}%)", money(vat)])
+        for group in compute_vat_breakdown(order, store.vat_rate):
+            totals_rows.append([f"{labels['net']} ({group.rate}%)", money(group.net)])
+            totals_rows.append([f"{labels['vat']} ({group.rate}%)", money(group.vat)])
     totals_rows.append([labels["total_due"], money(order.total)])
     last = len(totals_rows) - 1
     totals_tbl = Table(totals_rows, colWidths=[doc.width * 0.28, doc.width * 0.22])
