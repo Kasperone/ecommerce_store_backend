@@ -107,7 +107,11 @@ async def quote_shipping(
                 pricing_kind=_classify_pricing(
                     rate.amount, rate.free_above_subtotal, rate.tiers, rate.weight_tiers
                 ),
-                free_above_subtotal=rate.free_above_subtotal,
+                free_above_subtotal=(
+                    float(rate.free_above_subtotal)
+                    if rate.free_above_subtotal is not None
+                    else None
+                ),
             )
         )
     return ShippingQuoteResponse(

@@ -36,10 +36,12 @@ from __future__ import annotations
 from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from app.core.money import ZERO_MONEY, quantize_money
 from app.models.coupon import Coupon, CouponDiscountType, CouponRedemption
 from app.schemas.coupon import CouponCreate, CouponUpdate
 
@@ -61,23 +63,30 @@ class CouponRedemptionError(Exception):
         super().__init__(message)
 
 
-def compute_discount(coupon: Coupon, subtotal: float) -> float:
+def compute_discount(coupon: Coupon, subtotal: Decimal | float) -> Decimal:
     """Discount amount a coupon yields against ``subtotal`` (goods only).
 
     Percent coupons take ``value`` percent of the subtotal; fixed coupons take
     ``value`` units of their currency but never more than the subtotal (a coupon
     can zero an order but never make the total negative). free_shipping coupons
     never discount the goods — their saving is the shipping line (see
-    ``effective_saving``), so this returns 0. Rounded to 2 decimals.
+    ``effective_saving``), so this returns 0. Quantized to 2 decimals.
+
+    ``subtotal`` may arrive as a wire ``float`` (preview endpoint) or a money
+    ``Decimal`` (checkout); it's quantized to a ``Decimal`` here so the math is
+    always exact base-10.
     """
     if coupon.discount_type == CouponDiscountType.FREE_SHIPPING.value:
-        return 0.0
+        return ZERO_MONEY
+    subtotal = quantize_money(subtotal)
     if coupon.discount_type == "percent":
-        return round(subtotal * coupon.value / 100, 2)
-    return round(min(coupon.value, subtotal), 2)
+        return quantize_money(subtotal * coupon.value / 100)
+    return quantize_money(min(coupon.value, subtotal))
 
 
-def effective_saving(coupon: Coupon, subtotal: float, shipping: float) -> float:
+def effective_saving(
+    coupon: Coupon, subtotal: Decimal | float, shipping: Decimal | float
+) -> Decimal:
     """What a coupon is worth on a cart with this ``subtotal`` + ``shipping``.
 
     percent/fixed → the goods discount (``compute_discount``); free_shipping →
@@ -86,7 +95,7 @@ def effective_saving(coupon: Coupon, subtotal: float, shipping: float) -> float:
     and a goods-discount candidate wins the pick instead).
     """
     if coupon.discount_type == CouponDiscountType.FREE_SHIPPING.value:
-        return round(shipping, 2)
+        return quantize_money(shipping)
     return compute_discount(coupon, subtotal)
 
 
@@ -103,7 +112,7 @@ class AppliedDiscount:
     """
 
     coupon: Coupon
-    saving: float
+    saving: Decimal
     free_shipping: bool
     is_manual: bool
 
@@ -198,11 +207,11 @@ class CRUDCoupon:
         db: Session,
         *,
         code: str,
-        subtotal: float,
+        subtotal: Decimal | float,
         currency: str,
         user_id: int | None = None,
         now: datetime | None = None,
-    ) -> tuple[Coupon, float]:
+    ) -> tuple[Coupon, Decimal]:
         """Validate a coupon for use against ``subtotal`` in ``currency``.
 
         Returns ``(coupon, discount)`` when every eligibility rule passes, else
@@ -223,7 +232,7 @@ class CRUDCoupon:
         db: Session,
         *,
         coupon: Coupon,
-        subtotal: float,
+        subtotal: Decimal | float,
         currency: str,
         user_id: int | None = None,
         now: datetime | None = None,
@@ -303,8 +312,8 @@ class CRUDCoupon:
         db: Session,
         *,
         code: str | None,
-        subtotal: float,
-        shipping: float,
+        subtotal: Decimal | float,
+        shipping: Decimal | float,
         currency: str,
         user_id: int | None = None,
         now: datetime | None = None,

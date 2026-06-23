@@ -7,6 +7,8 @@ PATCH status workflow, and the cancel endpoint. Foundational orders plan:
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 from sqlalchemy.orm import Session
 
@@ -148,7 +150,7 @@ def _enable_weight_tiers_on_seeded_rate(
         .first()
     )
     assert rate is not None, "Seeded Test Shipping rate missing"
-    rate.amount = 99.99
+    rate.amount = Decimal("99.99")
     rate.weight_tiers = bands
     db_session.commit()
 

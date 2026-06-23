@@ -26,14 +26,15 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
-    Float,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     Text,
 )
@@ -101,8 +102,8 @@ class Quote(BaseModel):
     currency: Mapped[str] = mapped_column(String(3))
     valid_until: Mapped[datetime | None] = mapped_column(DateTime)
     notes: Mapped[str | None] = mapped_column(Text)
-    subtotal: Mapped[float] = mapped_column(Float, default=0.0)
-    total: Mapped[float] = mapped_column(Float, default=0.0)
+    subtotal: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    total: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
     # Conversion marker + double-convert guard: set to the created order's id when
     # the quote is converted into a pending order. ON DELETE SET NULL so deleting
     # the order leaves the quote intact (it just becomes convertible again). The
@@ -181,8 +182,8 @@ class QuoteItem(BaseModel):
     )
     description: Mapped[str] = mapped_column(String(500))
     quantity: Mapped[int] = mapped_column(Integer)
-    unit_price: Mapped[float] = mapped_column(Float)
-    line_total: Mapped[float] = mapped_column(Float)
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    line_total: Mapped[Decimal] = mapped_column(Numeric(12, 2))
 
     quote: Mapped[Quote] = relationship("Quote", back_populates="items")
 

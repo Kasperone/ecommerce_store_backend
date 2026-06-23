@@ -17,6 +17,7 @@ from datetime import UTC, date, datetime, time, timedelta
 
 from sqlalchemy.orm import Query, Session, selectinload
 
+from app.core.money import ZERO_MONEY, quantize_money
 from app.crud import coupon as crud_coupon
 from app.crud.base import CRUDBase
 from app.crud.coupon import AppliedDiscount, CouponRedemptionError
@@ -222,7 +223,7 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             raise RuntimeError("No default warehouse configured; run migrations")
 
         items: list[OrderItem] = []
-        subtotal = 0.0
+        subtotal = ZERO_MONEY
         # Validate against a local running remainder so duplicate lines for the
         # same (product, variant) pair are checked against the not-yet-committed
         # default-warehouse level. The real decrement + ledger write happens
@@ -247,7 +248,7 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             unit_price = (
                 variant.get_price(currency) if variant is not None else product.get_price(currency)
             )
-            line_total = round(unit_price * line.quantity, 2)
+            line_total = quantize_money(unit_price * line.quantity)
             subtotal += line_total
             items.append(
                 OrderItem(
@@ -264,7 +265,7 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
                 )
             )
 
-        subtotal = round(subtotal, 2)
+        subtotal = quantize_money(subtotal)
 
         # Shipping resolution: validate the chosen method has a rate for the
         # caller's country+currency, then compute the amount via the central
@@ -307,9 +308,8 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             for line in obj_in.items
         )
         billable_kg = billable_weight_kg(total_weight, total_volume_cm3, ship_rate.zone.dim_divisor)
-        shipping_amount = round(
+        shipping_amount = quantize_money(
             crud_shipping_rate.apply_shipping_rate(ship_rate, subtotal, weight_kg=billable_kg),
-            2,
         )
 
         # Discount resolution: ``pick_best`` is the single source of truth for
@@ -348,17 +348,17 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
 
         # percent/fixed discount the goods subtotal; free_shipping zeroes the
         # shipping line instead (order.discount stays 0 so the documented
-        # invariant ``total == round(subtotal - discount + shipping, 2)`` holds
-        # and the invoice/CSV render a 0.00 shipping line, no bogus discount row).
-        discount = 0.0
+        # invariant ``total == quantize_money(subtotal - discount + shipping)``
+        # holds and the invoice/CSV render a 0.00 shipping line, no bogus discount row).
+        discount = ZERO_MONEY
         redeemed_coupon = applied.coupon if applied is not None else None
         if applied is not None:
             if applied.free_shipping:
-                shipping_amount = 0.0
+                shipping_amount = ZERO_MONEY
             else:
                 discount = applied.saving
 
-        total = round(subtotal - discount + shipping_amount, 2)
+        total = quantize_money(subtotal - discount + shipping_amount)
 
         is_guest = user_id is None
         order = Order(

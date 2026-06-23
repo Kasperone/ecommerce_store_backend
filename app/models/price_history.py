@@ -19,15 +19,16 @@ covers *what comparison to show legally*.
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
-    Float,
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -84,7 +85,7 @@ class PriceHistory(BaseModel):
         Integer, ForeignKey("product_variants.id", ondelete="CASCADE"), index=True
     )
     currency: Mapped[str] = mapped_column(String(3))
-    price: Mapped[float] = mapped_column(Float)
+    price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
     effective_from: Mapped[datetime] = mapped_column(DateTime)
 
     product: Mapped[Product] = relationship("Product")

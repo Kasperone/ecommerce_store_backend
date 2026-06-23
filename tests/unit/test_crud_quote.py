@@ -11,6 +11,8 @@ layer trusts a validated ``QuoteCreate`` / ``QuoteUpdate``.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 from sqlalchemy.orm import Session
 
@@ -76,10 +78,10 @@ def test_create_rounds_to_two_decimals(db_session: Session, company_factory):
         items=[QuoteItemCreate(description="Odd", quantity=3, unit_price=0.1)],
     )
     created = crud_quote.create_with_items(db_session, obj_in=obj_in)
-    # 3 * 0.1 = 0.30000000000000004 → rounded to 0.3
-    assert created.items[0].line_total == 0.3
-    assert created.subtotal == 0.3
-    assert created.total == 0.3
+    # 3 * 0.1 drifts to 0.30000000000000004 in float; exact Decimal math gives 0.30.
+    assert created.items[0].line_total == Decimal("0.30")
+    assert created.subtotal == Decimal("0.30")
+    assert created.total == Decimal("0.30")
 
 
 def test_create_stores_optional_product_id(db_session: Session, company_factory, product_factory):

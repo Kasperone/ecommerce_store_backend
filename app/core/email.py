@@ -1,4 +1,5 @@
 import logging
+from decimal import Decimal
 from html import escape as html_escape
 from typing import TYPE_CHECKING
 
@@ -642,7 +643,7 @@ def render_order_email_body(
     currency = order.currency
     labels = _ORDER_EMAIL_LABELS.get(lang, _ORDER_EMAIL_LABELS["en"])
 
-    def money(amount: float) -> str:
+    def money(amount: Decimal) -> str:
         return f"{amount:,.2f} {currency}"
 
     item_rows = "".join(

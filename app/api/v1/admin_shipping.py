@@ -20,6 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_admin, get_db
+from app.core.money import as_float
 from app.crud import shipping_method as crud_shipping_method
 from app.crud import shipping_rate as crud_shipping_rate
 from app.crud import shipping_zone as crud_shipping_zone
@@ -82,8 +83,8 @@ def _rate_list_item(rate: ShippingRate) -> ShippingRateListItem:
         method_id=rate.method_id,
         method_name=rate.method.name,
         currency=rate.currency,
-        amount=rate.amount,
-        free_above_subtotal=rate.free_above_subtotal,
+        amount=float(rate.amount),
+        free_above_subtotal=as_float(rate.free_above_subtotal),
         tiers=tier_models,
         weight_tiers=weight_tier_models,
         pricing_kind=_classify_pricing(

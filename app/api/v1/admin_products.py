@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.products import _reconcile_product_tags
 from app.core.dependencies import get_current_admin, get_db
+from app.core.money import as_float
 from app.crud import category as crud_category
 from app.crud import collection as crud_collection
 from app.crud import inventory as crud_inventory
@@ -103,9 +104,9 @@ async def export_products(
             name_pl=product.name_pl,
             description=product.description,
             description_pl=product.description_pl,
-            price_usd=product.price_usd,
-            price_pln=product.price_pln,
-            price_eur=product.price_eur,
+            price_usd=as_float(product.price_usd),
+            price_pln=as_float(product.price_pln),
+            price_eur=as_float(product.price_eur),
             stock=product.stock,
             low_stock_threshold=product.low_stock_threshold,
             allow_backorder=product.allow_backorder,

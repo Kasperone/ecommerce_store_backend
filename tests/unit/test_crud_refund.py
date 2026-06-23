@@ -10,6 +10,8 @@ order has a faktura. Mirrors the shape of ``tests/unit/test_crud_inventory.py``
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 
 from app.crud import refund as crud_refund
@@ -206,7 +208,7 @@ def test_full_refund_accepted_even_with_rounding(db_session, user_factory, produ
     admin = user_factory(email="admin-rounding@example.com")
     product = product_factory(stock=10, price_usd=19.995)
     order = _make_order(db_session, user=user, product=product, status=OrderStatus.PAID)
-    drifted = order.total + 0.001  # within rounding tolerance
+    drifted = order.total + Decimal("0.001")  # within rounding tolerance
 
     refund = crud_refund.create_for_order(
         db_session,

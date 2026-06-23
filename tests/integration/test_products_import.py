@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import csv
 import io
+from decimal import Decimal
 
 import pytest
 
@@ -132,7 +133,7 @@ async def test_apply_creates_new_product(client, user_factory, db_session):
     created = db_session.query(Product).filter_by(slug="imp-created").one()
     assert created.name == "Imported Widget"
     assert created.name_pl == "Widżet"
-    assert created.price_usd == 19.99
+    assert created.price_usd == Decimal("19.99")
     # OMNIBUS: a price-history row exists for the created product.
     assert db_session.query(PriceHistory).filter_by(product_id=created.id).count() >= 1
 

@@ -13,6 +13,7 @@ boundary, same convention as the rest of the CRUD layer (``CRUDBase``,
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import exists, func
@@ -401,7 +402,7 @@ class CRUDShippingRate(CRUDBase[ShippingRate, ShippingRateCreate, ShippingRateUp
 
     @staticmethod
     def apply_shipping_rate(
-        rate: ShippingRate, subtotal: float, *, weight_kg: float = 0.0
+        rate: ShippingRate, subtotal: Decimal | float, *, weight_kg: float = 0.0
     ) -> float:
         """Pure resolver: free-above → weight-tiers → subtotal-tiers → flat amount.
 
@@ -422,6 +423,11 @@ class CRUDShippingRate(CRUDBase[ShippingRate, ShippingRateCreate, ShippingRateUp
         thread cart weight (admin previews, unit tests with subtotal-only
         rates) keep working with the default of 0.
         """
+        # The resolver picks a pricing amount; money quantization is owned by
+        # the order layer (``quantize_money`` on the result) and the wire by
+        # ``float``. Returning ``float`` keeps this leaf pure of Decimal plumbing
+        # (tier amounts arrive as JSONB numbers); ``rate.amount`` is a Decimal
+        # column so it's cast on the way out.
         if rate.free_above_subtotal is not None and subtotal >= rate.free_above_subtotal:
             return 0.0
         weight_tiers = rate.weight_tiers
@@ -446,7 +452,7 @@ class CRUDShippingRate(CRUDBase[ShippingRate, ShippingRateCreate, ShippingRateUp
                     break
             if chosen_amount is not None:
                 return chosen_amount
-        return rate.amount
+        return float(rate.amount)
 
     @staticmethod
     def _serialise_tiers(
