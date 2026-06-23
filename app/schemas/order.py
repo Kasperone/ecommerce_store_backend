@@ -88,6 +88,11 @@ class OrderCreate(OrderBase):
     # is rejected); whitespace/dashes are normalized to digits on the way in.
     invoice_nip: str | None = Field(default=None, max_length=16)
     invoice_name: str | None = Field(default=None, max_length=200)
+    # InPost Paczkomat selection from the storefront Geowidget. Required by the
+    # order service when the chosen shipping method is an InPost locker (422
+    # otherwise); ignored for courier-to-address methods.
+    inpost_point_id: str | None = Field(default=None, max_length=32)
+    inpost_point_name: str | None = Field(default=None, max_length=255)
 
     @field_validator("invoice_nip", mode="before")
     @classmethod
@@ -155,6 +160,10 @@ class OrderResponse(OrderBase, TimestampSchema):
     # Shipping method snapshot (null on pre-shipping legacy orders)
     shipping_method_id: int | None = None
     shipping_method_name: str | None = None
+
+    # InPost Paczkomat selection (null for courier-to-address orders)
+    inpost_point_id: str | None = None
+    inpost_point_name: str | None = None
 
     # Shipment tracking (null until the admin records it at/after ship time)
     shipping_carrier: str | None = None

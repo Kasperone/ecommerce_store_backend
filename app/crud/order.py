@@ -34,6 +34,7 @@ from app.models.inventory_movement import InventoryMovementReason
 from app.models.order import Order, OrderItem, OrderStatus
 from app.models.product import Product
 from app.models.product_variant import ProductVariant
+from app.models.shipping import ShippingMethod
 from app.models.user import User, UserRole
 from app.schemas.order import OrderCreate, OrderUpdate
 from app.services.dimensional_weight import billable_weight_kg, line_volume_cm3
@@ -93,6 +94,23 @@ class VariantUnavailableError(Exception):
     def __init__(self, variant_id: int) -> None:
         self.variant_id = variant_id
         super().__init__(f"Variant {variant_id} is unavailable")
+
+
+class InPostPointRequiredError(Exception):
+    """An InPost-locker shipping method was chosen without a Paczkomat point."""
+
+    def __init__(self) -> None:
+        super().__init__("Select an InPost Paczkomat point for this shipping method")
+
+
+def is_inpost_locker_method(method: ShippingMethod) -> bool:
+    """True when a shipping method is an InPost parcel-locker service.
+
+    Keyed on the admin-set ``code`` convention (``inpost_paczkomat`` /
+    ``inpost_locker`` …) — the storefront shows the Geowidget point-picker for
+    these and the order must carry the chosen point.
+    """
+    return bool(method.code) and method.code.lower().startswith("inpost")
 
 
 class InsufficientStockError(Exception):
@@ -296,6 +314,11 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
                 method_id=obj_in.shipping_method_id,
             )
         ship_method, ship_rate = method_rate
+        # InPost lockers require a chosen Paczkomat point (the storefront
+        # Geowidget supplies it); reject a locker order without one.
+        is_locker = is_inpost_locker_method(ship_method)
+        if is_locker and not (obj_in.inpost_point_id or "").strip():
+            raise InPostPointRequiredError()
         total_weight = sum(
             (products[line.product_id].weight_kg or 0.0) * line.quantity for line in obj_in.items
         )
@@ -387,6 +410,8 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             shipping_country=obj_in.shipping_country,
             shipping_method_id=ship_method.id,
             shipping_method_name=ship_method.name,
+            inpost_point_id=(obj_in.inpost_point_id or None) if is_locker else None,
+            inpost_point_name=(obj_in.inpost_point_name or None) if is_locker else None,
             notes=obj_in.notes,
             items=items,
         )
