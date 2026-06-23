@@ -93,6 +93,10 @@ class OrderCreate(OrderBase):
     # otherwise); ignored for courier-to-address methods.
     inpost_point_id: str | None = Field(default=None, max_length=32)
     inpost_point_name: str | None = Field(default=None, max_length=255)
+    # Cash-on-delivery (pobranie). Only ``"cod"`` is accepted at create — online
+    # methods (stripe/payu) are chosen AFTER create on the payment page, never
+    # here. ``None`` = a normal online order (pay on the success page).
+    payment_method: Literal["cod"] | None = None
 
     @field_validator("invoice_nip", mode="before")
     @classmethod
