@@ -30,6 +30,7 @@ from app.crud import return_request as crud_return_request
 from app.crud import store_config as crud_store_config
 from app.crud.coupon import CouponRedemptionError
 from app.crud.order import (
+    InPostPointRequiredError,
     InsufficientStockError,
     ProductUnavailableError,
     VariantRequiredError,
@@ -176,6 +177,11 @@ async def create_order(
             detail=str(exc),
         ) from exc
     except ShippingRateUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    except InPostPointRequiredError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),

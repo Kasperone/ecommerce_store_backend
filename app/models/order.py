@@ -117,6 +117,13 @@ class Order(BaseModel):
     )
     shipping_method_name: Mapped[str | None] = mapped_column(String(80))
 
+    # InPost Paczkomat (parcel locker) selection — set when the chosen method is
+    # an InPost locker (the storefront Geowidget yields the point); NULL for
+    # courier-to-address. ``inpost_point_id`` is the locker code (e.g. KRA010);
+    # ``inpost_point_name`` snapshots its human address for the summary/label.
+    inpost_point_id: Mapped[str | None] = mapped_column(String(32))
+    inpost_point_name: Mapped[str | None] = mapped_column(String(255))
+
     # Shipment tracking (all nullable — recorded by the admin when the order
     # ships, editable afterwards; pre-shipping orders and untracked carriers
     # carry none). ``tracking_url`` is stored verbatim when the admin provides
