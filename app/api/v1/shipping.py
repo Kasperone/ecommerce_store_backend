@@ -95,6 +95,8 @@ async def quote_shipping(
                 name=method.name,
                 code=method.code,
                 description=method.description,
+                name_pl=method.name_pl,
+                description_pl=method.description_pl,
                 sort_order=method.sort_order,
                 amount=round(
                     crud_shipping_rate.apply_shipping_rate(rate, subtotal, weight_kg=billable_kg),
