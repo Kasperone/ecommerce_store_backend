@@ -86,6 +86,39 @@ async def test_quote_returns_resolved_free_above(client, db_session):
     assert fa["is_free"] is True
 
 
+async def test_quote_carries_per_locale_method_copy(client, db_session):
+    """name_pl/description_pl (F-PLD-3) flow through to the storefront quote so
+    the PL checkout localizes the method without a separate lookup. EN copy is
+    retained for the en locale / fallback."""
+    z = crud_shipping_zone.create_with_countries(
+        db_session, obj_in=ShippingZoneCreate(name="PL Locale Zone", country_codes=["CZ"])
+    )
+    db_session.commit()
+    m = crud_shipping_method.create(
+        db_session,
+        obj_in=ShippingMethodCreate(
+            name="Standard",
+            code="pl-std",
+            description="Standard parcel delivery",
+            name_pl="Kurier standardowy",
+            description_pl="Dostawa kurierska (2-5 dni roboczych)",
+        ),
+    )
+    db_session.commit()
+    crud_shipping_rate.create(
+        db_session,
+        obj_in=ShippingRateCreate(zone_id=z.id, method_id=m.id, currency="PLN", amount=12.99),
+    )
+    db_session.commit()
+
+    resp = await client.get("/api/v1/shipping/quote?country=CZ&currency=PLN&subtotal=50")
+    assert resp.status_code == 200
+    method = next(x for x in resp.json()["methods"] if x["code"] == "pl-std")
+    assert method["name_pl"] == "Kurier standardowy"
+    assert method["description_pl"] == "Dostawa kurierska (2-5 dni roboczych)"
+    assert method["name"] == "Standard"
+
+
 async def test_quote_returns_resolved_tiered(client, db_session):
     z = crud_shipping_zone.create_with_countries(
         db_session, obj_in=ShippingZoneCreate(name="Tiered Zone", country_codes=["HU"])
