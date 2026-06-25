@@ -96,3 +96,54 @@ async def test_put_clears_low_stock_threshold(client, user_factory, product_fact
     )
     assert response.status_code == 200, response.text
     assert response.json()["low_stock_threshold"] is None
+
+
+# ---------------------------------------------------------------------------
+# Whitespace-only name rejection (finding B-1) — ``Field(min_length=1)`` alone
+# accepts ``"   "``; ``ProductName`` adds ``strip_whitespace`` so a blank-only
+# name 422s and a padded name is stored trimmed. Covers create + update + name_pl.
+# ---------------------------------------------------------------------------
+
+
+async def test_post_whitespace_only_name_returns_422(client, user_factory):
+    headers = _admin_headers(user_factory)
+    response = await client.post(
+        "/api/v1/products/",
+        json={"name": "   ", "slug": "ws-name", "price_usd": 10.0},
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+
+
+async def test_put_whitespace_only_name_returns_422(client, user_factory, product_factory):
+    headers = _admin_headers(user_factory)
+    product = product_factory()
+    response = await client.put(
+        f"/api/v1/products/{product.id}",
+        json={"name": "   "},
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+
+
+async def test_put_whitespace_only_name_pl_returns_422(client, user_factory, product_factory):
+    headers = _admin_headers(user_factory)
+    product = product_factory()
+    response = await client.put(
+        f"/api/v1/products/{product.id}",
+        json={"name_pl": "   "},
+        headers=headers,
+    )
+    assert response.status_code == 422, response.text
+
+
+async def test_put_padded_name_is_trimmed(client, user_factory, product_factory):
+    headers = _admin_headers(user_factory)
+    product = product_factory()
+    response = await client.put(
+        f"/api/v1/products/{product.id}",
+        json={"name": "  Trimmed Name  "},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["name"] == "Trimmed Name"

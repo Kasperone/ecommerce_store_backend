@@ -1,6 +1,6 @@
 from typing import Annotated, Literal
 
-from pydantic import ConfigDict, Field, computed_field, model_validator
+from pydantic import ConfigDict, Field, StringConstraints, computed_field, model_validator
 
 from app.schemas.base import BaseSchema, TimestampSchema
 from app.schemas.category import CategoryResponse
@@ -10,6 +10,13 @@ from app.schemas.product_variant import ProductOptionResponse, ProductVariantPub
 # Cap on the number of products a single bulk-edit may touch — keeps the
 # one-transaction batch bounded (mirrors the ~5k CSV import cap).
 BULK_EDIT_MAX_IDS = 1000
+
+# Required display name: trim surrounding whitespace and reject blank-only
+# input. ``Field(min_length=1)`` alone accepts ``"   "`` (length 3); with
+# ``strip_whitespace`` the min/max length validate the *trimmed* value, so a
+# whitespace-only name 422s and a padded name is stored trimmed. OpenAPI output
+# is unchanged (strip_whitespace is a parse step, not a schema constraint).
+ProductName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 
 
 class ProductImageResponse(TimestampSchema):
@@ -47,14 +54,14 @@ class ProductImageUpdate(BaseSchema):
 class ProductBase(BaseSchema):
     """Base product schema"""
 
-    name: Annotated[str, Field(min_length=1, max_length=200)]
+    name: ProductName
     slug: Annotated[str, Field(min_length=1, max_length=200)]
     description: str | None = None
     sku: Annotated[str | None, Field(max_length=100)] = None
 
     # Polish locale content — optional, free-text; storefront falls back to the
     # EN field when unset. Mirrors CategoryBase.name_pl/description_pl.
-    name_pl: Annotated[str | None, Field(min_length=1, max_length=200)] = None
+    name_pl: ProductName | None = None
     description_pl: str | None = None
 
     # Merchant identity (SEO blueprint D11) — feeds PDP JSON-LD + merchant
@@ -143,12 +150,12 @@ class ProductCreate(ProductBase):
 class ProductUpdate(BaseSchema):
     """Schema for updating a product"""
 
-    name: Annotated[str | None, Field(min_length=1, max_length=200)] = None
+    name: ProductName | None = None
     slug: Annotated[str | None, Field(min_length=1, max_length=200)] = None
     description: str | None = None
     sku: Annotated[str | None, Field(max_length=100)] = None
 
-    name_pl: Annotated[str | None, Field(min_length=1, max_length=200)] = None
+    name_pl: ProductName | None = None
     description_pl: str | None = None
 
     brand: Annotated[str | None, Field(max_length=100)] = None
