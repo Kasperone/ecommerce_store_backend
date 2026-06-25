@@ -165,6 +165,37 @@ async def test_methods_full_lifecycle_and_audit(client, user_factory, db_session
     assert [r.action for r in rows] == ["create", "update", "delete"]
 
 
+async def test_method_per_locale_name_roundtrip(client, user_factory):
+    """name_pl/description_pl (F-PLD-3) round-trip through admin create + update;
+    a PL-only patch leaves the EN name untouched."""
+    admin = user_factory(email="ship-method-pl@example.com", role=UserRole.ADMIN)
+
+    create = await client.post(
+        "/api/v1/admin/shipping/methods",
+        json={
+            "name": "Standard",
+            "code": "std-pl",
+            "description": "Standard parcel delivery",
+            "name_pl": "Kurier standardowy",
+            "description_pl": "Dostawa kurierska (2-5 dni roboczych)",
+        },
+        headers=_headers(admin),
+    )
+    assert create.status_code == 201, create.text
+    body = create.json()
+    assert body["name_pl"] == "Kurier standardowy"
+    assert body["description_pl"] == "Dostawa kurierska (2-5 dni roboczych)"
+
+    upd = await client.put(
+        f"/api/v1/admin/shipping/methods/{body['id']}",
+        json={"name_pl": "Paczka standardowa"},
+        headers=_headers(admin),
+    )
+    assert upd.status_code == 200
+    assert upd.json()["name_pl"] == "Paczka standardowa"
+    assert upd.json()["name"] == "Standard"
+
+
 async def test_method_duplicate_code_400(client, user_factory):
     admin = user_factory(email="ship-method-dup@example.com", role=UserRole.ADMIN)
     a = await client.post(

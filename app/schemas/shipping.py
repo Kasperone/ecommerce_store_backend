@@ -177,6 +177,8 @@ class ShippingMethodBase(BaseSchema):
     name: Annotated[str, StringConstraints(min_length=1, max_length=80)]
     code: Annotated[str, StringConstraints(min_length=1, max_length=40)] | None = None
     description: str | None = None
+    name_pl: Annotated[str, StringConstraints(min_length=1, max_length=80)] | None = None
+    description_pl: str | None = None
     sort_order: int = 0
     is_active: bool = True
 
@@ -189,6 +191,8 @@ class ShippingMethodUpdate(BaseSchema):
     name: Annotated[str, StringConstraints(min_length=1, max_length=80)] | None = None
     code: Annotated[str, StringConstraints(min_length=1, max_length=40)] | None = None
     description: str | None = None
+    name_pl: Annotated[str, StringConstraints(min_length=1, max_length=80)] | None = None
+    description_pl: str | None = None
     sort_order: int | None = None
     is_active: bool | None = None
 
@@ -197,6 +201,8 @@ class ShippingMethodResponse(TimestampSchema):
     name: str
     code: str | None
     description: str | None
+    name_pl: str | None
+    description_pl: str | None
     sort_order: int
     is_active: bool
 
@@ -319,6 +325,8 @@ class ShippingQuoteMethod(BaseSchema):
     name: str
     code: str | None
     description: str | None
+    name_pl: str | None
+    description_pl: str | None
     sort_order: int
     amount: float
     currency: ShippingCurrency

@@ -145,6 +145,10 @@ class ShippingMethod(BaseModel):
     name: Mapped[str] = mapped_column(String(80), unique=True, index=True)
     code: Mapped[str | None] = mapped_column(String(40), unique=True, index=True)
     description: Mapped[str | None] = mapped_column(Text)
+    # Optional Polish display copy. Mirrors Product/Category name_pl/description_pl:
+    # the storefront falls back to the EN ``name``/``description`` when unset.
+    name_pl: Mapped[str | None] = mapped_column(String(80))
+    description_pl: Mapped[str | None] = mapped_column(Text)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 
