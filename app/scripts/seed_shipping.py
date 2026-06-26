@@ -6,7 +6,11 @@ Creates (idempotent — get-or-create on name/code):
 
 - Zones: PL (countries: PL), EU (top 11 active EU markets), RoW (empty —
   admin assigns codes after deciding whether to ship globally).
-- Methods: ``standard`` and ``express``.
+- Methods: ``standard`` and ``express``, each with EN + PL display copy
+  (``name_pl`` / ``description_pl``) so the storefront reads fully Polish on
+  ``/pl/`` out of the box. On rerun a missing PL field is backfilled from
+  the catalog (self-heals DBs seeded before those columns existed) without
+  overwriting an admin's edits.
 - Rates per zone × method × currency, demonstrating the three pricing
   shapes:
   - PL × Standard: PLN 19.99 with ``free_above_subtotal=200`` (the PL-market
@@ -98,12 +102,16 @@ METHODS: list[dict[str, Any]] = [
         "name": "Standard",
         "code": "standard",
         "description": "Standard parcel delivery (2-5 business days)",
+        "name_pl": "Kurier standardowy",
+        "description_pl": "Dostawa kurierska (2-5 dni roboczych)",
         "sort_order": 10,
     },
     {
         "name": "Express",
         "code": "express",
         "description": "Express delivery (1-2 business days)",
+        "name_pl": "Kurier ekspresowy",
+        "description_pl": "Dostawa ekspresowa (1-2 dni robocze)",
         "sort_order": 20,
     },
 ]
@@ -174,15 +182,36 @@ def _get_or_create_zone(db: Session, *, spec: dict[str, Any]) -> ShippingZone:
 
 
 def _get_or_create_method(db: Session, *, spec: dict[str, Any]) -> ShippingMethod:
-    """Idempotent method upsert by code (the carrier identifier)."""
+    """Idempotent method upsert by code (the carrier identifier).
+
+    On an existing method the EN ``name``/``description`` and admin-set
+    fields are left untouched (overrides survive a reseed), but a *missing*
+    Polish ``name_pl``/``description_pl`` is backfilled from the catalog —
+    self-healing for DBs seeded before the per-locale columns existed
+    (migration ``b31ac594c42b``), without ever clobbering a PL value an
+    admin has already set.
+    """
     method = db.query(ShippingMethod).filter(ShippingMethod.code == spec["code"]).first()
     if method is not None:
-        logger.info("method exists: %s (skip)", spec["code"])
+        backfilled = []
+        if method.name_pl is None and spec.get("name_pl"):
+            method.name_pl = spec["name_pl"]
+            backfilled.append("name_pl")
+        if method.description_pl is None and spec.get("description_pl"):
+            method.description_pl = spec["description_pl"]
+            backfilled.append("description_pl")
+        if backfilled:
+            db.flush()
+            logger.info("method exists: %s (backfilled %s)", spec["code"], ", ".join(backfilled))
+        else:
+            logger.info("method exists: %s (skip)", spec["code"])
         return method
     method = ShippingMethod(
         name=spec["name"],
         code=spec["code"],
         description=spec.get("description"),
+        name_pl=spec.get("name_pl"),
+        description_pl=spec.get("description_pl"),
         sort_order=spec.get("sort_order", 0),
         is_active=True,
     )
