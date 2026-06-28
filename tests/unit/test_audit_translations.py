@@ -30,6 +30,7 @@ from app.services.translation_registry import (
     missing_fields,
     resource_completeness,
     resource_is_complete,
+    source_digest,
 )
 
 SHIPPING = get_resource_def("shipping_method")
@@ -108,6 +109,15 @@ def test_get_resource_def_unknown_raises():
 def test_registry_covers_expected_types():
     types = {r.type for r in TRANSLATABLE_RESOURCES}
     assert {"shipping_method", "product", "category", "collection"} <= types
+
+
+def test_source_digest_stable_and_change_sensitive():
+    assert source_digest("Express") == source_digest("Express")
+    assert source_digest("Express") != source_digest("Express!")
+    # None and "" normalise to the same (empty) digest.
+    assert source_digest(None) == source_digest("")
+    # 64-char hex (sha256).
+    assert len(source_digest("x")) == 64
 
 
 # ---------------------------------------------------------------------------

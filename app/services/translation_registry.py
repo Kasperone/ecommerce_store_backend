@@ -33,6 +33,7 @@ empty-source fields as false gaps.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 
 from app.models.base import BaseModel
@@ -214,6 +215,17 @@ def get_resource_def(resource_type: str) -> TranslatableResourceDef:
         raise KeyError(
             f"Unknown translatable resource type {resource_type!r}; known: {known}"
         ) from None
+
+
+def source_digest(value: object) -> str:
+    """SHA-256 (hex) of a field's source value, used for outdated detection.
+
+    A blank/None source normalises to the empty string so its digest is stable.
+    Mirrors Shopify's ``translatableContentDigest``: stored when a translation is
+    saved, compared against the live source's digest to detect a stale source.
+    """
+    text = "" if value is None else str(value)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _value_present(value: object) -> bool:

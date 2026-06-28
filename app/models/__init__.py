@@ -75,6 +75,7 @@ from app.models.shipping import (
 )
 from app.models.store_config import StoreConfig
 from app.models.tag import Tag, customer_tags
+from app.models.translation_meta import TranslationMeta
 from app.models.user import User
 from app.models.user_consent import UserConsent
 from app.models.verification_token import VerificationToken
@@ -163,6 +164,7 @@ __all__ = [
     "StoreConfig",
     "Tag",
     "customer_tags",
+    "TranslationMeta",
     "UserConsent",
     "VerificationToken",
     "RefreshToken",
