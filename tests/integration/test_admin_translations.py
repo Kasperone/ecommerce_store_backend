@@ -284,3 +284,113 @@ async def test_update_bad_locale_400(client, user_factory, db_session):
         headers=_headers(admin),
     )
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# outdated detection (Phase 2 — source-digest sidecar)
+# ---------------------------------------------------------------------------
+
+
+async def _put_fields(client, admin, method_id, fields):
+    return await client.put(
+        f"/api/v1/admin/translations/shipping_method/{method_id}",
+        json={"fields": fields},
+        headers=_headers(admin),
+    )
+
+
+def _row_for(body, mid):
+    return next(r for r in body["items"] if r["id"] == mid)
+
+
+def _field(row, key):
+    return next(f for f in row["fields"] if f["key"] == key)
+
+
+async def _list(client, admin, **query):
+    qs = "&".join(f"{k}={v}" for k, v in {"page_size": 100, **query}.items())
+    resp = await client.get(
+        f"/api/v1/admin/translations/shipping_method?{qs}", headers=_headers(admin)
+    )
+    return resp.json()
+
+
+async def test_save_stamps_digest_and_not_outdated(client, user_factory, db_session):
+    admin = user_factory(email="tr-out1@example.com", role=UserRole.ADMIN)
+    m = _make_method(db_session, name="Outdated A", code="tr-out-a", description="d")
+    resp = await _put_fields(client, admin, m.id, {"name": "Tłumaczenie"})
+    row = resp.json()
+    assert _field(row, "name")["outdated"] is False
+    assert row["has_outdated"] is False
+
+
+async def test_source_change_marks_outdated(client, user_factory, db_session):
+    admin = user_factory(email="tr-out2@example.com", role=UserRole.ADMIN)
+    m = _make_method(db_session, name="Outdated B", code="tr-out-b", description="d")
+    await _put_fields(client, admin, m.id, {"name": "Tłumaczenie"})
+
+    # Change the English source after the translation was stamped.
+    m.name = "Outdated B (changed)"
+    db_session.commit()
+
+    body = await _list(client, admin)
+    row = _row_for(body, m.id)
+    assert _field(row, "name")["outdated"] is True
+    assert row["has_outdated"] is True
+
+
+async def test_resave_clears_outdated(client, user_factory, db_session):
+    admin = user_factory(email="tr-out3@example.com", role=UserRole.ADMIN)
+    m = _make_method(db_session, name="Outdated C", code="tr-out-c", description="d")
+    await _put_fields(client, admin, m.id, {"name": "Tłumaczenie"})
+    m.name = "Outdated C (changed)"
+    db_session.commit()
+
+    # Re-save the translation against the new source -> digest re-stamped.
+    resp = await _put_fields(client, admin, m.id, {"name": "Nowe tłumaczenie"})
+    assert _field(resp.json(), "name")["outdated"] is False
+
+
+async def test_outdated_status_filter(client, user_factory, db_session):
+    admin = user_factory(email="tr-out4@example.com", role=UserRole.ADMIN)
+    stale = _make_method(db_session, name="Stale One", code="tr-out-s", description="d")
+    fresh = _make_method(db_session, name="Fresh One", code="tr-out-f", description="d")
+    await _put_fields(client, admin, stale.id, {"name": "Nieaktualne"})
+    await _put_fields(client, admin, fresh.id, {"name": "Aktualne"})
+    stale.name = "Stale One (changed)"
+    db_session.commit()
+
+    body = await _list(client, admin, status="outdated")
+    ids = {r["id"] for r in body["items"]}
+    assert stale.id in ids
+    assert fresh.id not in ids
+
+
+async def test_unchanged_sibling_preserves_outdated(client, user_factory, db_session):
+    admin = user_factory(email="tr-out5@example.com", role=UserRole.ADMIN)
+    m = _make_method(db_session, name="Sibling", code="tr-out-sib", description="Desc")
+    # Translate both fields, then change both English sources.
+    await _put_fields(client, admin, m.id, {"name": "Nazwa", "description": "Opis"})
+    m.name = "Sibling (changed)"
+    m.description = "Desc (changed)"
+    db_session.commit()
+
+    # Re-save only description (a no-op send of name keeps name outdated).
+    resp = await _put_fields(client, admin, m.id, {"name": "Nazwa", "description": "Opis nowy"})
+    row = resp.json()
+    assert _field(row, "description")["outdated"] is False
+    assert _field(row, "name")["outdated"] is True
+
+
+async def test_clearing_translation_drops_digest(client, user_factory, db_session):
+    admin = user_factory(email="tr-out6@example.com", role=UserRole.ADMIN)
+    m = _make_method(db_session, name="Cleared", code="tr-out-clr", description="d")
+    await _put_fields(client, admin, m.id, {"name": "Do usunięcia"})
+    # Clear the translation, then change the source: no digest -> not outdated.
+    await _put_fields(client, admin, m.id, {"name": ""})
+    m.name = "Cleared (changed)"
+    db_session.commit()
+
+    body = await _list(client, admin)
+    row = _row_for(body, m.id)
+    assert _field(row, "name")["outdated"] is False

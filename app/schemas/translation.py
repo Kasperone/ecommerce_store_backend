@@ -26,6 +26,9 @@ class TranslationFieldRow(BaseSchema):
     # expected); ``translated`` = a non-empty translation exists for the locale.
     needs_translation: bool
     translated: bool
+    # ``outdated`` = a translation exists but the English source changed since it
+    # was saved (its stored source-digest no longer matches the live source).
+    outdated: bool = False
 
 
 class TranslationResourceRow(BaseSchema):
@@ -38,6 +41,8 @@ class TranslationResourceRow(BaseSchema):
     # Completeness counts over *applicable* (source-present) fields.
     translated_count: int
     applicable_count: int
+    # True when any field's translation is outdated (source changed since save).
+    has_outdated: bool = False
     fields: list[TranslationFieldRow]
 
 

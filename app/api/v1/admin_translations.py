@@ -33,6 +33,7 @@ from app.services.translation_admin import (
     UnknownFieldError,
     UnsupportedLocaleError,
     build_resource_row,
+    get_field_digests,
     get_resource_def,
     list_resources,
     summarize_types,
@@ -79,7 +80,7 @@ async def list_translations(
     db: Session = Depends(get_db),
     current_admin: User = Depends(get_current_admin),
     locale: str = Query("pl"),
-    status_filter: Literal["all", "missing"] = Query("all", alias="status"),
+    status_filter: Literal["all", "missing", "outdated"] = Query("all", alias="status"),
     q: str | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
@@ -149,4 +150,7 @@ async def update_translation(
     audit.record_update(resource_type=resource_type, obj=instance)
     db.commit()
     db.refresh(instance)
-    return build_resource_row(instance, resource_def, locale)
+    digests = get_field_digests(
+        db, resource_type=resource_type, resource_id=resource_id, locale=locale
+    )
+    return build_resource_row(instance, resource_def, locale, digests=digests)
