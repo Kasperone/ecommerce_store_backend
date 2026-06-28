@@ -96,6 +96,7 @@ from app.api.v1 import (  # noqa: E402
     admin_shipping,
     admin_staff,
     admin_tags,
+    admin_translations,
     admin_warehouses,
     auth,
     banners,
@@ -178,6 +179,9 @@ app.include_router(
 app.include_router(admin_quotes.router, prefix="/api/v1/admin/quotes", tags=["Admin Quotes"])
 app.include_router(admin_staff.router, prefix="/api/v1/admin/staff", tags=["Admin Staff"])
 app.include_router(admin_settings.router, prefix="/api/v1/admin/settings", tags=["Admin Settings"])
+app.include_router(
+    admin_translations.router, prefix="/api/v1/admin/translations", tags=["Admin Translations"]
+)
 app.include_router(
     admin_warehouses.router, prefix="/api/v1/admin/warehouses", tags=["Admin Warehouses"]
 )
