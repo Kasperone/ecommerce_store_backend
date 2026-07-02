@@ -16,16 +16,19 @@ Locale/type/status ``*Literal`` aliases are hardcoded for pyright but cross-chec
 against the model's ``*_VALUES`` tuples at import (mirrors ``BannerPlacementLiteral``).
 
 Image fields are a plain ``image_url: str | None`` for V1 (parity with
-``Banner.image_url``). The ``custom-html`` block's raw HTML is server-sanitized in
-the route via ``nh3`` before it is ever stored — never trust the field at render.
+``Banner.image_url``). Every raw-HTML block field (``custom-html`` html,
+``rich-text``/``image-with-text`` body, ``faq`` answers) is server-sanitized via
+``nh3`` in the route before it is ever stored, and every ``*_url`` field is
+scheme-validated here (``_is_safe_url``) — never trust these fields at render.
 """
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.page import (
     PAGE_LOCALE_VALUES,
@@ -63,10 +66,49 @@ assert set(PageStatusLiteral.__args__) == set(PAGE_STATUS_VALUES), (  # noqa: S1
 # rather than silently storing dead config.
 
 
+# A CMS link/image URL (``*_url`` field) is safe if it is empty, a site-relative
+# path, a fragment, or an explicit http(s)/mailto/tel URL. Everything else —
+# ``javascript:``, ``data:``, ``vbscript:``, protocol-relative ``//host`` — is
+# rejected: these fields flow into ``NuxtLink :to`` / ``<img src>`` on public
+# pages, so a ``javascript:`` scheme there is a stored XSS (SEC-012). The scheme
+# check is the real backstop; the frontend link guard is defense-in-depth.
+_URL_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.\-]*):")
+_SAFE_URL_SCHEMES = frozenset({"http", "https", "mailto", "tel"})
+
+
+def _is_safe_url(value: str) -> bool:
+    v = value.strip()
+    if v == "":
+        return True
+    # Browsers strip control chars before parsing (``java\tscript:`` → ``javascript:``),
+    # so reject any embedded control char outright.
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in v):
+        return False
+    # Protocol-relative ``//host`` is treated as absolute by browsers.
+    if v.startswith("//"):
+        return False
+    match = _URL_SCHEME_RE.match(v)
+    if match is None:
+        # No scheme → relative path / fragment; cannot open a new context.
+        return True
+    return match.group(1).lower() in _SAFE_URL_SCHEMES
+
+
 class _BlockBase(BaseModel):
     """Base for every block settings + sub-block model: strict (extra keys 422)."""
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _reject_unsafe_urls(self) -> _BlockBase:
+        """Scheme-validate every ``*_url`` field (cta_url/link_url/image_url/…)
+        so an unsafe scheme can never be stored — see ``_is_safe_url`` / SEC-012."""
+        for name, value in self.__dict__.items():
+            if name.endswith("_url") and isinstance(value, str) and not _is_safe_url(value):
+                raise ValueError(
+                    f"{name!r} must be empty, a relative path, or an http(s)/mailto/tel URL"
+                )
+        return self
 
 
 # ---- Hero ----------------------------------------------------------------- #
