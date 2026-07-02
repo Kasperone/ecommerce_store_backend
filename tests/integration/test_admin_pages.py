@@ -127,6 +127,89 @@ async def test_create_sanitizes_custom_html(client, user_factory):
     assert "<p>ok</p>" in html
 
 
+async def test_create_sanitizes_rich_text_and_image_body(client, user_factory):
+    """rich-text and image-with-text bodies are v-html'd on public pages, so
+    they must be nh3-sanitized on save too (SEC-012), not just custom-html."""
+    admin = user_factory(email="pg-xss-rt@example.com", role=UserRole.ADMIN)
+    payload = "<p>ok</p><img src=x onerror=alert(1)><script>alert(2)</script>"
+    resp = await _create_page(
+        client,
+        admin,
+        slug="xss-bodies",
+        sections=[
+            {"type": "rich-text", "settings": {"body": payload}},
+            {"type": "image-with-text", "settings": {"body": payload}},
+        ],
+    )
+    assert resp.status_code == 201
+    sections = resp.json()["draft_layout"]["sections"]
+    for section in sections:
+        body = section["settings"]["body"]
+        assert "<script>" not in body
+        assert "onerror" not in body
+        assert "alert" not in body
+        assert "<p>ok</p>" in body
+
+
+async def test_create_sanitizes_faq_answer(client, user_factory):
+    """Each faq-item block's answer is v-html'd (SEC-012) → sanitize on save."""
+    admin = user_factory(email="pg-xss-faq@example.com", role=UserRole.ADMIN)
+    resp = await _create_page(
+        client,
+        admin,
+        slug="xss-faq",
+        sections=[
+            {
+                "type": "faq",
+                "settings": {"heading": "FAQ"},
+                "blocks": [
+                    {
+                        "type": "faq-item",
+                        "settings": {
+                            "question": "Q?",
+                            "answer": "<b>ans</b><script>alert(1)</script>",
+                        },
+                    }
+                ],
+            }
+        ],
+    )
+    assert resp.status_code == 201
+    answer = resp.json()["draft_layout"]["sections"][0]["blocks"][0]["settings"]["answer"]
+    assert "<script>" not in answer
+    assert "alert(1)" not in answer
+    assert "<b>ans</b>" in answer
+
+
+@pytest.mark.parametrize("scheme_url", ["javascript:alert(1)", "data:text/html,<script>1</script>"])
+async def test_create_rejects_unsafe_cta_url(client, user_factory, scheme_url):
+    """A dangerous URL scheme in a link field (→ NuxtLink :to on public pages)
+    is rejected at the schema layer with a 422 (SEC-012 vector 2)."""
+    admin = user_factory(email=f"pg-url-{abs(hash(scheme_url))}@example.com", role=UserRole.ADMIN)
+    resp = await _create_page(
+        client,
+        admin,
+        slug=f"bad-url-{abs(hash(scheme_url))}",
+        sections=[{"type": "hero", "settings": {"heading": "H", "cta_url": scheme_url}}],
+    )
+    assert resp.status_code == 422
+
+
+async def test_create_allows_safe_urls(client, user_factory):
+    """Relative paths and http(s) URLs remain valid link targets."""
+    admin = user_factory(email="pg-url-ok@example.com", role=UserRole.ADMIN)
+    resp = await _create_page(
+        client,
+        admin,
+        slug="ok-urls",
+        sections=[
+            {"type": "hero", "settings": {"heading": "H", "cta_url": "/products/foo"}},
+            {"type": "promo-strip", "settings": {"text": "T", "link_url": "https://example.com"}},
+        ],
+    )
+    assert resp.status_code == 201
+
+
 # ---------------------------------------------------------------------------
 # get / draft
 # ---------------------------------------------------------------------------
@@ -207,6 +290,42 @@ async def test_publish_snapshots_and_goes_public(client, user_factory, db_sessio
     versions = await client.get(f"/api/v1/admin/pages/{page_id}/versions", headers=_headers(admin))
     assert versions.status_code == 200
     assert versions.json()["total"] == 1
+
+
+async def test_publish_resanitizes_draft_written_directly(client, user_factory, db_session):
+    """Defense-in-depth (SEC-012): a draft with raw HTML written straight to the
+    DB (bypassing the save-time sanitizer) is re-sanitized on publish, so the
+    published_layout served publicly is clean."""
+    admin = user_factory(email="pg-pub-xss@example.com", role=UserRole.ADMIN)
+    page_id = (
+        await _create_page(
+            client,
+            admin,
+            slug="pub-xss",
+            sections=[{"type": "rich-text", "settings": {"body": ""}}],
+        )
+    ).json()["id"]
+
+    # Simulate a direct DB edit that never passed through the route sanitizer.
+    page = db_session.get(Page, page_id)
+    page.draft_layout = {
+        "sections": [
+            {"type": "rich-text", "settings": {"body": "<p>hi</p><script>alert(1)</script>"}}
+        ]
+    }
+    db_session.add(page)
+    db_session.commit()
+
+    resp = await client.post(f"/api/v1/admin/pages/{page_id}/publish", headers=_headers(admin))
+    assert resp.status_code == 200
+    body = resp.json()["published_layout"]["sections"][0]["settings"]["body"]
+    assert "<script>" not in body
+    assert "alert(1)" not in body
+    assert "<p>hi</p>" in body
+
+    # and the public surface is clean too
+    pub = await client.get("/api/v1/pages/pub-xss")
+    assert "<script>" not in pub.json()["layout"]["sections"][0]["settings"]["body"]
 
 
 async def test_rollback_restores_prior_version(client, user_factory, db_session):
