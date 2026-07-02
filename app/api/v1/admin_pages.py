@@ -100,19 +100,54 @@ _HTML_ALLOWED_ATTRS: dict[str, set[str]] = {
 }
 
 
-def _sanitize_custom_html(layout: PageLayout) -> dict[str, Any]:
-    """Validate-then-sanitize a layout: return the JSON-safe dict with every
-    ``custom-html`` block's ``html`` run through nh3."""
-    blob = layout.model_dump(mode="json")
+# Registry of raw-HTML fields rendered via ``v-html`` on the storefront, which
+# MUST be nh3-sanitized before storage (SEC-012). Adding an HTML block without a
+# registry entry leaves it unsanitized — keep this in lockstep with the block
+# components' ``v-html`` sinks. ``*_url`` fields are scheme-validated separately
+# at the schema layer (``app.schemas.page._is_safe_url``).
+_HTML_SETTINGS_FIELDS: dict[str, tuple[str, ...]] = {
+    "custom-html": ("html",),
+    "rich-text": ("body",),
+    "image-with-text": ("body",),
+}
+# section type -> settings keys on each *sub-block* that carry raw HTML.
+_HTML_BLOCK_SETTINGS_FIELDS: dict[str, tuple[str, ...]] = {
+    "faq": ("answer",),  # each ``faq-item`` block's answer
+}
+
+
+def _clean_html(raw: Any) -> str:
+    return nh3.clean(
+        raw if isinstance(raw, str) else "",
+        tags=_HTML_ALLOWED_TAGS,
+        attributes=_HTML_ALLOWED_ATTRS,
+    )
+
+
+def sanitize_layout_blob(blob: dict[str, Any]) -> dict[str, Any]:
+    """Sanitize a raw layout dict in place: run every raw-HTML block field
+    (custom-html html, rich-text/image-with-text body, faq answers) through
+    nh3's allowlist. Operates on the plain dict (no Pydantic validation) so the
+    one-off backfill can clean layouts that predate a schema change too."""
     for section in blob.get("sections", []):
-        if section.get("type") == "custom-html":
-            raw = section.get("settings", {}).get("html", "")
-            section["settings"]["html"] = nh3.clean(
-                raw or "",
-                tags=_HTML_ALLOWED_TAGS,
-                attributes=_HTML_ALLOWED_ATTRS,
-            )
+        stype = section.get("type")
+        settings = section.get("settings") or {}
+        for field in _HTML_SETTINGS_FIELDS.get(stype, ()):
+            if field in settings:
+                settings[field] = _clean_html(settings.get(field))
+        for field in _HTML_BLOCK_SETTINGS_FIELDS.get(stype, ()):
+            for block in section.get("blocks") or []:
+                block_settings = block.get("settings") or {}
+                if field in block_settings:
+                    block_settings[field] = _clean_html(block_settings.get(field))
     return blob
+
+
+def _sanitize_layout(layout: PageLayout) -> dict[str, Any]:
+    """Validate-then-sanitize: dump the validated layout to a JSON-safe dict and
+    run it through the sanitizer. URL fields are scheme-validated at the schema
+    layer, so by here they are already safe."""
+    return sanitize_layout_blob(layout.model_dump(mode="json"))
 
 
 def _validate_layout(raw: Any) -> PageLayout:
@@ -176,8 +211,8 @@ async def create_page(
     current_admin: User = Depends(get_current_admin),
     audit: AuditWriter = Depends(get_audit_writer),
 ):
-    """Create a draft page. ``custom-html`` blocks are sanitized before storage."""
-    draft_blob = _sanitize_custom_html(payload.draft_layout)
+    """Create a draft page. Raw-HTML blocks are sanitized before storage."""
+    draft_blob = _sanitize_layout(payload.draft_layout)
     try:
         page = crud_page.create(
             db,
@@ -231,7 +266,7 @@ async def save_draft(
 
     draft_blob: dict[str, Any] | None = None
     if payload.draft_layout is not None:
-        draft_blob = _sanitize_custom_html(payload.draft_layout)
+        draft_blob = _sanitize_layout(payload.draft_layout)
 
     seo = payload.model_dump(
         exclude_unset=True, include={"seo_title", "seo_description", "seo_image_url"}
@@ -255,9 +290,11 @@ async def publish_page(
     """Validate the current draft, snapshot it into a version, and swap it into
     the published layout (status → published)."""
     page = _get_or_404(db, page_id)
-    # Re-validate the stored draft before going live (defends against a draft
-    # written before a schema change, or a direct DB edit).
-    _validate_layout(page.draft_layout)
+    # Re-validate AND re-sanitize the stored draft before going live: defends
+    # against a draft written before a schema change or via a direct DB edit
+    # that never passed through the save-time sanitizer (SEC-012). Write the
+    # clean blob back so both the version snapshot and published_layout are safe.
+    page.draft_layout = _sanitize_layout(_validate_layout(page.draft_layout))
 
     label = payload.label if payload is not None else None
     version = crud_page.publish(db, page=page, label=label, actor_id=current_admin.id)
