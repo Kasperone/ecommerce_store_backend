@@ -151,3 +151,26 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: false
+
+  variant-sync:
+    name: CI variant in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Tripwire for ci-variant drift (2026-07-08): .github/workflows/test.yml is a
+      # generated artifact — a byte-for-byte copy of one .github/ci-variants/test.<mode>.yml.
+      # Editing test.yml directly without mirroring into the matching variant makes the
+      # switch-ci-runner skill's drift guard abort at switch time (and forces a manual
+      # reconciliation). This fails the FIRST drifting PR instead, so drift never
+      # accumulates. Fix: edit ci-variants/test.<mode>.yml and copy it to test.yml
+      # (or re-run the switch-ci-runner skill).
+      - name: Assert test.yml matches a captured ci-variant
+        run: |
+          if diff -q .github/workflows/test.yml .github/ci-variants/test.ubuntu.yml >/dev/null 2>&1 \
+             || diff -q .github/workflows/test.yml .github/ci-variants/test.hive.yml >/dev/null 2>&1; then
+            echo "✓ test.yml is byte-identical to a captured ci-variant"
+          else
+            echo "::error file=.github/workflows/test.yml::test.yml matches NEITHER ci-variant — hand-edited without mirroring. Edit .github/ci-variants/test.<mode>.yml and copy it to test.yml (or re-run the switch-ci-runner skill). See switch-ci-runner SKILL.md > Handling drift."
+            exit 1
+          fi
