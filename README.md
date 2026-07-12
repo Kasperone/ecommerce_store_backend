@@ -57,6 +57,55 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 API will be available at: http://localhost:8000
 
+## 🏗️ Fresh install (new store bootstrap)
+
+Bring up a brand-new client store with one command (replaces steps 5+ above
+for a first deploy). Prerequisites: a configured `.env` (copy `.env.example`;
+at minimum `DATABASE_URL` pointing at an empty PostgreSQL database) and the
+dependencies installed.
+
+```bash
+ADMIN_EMAIL='admin@example.com' ADMIN_PASSWORD='ChangeMe123' \
+    python -m app.scripts.seed_all
+```
+
+What it runs, in order (each step logged `OK` / `SKIP` / `FAIL`):
+
+1. **Migrations** — `alembic upgrade head` (skip with `--skip-migrations`)
+2. **Store config** — verifies/creates the `store_config` singleton row
+   (edit it later via the admin Settings page)
+3. **Shipping seed** — baseline zones (PL / EU / RoW), `standard` + `express`
+   methods with EN+PL copy, and a rate matrix in PLN/EUR/USD
+4. **Homepage seed** — a published `home` CMS page (en + pl) the storefront
+   renders; customize it in the admin page builder
+5. **Initial admin** — a pre-verified `ADMIN` user, only when `ADMIN_EMAIL`
+   and `ADMIN_PASSWORD` are both set (otherwise the step is skipped with a
+   hint). The password must satisfy the registration policy (min 8 chars,
+   a digit and an uppercase letter) and is never accepted via argv
+6. **Search reindex** — rebuilds the Meilisearch indexes. Fail-soft: if
+   Meilisearch is unconfigured or unreachable this logs a warning and the
+   bootstrap still exits 0 (skip explicitly with `--skip-search`; rerun
+   later with `python -m app.scripts.reindex_search`)
+
+**Idempotent by design** — every step is get-or-create, so re-running the
+command on an existing store is safe: admin-edited shipping rates, homepage
+content, store config, and the existing admin's password are all left
+untouched (steps report `OK`/`SKIP`, nothing is duplicated or overwritten).
+
+To create or rotate an admin on its own:
+
+```bash
+# create (no-op if the email already exists)
+ADMIN_PASSWORD='ChangeMe123' python -m app.scripts.create_admin --email admin@example.com --name "Store Admin"
+
+# explicitly rotate an existing admin's password (revokes their sessions)
+ADMIN_PASSWORD='NewPass456' python -m app.scripts.create_admin --email admin@example.com --update-password
+```
+
+The password comes from the `ADMIN_PASSWORD` env var or piped stdin — never
+from a CLI argument. Exit codes: `0` ok/no-op, `1` unexpected error, `2`
+usage/validation error.
+
 ## 📚 API Documentation
 
 - **Swagger UI:** http://localhost:8000/docs
