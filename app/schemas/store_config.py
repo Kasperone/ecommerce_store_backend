@@ -24,6 +24,7 @@ class StoreConfigBase(BaseSchema):
 
     store_name: Annotated[str, Field(max_length=255)]
     brand_tagline: Annotated[str, Field(max_length=255)]
+    email_from_name: Annotated[str, Field(max_length=255)]
     logo_url: Annotated[str, Field(max_length=1024)]
     legal_name: Annotated[str, Field(max_length=255)]
     address_line: Annotated[str, Field(max_length=255)]
@@ -57,6 +58,7 @@ class StoreConfigUpdate(BaseSchema):
 
     store_name: Annotated[str | None, Field(max_length=255)] = None
     brand_tagline: Annotated[str | None, Field(max_length=255)] = None
+    email_from_name: Annotated[str | None, Field(max_length=255)] = None
     logo_url: Annotated[str | None, Field(max_length=1024)] = None
     legal_name: Annotated[str | None, Field(max_length=255)] = None
     address_line: Annotated[str | None, Field(max_length=255)] = None

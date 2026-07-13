@@ -21,7 +21,7 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.crud import corrective_invoice as crud_corrective
 from app.crud import order as crud_order
-from app.services.brand import get_brand_name
+from app.services.brand import get_email_brand_name
 from app.services.invoice import (
     StoreIdentity,
     render_corrective_invoice_pdf,
@@ -203,7 +203,7 @@ def _spec_for(event: str, order: Order, lang: str) -> _EventSpec | None:
     # (when recorded on the order); other events never show tracking.
     tracking = _tracking_html(order, lang) if event == "shipped" else ""
     return _EventSpec(
-        subject=entry["subject"].format(name=get_brand_name(), num=order.order_number),
+        subject=entry["subject"].format(name=get_email_brand_name(), num=order.order_number),
         heading=entry["heading"],
         intro_html=f"<p>{entry['intro']}</p>{tracking}{view}",
         attach_invoice=event in _ATTACH_EVENTS,

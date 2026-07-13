@@ -56,6 +56,9 @@ class StoreConfig(BaseModel):
 
     store_name: Mapped[str] = mapped_column(String(255), server_default="")
     brand_tagline: Mapped[str] = mapped_column(String(255), server_default="")
+    # Sender display name for transactional emails; blank → store_name → env
+    # fallback (resolution in app/services/brand.py::get_email_brand_name).
+    email_from_name: Mapped[str] = mapped_column(String(255), server_default="")
     logo_url: Mapped[str] = mapped_column(String(1024), server_default="")
     legal_name: Mapped[str] = mapped_column(String(255), server_default="")
     address_line: Mapped[str] = mapped_column(String(255), server_default="")
