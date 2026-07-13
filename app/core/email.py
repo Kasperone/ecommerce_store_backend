@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import resend
 
 from app.core.config import settings
+from app.services.brand import get_brand_name
 
 if TYPE_CHECKING:
     from app.models.order import Order
@@ -40,8 +41,9 @@ def send_email(
         Exception: If email sending fails
     """
     try:
+        brand = get_brand_name()
         params = {
-            "from": f"{settings.EMAIL_FROM_NAME} <{settings.EMAIL_FROM}>",
+            "from": f"{brand} <{settings.EMAIL_FROM}>",
             "to": [email_to],
             "subject": subject,
             "html": html_content,
@@ -82,7 +84,8 @@ def send_verification_email(
     Returns:
         Response from Resend API
     """
-    subject = f"{settings.EMAIL_FROM_NAME} - Verify your email address"
+    brand = get_brand_name()
+    subject = f"{brand} - Verify your email address"
 
     # Construct verification link
     verification_link = f"{settings.FRONTEND_URL}/verify-email?token={token}"
@@ -153,13 +156,13 @@ def send_verification_email(
     <body>
         <div class="container">
             <div class="header">
-                <h1>🎉 Welcome to {settings.EMAIL_FROM_NAME}!</h1>
+                <h1>🎉 Welcome to {brand}!</h1>
             </div>
 
             <div class="content">
                 <p>Hi {html_escape(username)},</p>
 
-                <p>Thank you for registering with {settings.EMAIL_FROM_NAME}! We're excited to have you on board.</p>
+                <p>Thank you for registering with {brand}! We're excited to have you on board.</p>
 
                 <p>To complete your registration and verify your email address, please click the button below:</p>
 
@@ -176,7 +179,7 @@ def send_verification_email(
             </div>
 
             <div class="footer">
-                <p>© {settings.EMAIL_FROM_NAME}. All rights reserved.</p>
+                <p>© {brand}. All rights reserved.</p>
                 <p>If you have any questions, feel free to contact our support team.</p>
             </div>
         </div>
@@ -186,7 +189,7 @@ def send_verification_email(
 
     # Plain text fallback
     text_content = f"""
-    Welcome to {settings.EMAIL_FROM_NAME}!
+    Welcome to {brand}!
 
     Hi {username},
 
@@ -198,7 +201,7 @@ def send_verification_email(
 
     If you didn't create an account with us, you can safely ignore this email.
 
-    © {settings.EMAIL_FROM_NAME}
+    © {brand}
     """
 
     return send_email(
@@ -224,7 +227,8 @@ def send_welcome_email(
     Returns:
         Response from Resend API
     """
-    subject = f"Welcome to {settings.EMAIL_FROM_NAME}!"
+    brand = get_brand_name()
+    subject = f"Welcome to {brand}!"
 
     html_content = f"""
     <!DOCTYPE html>
@@ -266,7 +270,7 @@ def send_welcome_email(
         <div class="container">
             <h1>✅ Email Verified!</h1>
             <p>Hi {html_escape(username)},</p>
-            <p>Your email has been successfully verified. You can now enjoy all features of {settings.EMAIL_FROM_NAME}!</p>
+            <p>Your email has been successfully verified. You can now enjoy all features of {brand}!</p>
             <div style="text-align: center;">
                 <a href="{settings.FRONTEND_URL}" class="button">Start Shopping</a>
             </div>
@@ -295,8 +299,9 @@ def send_company_invite_email(
     yet — it prompts them to register, at which point the pending membership is
     bound to the new account (``link_pending_invites``).
     """
+    brand = get_brand_name()
     register_url = f"{settings.FRONTEND_URL}/register"
-    subject = f"You've been invited to {company_name} on {settings.EMAIL_FROM_NAME}"
+    subject = f"You've been invited to {company_name} on {brand}"
     html_content = f"""
     <!DOCTYPE html>
     <html>
@@ -305,7 +310,7 @@ def send_company_invite_email(
         <div style="background:#fff;border-radius:8px;padding:40px;box-shadow:0 2px 4px rgba(0,0,0,0.1);">
             <h1 style="color:#2563eb;text-align:center;">You're invited 🎉</h1>
             <p>You've been invited to join <strong>{html_escape(company_name)}</strong> as
-               <strong>{html_escape(role)}</strong> on {settings.EMAIL_FROM_NAME}.</p>
+               <strong>{html_escape(role)}</strong> on {brand}.</p>
             <p>Create an account with this email address to accept — the invitation is
                linked to your new account automatically.</p>
             <div style="text-align:center;">
@@ -326,7 +331,8 @@ def send_password_reset_email(
     token: str,
 ) -> dict:
     """Send a password reset email with a one-time link valid for 1 hour."""
-    subject = f"{settings.EMAIL_FROM_NAME} - Reset your password"
+    brand = get_brand_name()
+    subject = f"{brand} - Reset your password"
 
     reset_link = f"{settings.FRONTEND_URL}/password-reset/{token}"
 
@@ -386,7 +392,7 @@ def send_password_reset_email(
             <p><strong>This link expires in 1 hour</strong> and can only be used once.</p>
             <p>If you didn't request a password reset, you can safely ignore this email — your password won't change.</p>
             <div class="footer">
-                © {settings.EMAIL_FROM_NAME}
+                © {brand}
             </div>
         </div>
     </body>
@@ -424,7 +430,8 @@ def send_account_locked_email(
     real owner sees it, and it points them at the password reset flow which
     also clears the lockout.
     """
-    subject = f"{settings.EMAIL_FROM_NAME} - Account temporarily locked"
+    brand = get_brand_name()
+    subject = f"{brand} - Account temporarily locked"
 
     reset_link = f"{settings.FRONTEND_URL}/password-recovery"
 
@@ -489,7 +496,7 @@ def send_account_locked_email(
             password. Please reset your password using the link above as soon as
             possible.</p>
             <div class="footer">
-                © {settings.EMAIL_FROM_NAME} — automated security notification.
+                © {brand} — automated security notification.
             </div>
         </div>
     </body>
@@ -525,7 +532,8 @@ def send_already_registered_email(
     account with their email. Sent in place of a verification email so that
     /register can return a generic response without leaking account existence.
     """
-    subject = f"{settings.EMAIL_FROM_NAME} - Account already exists"
+    brand = get_brand_name()
+    subject = f"{brand} - Account already exists"
 
     login_link = f"{settings.FRONTEND_URL}/login"
     reset_link = f"{settings.FRONTEND_URL}/password-recovery"
@@ -587,7 +595,7 @@ def send_already_registered_email(
             </p>
             <p>If you didn't try to register, you can safely ignore this email.</p>
             <div class="footer">
-                © {settings.EMAIL_FROM_NAME}
+                © {brand}
             </div>
         </div>
     </body>
@@ -640,6 +648,7 @@ def render_order_email_body(
     composed upstream. The shell labels render in ``lang`` (EN/PL; subject/heading/
     intro are localized upstream). ``order`` must be loaded (``items`` not lazy).
     """
+    brand = get_brand_name()
     currency = order.currency
     labels = _ORDER_EMAIL_LABELS.get(lang, _ORDER_EMAIL_LABELS["en"])
 
@@ -690,7 +699,7 @@ def render_order_email_body(
             <p style="color:#6b7280;margin:0;">{ship_street}<br>{ship_city}<br>{ship_country}</p>
             <div style="margin-top:40px;padding-top:20px;border-top:1px solid #e5e7eb;
                         font-size:13px;color:#6b7280;">
-                &copy; {settings.EMAIL_FROM_NAME}
+                &copy; {brand}
             </div>
         </div>
     </body>
@@ -706,7 +715,7 @@ def render_order_email_body(
         f"{labels['order']} {order.order_number}\n"
         f"{text_lines}\n"
         f"{labels['total']}: {money(order.total)}\n\n"
-        f"© {settings.EMAIL_FROM_NAME}\n"
+        f"© {brand}\n"
     )
     return html_content, text_content
 

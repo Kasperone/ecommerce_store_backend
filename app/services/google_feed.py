@@ -22,6 +22,7 @@ import xml.etree.ElementTree as ET
 from app.core.config import settings
 from app.models.product import Product
 from app.models.product_variant import ProductVariant
+from app.services.brand import get_brand_name
 
 # The Google Shopping RSS namespace. RSS items put product attributes under the
 # ``g:`` prefix; the channel itself stays plain RSS 2.0.
@@ -253,7 +254,7 @@ def build_feed(
     rss = ET.Element("rss", {"version": "2.0"})
     channel = ET.SubElement(rss, "channel")
 
-    store_name = getattr(settings, "APP_NAME", "Store")
+    store_name = get_brand_name(fallback=getattr(settings, "APP_NAME", "Store"))
     _sub(channel, "title", f"{store_name} — {country.upper()} ({currency.upper()})")
     _sub(channel, "link", settings.FRONTEND_URL.rstrip("/"))
     _sub(
