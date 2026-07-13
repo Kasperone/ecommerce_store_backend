@@ -25,16 +25,28 @@ method raises ``DraftOrderLockedError`` (→ 409).
 
 from __future__ import annotations
 
+import secrets
+
 from sqlalchemy.orm import Query, Session, selectinload
 
 from app.core.money import ZERO_MONEY, quantize_money, to_money
+from app.crud.inventory import inventory as crud_inventory
 from app.crud.order import (
+    InPostPointRequiredError,
+    OrderLineSpec,
     VariantRequiredError,
     VariantUnavailableError,
+    build_order_items,
     load_variants_for_lines,
     resolve_line_variant,
+    resolve_order_shipping,
 )
+from app.crud.order import order as crud_order
+from app.crud.shipping import ShippingRateUnavailableError
+from app.crud.warehouse import warehouse as crud_warehouse
 from app.models.draft_order import DraftOrder, DraftOrderItem, DraftOrderStatus
+from app.models.inventory_movement import InventoryMovementReason
+from app.models.order import Order, OrderStatus
 from app.models.product import Product
 from app.models.shipping import ShippingMethod
 from app.models.user import User
@@ -70,6 +82,22 @@ class DraftOrderItemError(Exception):
     def __init__(self, *, reason: str, message: str) -> None:
         self.reason = reason
         self.message = message
+        super().__init__(message)
+
+
+class DraftOrderNotConvertibleError(Exception):
+    """A draft order fails a convert eligibility precondition.
+
+    Carries a machine ``reason`` code + an HTTP ``status_code`` the route maps
+    to the response (422 for state/data preconditions, 409 for
+    already-converted). Mirrors ``QuoteNotConvertibleError`` so the route
+    stays a thin mapper.
+    """
+
+    def __init__(self, *, reason: str, message: str, status_code: int) -> None:
+        self.reason = reason
+        self.message = message
+        self.status_code = status_code
         super().__init__(message)
 
 
@@ -264,6 +292,251 @@ class CRUDDraftOrder:
         draft.items.remove(item)  # delete-orphan cascade deletes the row
         self._recompute_totals(draft)
         db.add(draft)
+
+    # ------------------------------------------------------------------
+    # Conversion — draft → real pending order (mirrors CRUDQuote.convert_to_order)
+    # ------------------------------------------------------------------
+
+    def convert_to_order(
+        self,
+        db: Session,
+        *,
+        draft: DraftOrder,
+        payment_method: str,
+        mark_as_paid: bool,
+        actor_user_id: int,
+    ) -> Order:
+        """Convert an open draft into a real order (no commit; caller owns the txn).
+
+        Attribution follows the draft's owner: the customer (``user_id``) or a
+        guest (``guest_email`` — a fresh ``guest_token`` is generated exactly
+        like the storefront guest path; ``guest_locale`` stays NULL, the email
+        layer falls back to "en"). ``actor_user_id`` is only the audit actor,
+        threaded into the inventory movements.
+
+        Per line: honours ``unit_price_override`` when pinned (does NOT
+        re-price), else prices from the live catalog at the draft's
+        ``currency``; snapshots ``product_name``/``product_sku``/``vat_rate``
+        via the shared ``build_order_items`` and decrements stock from the
+        default warehouse exactly like checkout (one ORDER_PLACED movement per
+        line). Shipping resolves for real via ``resolve_order_shipping``
+        (rate + dimensional weight); the manual ``discount`` is clamped to the
+        subtotal; ``total = quantize_money(subtotal - discount + shipping)``.
+
+        Eligibility is enforced here (raises ``DraftOrderNotConvertibleError``
+        with a machine reason + status code) so the route is a thin mapper:
+        - not ``open`` or already converted → 409 ``already_converted``
+        - no items → 422 ``no_items``
+        - any line with ``product_id IS NULL`` (product deleted) → 422 ``stale_line``
+        - no owner (``user_id`` NULL and ``guest_email`` blank) → 422 ``no_owner``
+        - any blank shipping-address field → 422 ``missing_address``
+        - ``shipping_method_id`` NULL → 422 ``missing_shipping_method``
+        - variant missing/inactive/required-but-unset → 422 ``variant_unavailable``
+        - no rate for the draft's country+currency → 422 ``shipping_unavailable``
+        - InPost locker method → 422 ``unsupported_method`` (drafts carry no
+          Paczkomat point)
+        - product missing/inactive or insufficient stock → the shared
+          ``ProductUnavailableError`` / ``InsufficientStockError`` propagate
+          (the route maps both to 422, like admin quotes).
+
+        With ``mark_as_paid`` the order is flipped to PAID via
+        ``crud_order.mark_paid`` in the same transaction — this issues the
+        gap-free faktura (rollback-safe). The draft is then marked
+        ``completed`` + ``converted_order_id`` set, deliberately LAST and
+        without a later flush: ``mark_paid`` → ``issue_for_order`` flushes,
+        which would clear the draft's ``get_history`` before the route's
+        audit ``record_update`` reads it.
+        """
+        if draft.status != DraftOrderStatus.OPEN.value or draft.converted_order_id is not None:
+            raise DraftOrderNotConvertibleError(
+                reason="already_converted",
+                message="draft order already converted",
+                status_code=409,
+            )
+        if not draft.items:
+            raise DraftOrderNotConvertibleError(
+                reason="no_items",
+                message="cannot convert a draft order with no line items",
+                status_code=422,
+            )
+        if any(item.product_id is None for item in draft.items):
+            raise DraftOrderNotConvertibleError(
+                reason="stale_line",
+                message="a line references a deleted product; remove it before converting",
+                status_code=422,
+            )
+        if draft.user_id is None and not (draft.guest_email or "").strip():
+            raise DraftOrderNotConvertibleError(
+                reason="no_owner",
+                message="set a customer or a guest email before converting",
+                status_code=422,
+            )
+        if not all(
+            (getattr(draft, field) or "").strip()
+            for field in (
+                "shipping_address",
+                "shipping_city",
+                "shipping_postal_code",
+                "shipping_country",
+            )
+        ):
+            raise DraftOrderNotConvertibleError(
+                reason="missing_address",
+                message="set a complete shipping address before converting",
+                status_code=422,
+            )
+        if draft.shipping_method_id is None:
+            raise DraftOrderNotConvertibleError(
+                reason="missing_shipping_method",
+                message="set a shipping method before converting",
+                status_code=422,
+            )
+
+        default_warehouse = crud_warehouse.get_default(db)
+        if default_warehouse is None:
+            raise RuntimeError("No default warehouse configured; run migrations")
+
+        # Resolve products in one query (quote-convert pattern); the stale_line
+        # guard above guarantees every line has a product_id.
+        product_ids = [item.product_id for item in draft.items]
+        products = {
+            p.id: p
+            for p in db.query(Product)
+            .options(selectinload(Product.variants))
+            .filter(Product.id.in_(product_ids))
+            .all()
+        }
+        variants = load_variants_for_lines(
+            db, [item.variant_id for item in draft.items if item.variant_id is not None]
+        )
+        line_specs = []
+        for item in draft.items:
+            assert item.product_id is not None  # noqa: S101 -- guarded by the stale_line check above
+            line_specs.append(
+                OrderLineSpec(
+                    product_id=item.product_id,
+                    variant_id=item.variant_id,
+                    quantity=item.quantity,
+                    # None override → live catalog price at draft.currency.
+                    unit_price=item.unit_price_override,
+                    line_key=item.id,
+                )
+            )
+        try:
+            order_items, subtotal, line_variants = build_order_items(
+                db,
+                line_specs=line_specs,
+                products=products,
+                variants=variants,
+                default_warehouse_id=default_warehouse.id,
+                currency=draft.currency,
+            )
+        except (VariantRequiredError, VariantUnavailableError) as exc:
+            raise DraftOrderNotConvertibleError(
+                reason="variant_unavailable",
+                message=str(exc),
+                status_code=422,
+            ) from exc
+
+        # Real shipping resolution (unlike quotes, which defer it): the shared
+        # helper applies the rate + dimensional weight. Drafts carry no InPost
+        # Paczkomat point, so a locker method's point-required error maps to
+        # unsupported_method rather than asking for a point we can't collect.
+        assert draft.shipping_country is not None  # noqa: S101 -- guarded by the missing_address check above
+        try:
+            shipping_amount, ship_method = resolve_order_shipping(
+                db,
+                product_lines=[
+                    (products[item.product_id], item.quantity)
+                    for item in draft.items
+                    if item.product_id is not None
+                ],
+                subtotal=subtotal,
+                country=draft.shipping_country,
+                currency=draft.currency,
+                shipping_method_id=draft.shipping_method_id,
+                inpost_point=None,
+            )
+        except ShippingRateUnavailableError as exc:
+            raise DraftOrderNotConvertibleError(
+                reason="shipping_unavailable",
+                message=str(exc),
+                status_code=422,
+            ) from exc
+        except InPostPointRequiredError as exc:
+            raise DraftOrderNotConvertibleError(
+                reason="unsupported_method",
+                message="InPost locker methods are not supported for draft-order "
+                "conversion (a draft carries no Paczkomat point)",
+                status_code=422,
+            ) from exc
+
+        discount = min(draft.discount, subtotal)
+        total = quantize_money(subtotal - discount + shipping_amount)
+
+        is_guest = draft.user_id is None
+        order = Order(
+            user_id=draft.user_id,
+            guest_email=draft.guest_email if is_guest else None,
+            # Opaque 256-bit tracking token, guest orders only (authed orders
+            # keep NULL — their account is the credential). Mirrors checkout.
+            guest_token=secrets.token_urlsafe(32) if is_guest else None,
+            guest_locale=None,
+            order_number=crud_order._generate_order_number(db),
+            status=OrderStatus.PENDING,
+            subtotal=subtotal,
+            tax=ZERO_MONEY,
+            shipping=shipping_amount,
+            discount=discount,
+            total=total,
+            currency=draft.currency,
+            shipping_address=draft.shipping_address,
+            shipping_city=draft.shipping_city,
+            shipping_postal_code=draft.shipping_postal_code,
+            shipping_country=draft.shipping_country,
+            shipping_method_id=ship_method.id,
+            shipping_method_name=ship_method.name,
+            payment_method=payment_method,
+            notes=f"Converted from draft order #{draft.id}",
+            items=order_items,
+        )
+        db.add(order)
+        db.flush()  # populate order.id before writing inventory movements
+
+        for item in draft.items:
+            assert item.product_id is not None  # noqa: S101 -- guarded by the stale_line check above
+            product = products[item.product_id]
+            crud_inventory.apply_delta(
+                db,
+                product=product,
+                delta=-item.quantity,
+                reason=InventoryMovementReason.ORDER_PLACED,
+                warehouse_id=default_warehouse.id,
+                variant=line_variants.get(item.id),
+                actor_user_id=actor_user_id,
+                order_id=order.id,
+                allow_negative=product.allow_backorder,
+            )
+
+        if mark_as_paid:
+            # Same-transaction PENDING→PAID flip + gap-free faktura issue.
+            # issue_for_order flushes — hence this runs BEFORE the draft
+            # marker mutation below (see the docstring).
+            crud_order.mark_paid(
+                db,
+                order=order,
+                payment_intent_id=f"manual-draft-{draft.id}",
+                payment_method=payment_method,
+            )
+
+        # Set the conversion markers but do NOT flush afterwards: the route's
+        # ``record_update(resource_type="draft_order")`` reads ``get_history``
+        # (cleared by flush) to diff the change, and the route owns the commit.
+        # ``order`` is already flushed (above) so its id + items are populated.
+        draft.status = DraftOrderStatus.COMPLETED.value
+        draft.converted_order_id = order.id
+        db.add(draft)
+        return order
 
     # ------------------------------------------------------------------
     # Internals

@@ -18,15 +18,22 @@ preconditions on a line (inactive product, variant required/unavailable) →
 
 from math import ceil
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_admin, get_db
 from app.crud import draft_order as crud_draft_order
-from app.crud.draft_order import DraftOrderItemError, DraftOrderLockedError
+from app.crud.draft_order import (
+    DraftOrderItemError,
+    DraftOrderLockedError,
+    DraftOrderNotConvertibleError,
+)
+from app.crud.order import InsufficientStockError, ProductUnavailableError
+from app.crud.order import order as crud_order
 from app.models.draft_order import DraftOrder, DraftOrderItem
 from app.models.user import User
 from app.schemas.draft_order import (
+    DraftOrderConvert,
     DraftOrderCreate,
     DraftOrderItemCreate,
     DraftOrderItemUpdate,
@@ -35,6 +42,8 @@ from app.schemas.draft_order import (
     DraftOrderStatusLiteral,
     DraftOrderUpdate,
 )
+from app.schemas.order import OrderResponse
+from app.services import order_email
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
@@ -149,6 +158,75 @@ async def update_draft_order(
     audit.record_update(resource_type="draft_order", obj=draft)
     db.commit()
     return crud_draft_order.get(db, draft_id)
+
+
+@router.post(
+    "/{draft_id}/convert",
+    response_model=OrderResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def convert_draft_order(
+    draft_id: int,
+    payload: DraftOrderConvert,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
+):
+    """Convert an **open** draft into a real pending order.
+
+    The order is owned by the draft's customer (``user_id``) or guest
+    (``guest_email`` + a fresh ``guest_token``) — the converting admin is only
+    the audit actor. Lines honour any ``unit_price_override`` (no re-pricing)
+    and otherwise price from the live catalog in the draft's currency; stock
+    is validated + decremented from the default warehouse like a normal
+    order; shipping resolves for real from the draft's address + method; the
+    manual discount is clamped to the subtotal. ``mark_as_paid`` flips the
+    order to PAID in the same transaction (issues the gap-free faktura);
+    ``send_email`` enqueues the confirmation email (plus the paid email when
+    ``mark_as_paid``).
+
+    Eligibility (else error): draft not found → 404; not open / already
+    converted → 409; no items, stale (deleted-product) line, no owner,
+    incomplete shipping address, no shipping method, variant problems,
+    unavailable product, insufficient stock, no rate for the draft's
+    country+currency, or an InPost locker method (drafts carry no Paczkomat
+    point) → 422.
+    """
+    draft = _get_draft_or_404(db, draft_id)
+    try:
+        order = crud_draft_order.convert_to_order(
+            db,
+            draft=draft,
+            payment_method=payload.payment_method,
+            mark_as_paid=payload.mark_as_paid,
+            actor_user_id=current_admin.id,
+        )
+    except DraftOrderNotConvertibleError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    except ProductUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Product {exc.product_id} is unavailable",
+        ) from exc
+    except InsufficientStockError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+    audit.record_create(resource_type="order", obj=order)
+    audit.record_update(resource_type="draft_order", obj=draft)
+    db.commit()
+    if payload.send_email:
+        # Confirmation (+ paid when marked) off the hot path — best-effort,
+        # mirrors the checkout/order routes. Works for guests via guest_email.
+        background_tasks.add_task(
+            order_email.send_order_event_in_background, order.id, "confirmation"
+        )
+        if payload.mark_as_paid:
+            background_tasks.add_task(order_email.send_order_event_in_background, order.id, "paid")
+    # Re-load with items eager-loaded so the 201 body carries the full order view.
+    return crud_order.get_scoped(db, order_id=order.id, user=current_admin)
 
 
 @router.delete("/{draft_id}", status_code=status.HTTP_204_NO_CONTENT)

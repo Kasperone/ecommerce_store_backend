@@ -250,6 +250,67 @@ def build_order_items(
     return items, quantize_money(subtotal), resolved
 
 
+def resolve_order_shipping(
+    db: Session,
+    *,
+    product_lines: Sequence[tuple[Product, int]],
+    subtotal: Decimal,
+    country: str,
+    currency: str,
+    shipping_method_id: int,
+    inpost_point: str | None = None,
+) -> tuple[Decimal, ShippingMethod]:
+    """The shipping-method/rate/billable-weight resolution shared by checkout
+    and admin conversions (draft orders).
+
+    Validates the chosen method has a rate for ``country``+``currency``
+    (raises ``ShippingRateUnavailableError`` on miss), enforces the InPost
+    locker point requirement (``InPostPointRequiredError`` when the method is
+    a locker service and ``inpost_point`` is blank), and computes the amount
+    via the central resolver (free-above → weight-tiers → subtotal-tiers →
+    flat). ``product_lines`` is ``(product, quantity)`` per line — weight is
+    summed from ``product.weight_kg`` (NULL contributes 0 — legacy products
+    with no weight skip the weight-tier branch cleanly).
+
+    Volumetric (dimensional) weight layers in here: if the resolved zone has
+    a ``dim_divisor``, the resolver's ``weight_kg`` input is the **billable**
+    weight = ``max(actual, volumetric)``. Per-line volume = ``l x w x h x
+    qty`` (any missing dim → 0, so legacy un-dimensioned products contribute
+    nothing); divisor comes from the zone; max-with-actual happens here so
+    ``apply_shipping_rate`` stays pure with one ``weight_kg`` input (see
+    ``app/services/dimensional_weight.py``).
+
+    Returns ``(quantized amount, ShippingMethod)``.
+    """
+    method_rate = crud_shipping_rate.resolve_one(
+        db,
+        country_code=country,
+        currency=currency,
+        method_id=shipping_method_id,
+    )
+    if method_rate is None:
+        raise ShippingRateUnavailableError(
+            country_code=country,
+            currency=currency,
+            method_id=shipping_method_id,
+        )
+    ship_method, ship_rate = method_rate
+    # InPost lockers require a chosen Paczkomat point (the storefront
+    # Geowidget supplies it); reject a locker order without one.
+    if is_inpost_locker_method(ship_method) and not (inpost_point or "").strip():
+        raise InPostPointRequiredError()
+    total_weight = sum((product.weight_kg or 0.0) * quantity for product, quantity in product_lines)
+    total_volume_cm3 = sum(
+        line_volume_cm3(product.length_cm, product.width_cm, product.height_cm, quantity)
+        for product, quantity in product_lines
+    )
+    billable_kg = billable_weight_kg(total_weight, total_volume_cm3, ship_rate.zone.dim_divisor)
+    amount = quantize_money(
+        crud_shipping_rate.apply_shipping_rate(ship_rate, subtotal, weight_kg=billable_kg),
+    )
+    return amount, ship_method
+
+
 def status_transition_error(current: OrderStatus, target: OrderStatus) -> str | None:
     """Return an error message if ``current → target`` is not allowed, else None.
 
@@ -351,55 +412,20 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             currency=currency,
         )
 
-        # Shipping resolution: validate the chosen method has a rate for the
-        # caller's country+currency, then compute the amount via the central
-        # resolver (free-above → weight-tiers → subtotal-tiers → flat). 422s
-        # out the route on miss. Cart weight is summed from product.weight_kg
-        # (NULL contributes 0 — legacy products with no weight skip the
-        # weight-tier branch cleanly).
-        #
-        # Volumetric (dimensional) weight layers in here: if the resolved
-        # zone has a ``dim_divisor``, the resolver's ``weight_kg`` input is
-        # the **billable** weight = ``max(actual, volumetric)``. Per-line
-        # volume = ``l × w × h × qty`` (any missing dim → 0, so legacy
-        # un-dimensioned products contribute nothing); divisor comes from
-        # the zone; max-with-actual happens here so ``apply_shipping_rate``
-        # stays pure with one ``weight_kg`` input (see
-        # ``app/services/dimensional_weight.py``).
-        method_rate = crud_shipping_rate.resolve_one(
+        # Shipping resolution lives in the shared resolve_order_shipping helper
+        # (rate lookup + InPost locker point guard + dimensional/billable
+        # weight); 422s out the route on a miss. Shared with the draft-order
+        # conversion so the two paths can't drift.
+        shipping_amount, ship_method = resolve_order_shipping(
             db,
-            country_code=obj_in.shipping_country,
+            product_lines=[(products[line.product_id], line.quantity) for line in obj_in.items],
+            subtotal=subtotal,
+            country=obj_in.shipping_country,
             currency=currency,
-            method_id=obj_in.shipping_method_id,
+            shipping_method_id=obj_in.shipping_method_id,
+            inpost_point=obj_in.inpost_point_id,
         )
-        if method_rate is None:
-            raise ShippingRateUnavailableError(
-                country_code=obj_in.shipping_country,
-                currency=currency,
-                method_id=obj_in.shipping_method_id,
-            )
-        ship_method, ship_rate = method_rate
-        # InPost lockers require a chosen Paczkomat point (the storefront
-        # Geowidget supplies it); reject a locker order without one.
         is_locker = is_inpost_locker_method(ship_method)
-        if is_locker and not (obj_in.inpost_point_id or "").strip():
-            raise InPostPointRequiredError()
-        total_weight = sum(
-            (products[line.product_id].weight_kg or 0.0) * line.quantity for line in obj_in.items
-        )
-        total_volume_cm3 = sum(
-            line_volume_cm3(
-                products[line.product_id].length_cm,
-                products[line.product_id].width_cm,
-                products[line.product_id].height_cm,
-                line.quantity,
-            )
-            for line in obj_in.items
-        )
-        billable_kg = billable_weight_kg(total_weight, total_volume_cm3, ship_rate.zone.dim_divisor)
-        shipping_amount = quantize_money(
-            crud_shipping_rate.apply_shipping_rate(ship_rate, subtotal, weight_kg=billable_kg),
-        )
 
         # Discount resolution: ``pick_best`` is the single source of truth for
         # which coupon (typed code vs active automatics) an order gets — the
