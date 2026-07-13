@@ -102,6 +102,22 @@ class DraftOrderItemUpdate(BaseSchema):
     unit_price_override: Annotated[float | None, Field(ge=0)] = None
 
 
+class DraftOrderConvert(BaseSchema):
+    """Request body for ``POST /api/v1/admin/draft-orders/{id}/convert``.
+
+    ``payment_method`` lands on the order as-is (free-string column; the
+    allowed set here mirrors the admin-conversion MVP — online methods are
+    set by the payment-start flow, not here). ``mark_as_paid`` flips the
+    order to PAID in the same transaction and issues the gap-free faktura.
+    ``send_email`` enqueues the order-confirmation email (plus the paid
+    email when ``mark_as_paid``) — works for guests via ``guest_email``.
+    """
+
+    payment_method: Literal["manual", "cod"] = "manual"
+    mark_as_paid: bool = False
+    send_email: bool = False
+
+
 class DraftOrderItemResponse(TimestampSchema):
     """A draft line as the API returns it.
 
