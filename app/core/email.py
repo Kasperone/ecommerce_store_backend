@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import resend
 
 from app.core.config import settings
-from app.services.brand import get_brand_name
+from app.services.brand import get_email_brand_name
 
 if TYPE_CHECKING:
     from app.models.order import Order
@@ -41,7 +41,7 @@ def send_email(
         Exception: If email sending fails
     """
     try:
-        brand = get_brand_name()
+        brand = get_email_brand_name()
         params = {
             "from": f"{brand} <{settings.EMAIL_FROM}>",
             "to": [email_to],
@@ -84,7 +84,7 @@ def send_verification_email(
     Returns:
         Response from Resend API
     """
-    brand = get_brand_name()
+    brand = get_email_brand_name()
     subject = f"{brand} - Verify your email address"
 
     # Construct verification link
@@ -227,7 +227,7 @@ def send_welcome_email(
     Returns:
         Response from Resend API
     """
-    brand = get_brand_name()
+    brand = get_email_brand_name()
     subject = f"Welcome to {brand}!"
 
     html_content = f"""
@@ -299,7 +299,7 @@ def send_company_invite_email(
     yet — it prompts them to register, at which point the pending membership is
     bound to the new account (``link_pending_invites``).
     """
-    brand = get_brand_name()
+    brand = get_email_brand_name()
     register_url = f"{settings.FRONTEND_URL}/register"
     subject = f"You've been invited to {company_name} on {brand}"
     html_content = f"""
@@ -331,7 +331,7 @@ def send_password_reset_email(
     token: str,
 ) -> dict:
     """Send a password reset email with a one-time link valid for 1 hour."""
-    brand = get_brand_name()
+    brand = get_email_brand_name()
     subject = f"{brand} - Reset your password"
 
     reset_link = f"{settings.FRONTEND_URL}/password-reset/{token}"
@@ -430,7 +430,7 @@ def send_account_locked_email(
     real owner sees it, and it points them at the password reset flow which
     also clears the lockout.
     """
-    brand = get_brand_name()
+    brand = get_email_brand_name()
     subject = f"{brand} - Account temporarily locked"
 
     reset_link = f"{settings.FRONTEND_URL}/password-recovery"
@@ -532,7 +532,7 @@ def send_already_registered_email(
     account with their email. Sent in place of a verification email so that
     /register can return a generic response without leaking account existence.
     """
-    brand = get_brand_name()
+    brand = get_email_brand_name()
     subject = f"{brand} - Account already exists"
 
     login_link = f"{settings.FRONTEND_URL}/login"
@@ -648,7 +648,7 @@ def render_order_email_body(
     composed upstream. The shell labels render in ``lang`` (EN/PL; subject/heading/
     intro are localized upstream). ``order`` must be loaded (``items`` not lazy).
     """
-    brand = get_brand_name()
+    brand = get_email_brand_name()
     currency = order.currency
     labels = _ORDER_EMAIL_LABELS.get(lang, _ORDER_EMAIL_LABELS["en"])
 

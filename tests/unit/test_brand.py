@@ -15,7 +15,7 @@ import pytest
 
 from app.core.config import settings
 from app.services import brand as brand_module
-from app.services.brand import get_brand_name
+from app.services.brand import get_brand_name, get_email_brand_name
 
 
 class _StubSession:
@@ -35,11 +35,13 @@ def stub_session(monkeypatch: pytest.MonkeyPatch) -> _StubSession:
     return session
 
 
-def _stub_store_name(monkeypatch: pytest.MonkeyPatch, store_name: str) -> None:
+def _stub_store_name(
+    monkeypatch: pytest.MonkeyPatch, store_name: str, email_from_name: str = ""
+) -> None:
     monkeypatch.setattr(
         brand_module.crud_store_config,
         "get_singleton",
-        lambda db: SimpleNamespace(store_name=store_name),
+        lambda db: SimpleNamespace(store_name=store_name, email_from_name=email_from_name),
     )
 
 
@@ -62,6 +64,36 @@ def test_custom_fallback_used_over_env(monkeypatch, stub_session):
 def test_store_name_wins_over_custom_fallback(monkeypatch, stub_session):
     _stub_store_name(monkeypatch, "Configured Brand")
     assert get_brand_name(fallback="Feed Title") == "Configured Brand"
+
+
+# ---------------------------------------------------------------------------
+# get_email_brand_name — email_from_name → store_name → env (B1)
+# ---------------------------------------------------------------------------
+
+
+def test_email_brand_prefers_dedicated_field(monkeypatch, stub_session):
+    _stub_store_name(monkeypatch, "Store Brand", email_from_name="Sender Brand")
+    assert get_email_brand_name() == "Sender Brand"
+    # …while the generic (feed) resolver keeps ignoring it:
+    assert get_brand_name() == "Store Brand"
+
+
+def test_email_brand_falls_back_to_store_name(monkeypatch, stub_session):
+    _stub_store_name(monkeypatch, "Store Brand", email_from_name="  ")
+    assert get_email_brand_name() == "Store Brand"
+
+
+def test_email_brand_falls_back_to_env(monkeypatch, stub_session):
+    _stub_store_name(monkeypatch, "", email_from_name="")
+    assert get_email_brand_name() == settings.EMAIL_FROM_NAME
+
+
+def test_email_brand_fail_open(monkeypatch):
+    def _boom() -> None:
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(brand_module, "SessionLocal", _boom)
+    assert get_email_brand_name() == settings.EMAIL_FROM_NAME
 
 
 def test_fail_open_when_db_unavailable(monkeypatch):
