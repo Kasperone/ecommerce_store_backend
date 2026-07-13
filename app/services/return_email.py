@@ -20,6 +20,7 @@ from app.core import email
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.crud import return_request as crud_return_request
+from app.services.brand import get_brand_name
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -108,7 +109,7 @@ def send_return_event(db: Session, ret: ReturnRequest, event: str) -> None:
         f'<p style="margin:16px 0;"><a href="{settings.FRONTEND_URL}/account/orders/'
         f'{ret.order_id}" style="color:#2563eb;">{view_label}</a></p>'
     )
-    subject = entry["subject"].format(name=settings.EMAIL_FROM_NAME, num=order_number)
+    subject = entry["subject"].format(name=get_brand_name(), num=order_number)
     html = f'<h2 style="margin:0 0 12px;">{entry["heading"]}</h2>' f"<p>{entry['intro']}</p>{view}"
     try:
         email.send_email(
