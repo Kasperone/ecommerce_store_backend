@@ -63,6 +63,12 @@ class StoreConfigBase(BaseSchema):
     # Store-wide default low-stock threshold; NULL = no global default (today's
     # behaviour). Applies only where a product's own threshold is NULL.
     low_stock_default_threshold: Annotated[int | None, Field(ge=0)] = None
+    # Abandoned-cart recovery emails (ships disabled; the detection job is the
+    # external-cron script ``app.scripts.send_abandoned_cart_emails``).
+    abandoned_cart_enabled: bool = False
+    # Hours of saved-cart inactivity before a cart counts as abandoned (1-720,
+    # mirrors the model CHECK).
+    abandoned_cart_threshold_hours: Annotated[int, Field(ge=1, le=720)] = 24
 
 
 class StoreConfigUpdate(BaseSchema):
@@ -97,6 +103,8 @@ class StoreConfigUpdate(BaseSchema):
     # Global default low-stock threshold. Send an explicit ``null`` to clear it
     # back to "no global default"; omit the field to leave it unchanged.
     low_stock_default_threshold: Annotated[int | None, Field(ge=0)] = None
+    abandoned_cart_enabled: bool | None = None
+    abandoned_cart_threshold_hours: Annotated[int | None, Field(ge=1, le=720)] = None
 
     _validate_primary_color = field_validator("primary_color")(_validate_primary_color)
 

@@ -13,6 +13,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.crud import saved_cart as crud_saved_cart
 from app.crud import user_consent as crud_user_consent
 from app.models.order import Order
 from app.models.user import User
@@ -48,8 +49,9 @@ def build_export(db: Session, *, user: User) -> dict[str, Any]:
     """Assemble the full personal-data export for ``user``.
 
     Returns a dict matching ``DataExportResponse``: ``user`` profile (minus
-    secrets), ``addresses``, ``orders`` (each with an ``items`` list), and the
-    ``consents`` audit trail (newest-first).
+    secrets), ``addresses``, ``orders`` (each with an ``items`` list), the
+    ``consents`` audit trail (newest-first), and the ``saved_cart`` snapshot
+    (the server-side abandoned-cart mirror; ``null`` when the user has none).
     """
     user_snapshot = _columns_to_dict(user, exclude=_USER_SECRET_FIELDS)
 
@@ -71,9 +73,13 @@ def build_export(db: Session, *, user: User) -> dict[str, Any]:
         _columns_to_dict(row) for row in crud_user_consent.list_for_user(db, user_id=user.id)
     ]
 
+    saved_cart_row = crud_saved_cart.get_by_user(db, user_id=user.id)
+    saved_cart = _columns_to_dict(saved_cart_row) if saved_cart_row is not None else None
+
     return {
         "user": user_snapshot,
         "addresses": addresses,
         "orders": orders_data,
         "consents": consents,
+        "saved_cart": saved_cart,
     }

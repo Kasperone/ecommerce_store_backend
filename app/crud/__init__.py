@@ -29,6 +29,7 @@ from app.crud.report import report
 from app.crud.return_request import return_request
 from app.crud.review import review
 from app.crud.review_vote import review_vote
+from app.crud.saved_cart import saved_cart
 from app.crud.segment import segment
 from app.crud.shipping import method as shipping_method
 from app.crud.shipping import rate as shipping_rate
@@ -77,6 +78,7 @@ __all__ = [
     "shipping_method",
     "shipping_rate",
     "store_config",
+    "saved_cart",
     "tag",
     "user_consent",
     "warehouse",
