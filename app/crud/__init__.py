@@ -11,6 +11,7 @@ from app.crud.corrective_invoice import corrective_invoice
 from app.crud.coupon import coupon
 from app.crud.customer_note import customer_note
 from app.crud.dashboard import dashboard
+from app.crud.draft_order import draft_order
 from app.crud.inventory import inventory
 from app.crud.invoice import invoice
 from app.crud.newsletter import newsletter
@@ -50,6 +51,7 @@ __all__ = [
     "coupon",
     "customer_note",
     "dashboard",
+    "draft_order",
     "product",
     "product_image",
     "product_tag",
