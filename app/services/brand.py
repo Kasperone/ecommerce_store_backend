@@ -25,6 +25,22 @@ from app.crud.store_config import store_config as crud_store_config
 logger = logging.getLogger(__name__)
 
 
+def _read_config_names() -> tuple[str, str]:
+    """``(email_from_name, store_name)`` from the singleton, stripped.
+
+    Raises on any DB problem — callers translate that into their fallback.
+    """
+    db = SessionLocal()
+    try:
+        config = crud_store_config.get_singleton(db)
+        return (
+            (config.email_from_name or "").strip(),
+            (config.store_name or "").strip(),
+        )
+    finally:
+        db.close()
+
+
 def get_brand_name(fallback: str | None = None) -> str:
     """The store's display name: ``store_config.store_name`` or the env fallback.
 
@@ -34,12 +50,22 @@ def get_brand_name(fallback: str | None = None) -> str:
     """
     env_name = fallback if fallback is not None else settings.EMAIL_FROM_NAME
     try:
-        db = SessionLocal()
-        try:
-            store_name = (crud_store_config.get_singleton(db).store_name or "").strip()
-        finally:
-            db.close()
+        _, store_name = _read_config_names()
     except Exception:
         logger.warning("Brand lookup failed; falling back to env value", exc_info=True)
         return env_name
     return store_name or env_name
+
+
+def get_email_brand_name() -> str:
+    """Sender display name for transactional emails.
+
+    Resolution: ``store_config.email_from_name`` (the dedicated field) →
+    ``store_config.store_name`` → env ``EMAIL_FROM_NAME``. Never raises.
+    """
+    try:
+        email_name, store_name = _read_config_names()
+    except Exception:
+        logger.warning("Brand lookup failed; falling back to env value", exc_info=True)
+        return settings.EMAIL_FROM_NAME
+    return email_name or store_name or settings.EMAIL_FROM_NAME
