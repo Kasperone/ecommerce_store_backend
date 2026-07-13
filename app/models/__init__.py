@@ -28,6 +28,12 @@ from app.models.coupon import (
     CouponRedemption,
 )
 from app.models.customer_note import CustomerNote
+from app.models.draft_order import (
+    DRAFT_ORDER_STATUS_VALUES,
+    DraftOrder,
+    DraftOrderItem,
+    DraftOrderStatus,
+)
 from app.models.inventory_movement import InventoryMovement, InventoryMovementReason
 from app.models.invoice import Invoice, InvoiceCounter
 from app.models.newsletter_subscriber import NewsletterSubscriber
@@ -114,6 +120,10 @@ __all__ = [
     "CouponRedemption",
     "COUPON_DISCOUNT_TYPE_VALUES",
     "CustomerNote",
+    "DraftOrder",
+    "DraftOrderItem",
+    "DraftOrderStatus",
+    "DRAFT_ORDER_STATUS_VALUES",
     "Product",
     "ProductImage",
     "ProductTag",
