@@ -1,0 +1,30 @@
+meta {
+  name: Update Collection Hero Alt
+  type: http
+  seq: 7
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/admin/collections/:collection_id/hero
+  body: json
+  auth: inherit
+}
+
+params:path {
+  collection_id: 1
+}
+
+body:json {
+  {
+    "hero_image_alt": "string"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `CollectionHeroAltUpdate`:
+  - `hero_image_alt`: string|null
+
+**Responses:** 200, 422
+}

@@ -24,10 +24,11 @@ docs {
 **Request body** `CampaignCreate`:
   - `name`: string (required)
   - `subject`: string (required)
-  - `audience`: string (required) — one of ['all', 'customers', 'b2b']
+  - `audience`: string (required) — one of ['all', 'customers', 'b2b', 'segment']
   - `status`: string — one of ['draft', 'scheduled', 'sent']
   - `body`: string|null
   - `scheduled_at`: string|null
+  - `segment_id`: integer|null
 
 **Responses:** 201, 422
 }

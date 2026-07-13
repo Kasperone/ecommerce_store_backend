@@ -1,0 +1,44 @@
+meta {
+  name: Update Collection
+  type: http
+  seq: 5
+}
+
+put {
+  url: {{baseUrl}}/api/v1/admin/collections/:collection_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  collection_id: 1
+}
+
+body:json {
+  {
+    "name": "Example",
+    "slug": "example-slug",
+    "description": "string"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `CollectionUpdate`:
+  - `name`: string|null
+  - `slug`: string|null
+  - `description`: string|null
+  - `is_active`: boolean|null
+  - `sort_order`: integer|null
+  - `type`: string|null
+  - `name_pl`: string|null
+  - `slug_pl`: string|null
+  - `description_pl`: string|null
+  - `meta_title`: string|null
+  - `meta_description`: string|null
+  - `meta_title_pl`: string|null
+  - `meta_description_pl`: string|null
+
+**Responses:** 200, 422
+}

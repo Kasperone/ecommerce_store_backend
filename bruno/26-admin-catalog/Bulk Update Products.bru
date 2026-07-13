@@ -1,0 +1,32 @@
+meta {
+  name: Bulk Update Products
+  type: http
+  seq: 16
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/admin/products/bulk
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "product_ids": [],
+    "set": {
+      "price_usd": 10.0,
+      "price_pln": 10.0,
+      "price_eur": 10.0
+    }
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `ProductBulkUpdate`:
+  - `product_ids`: array[integer] (required)
+  - `set`: ProductBulkSet (required)
+
+**Responses:** 200, 422
+}

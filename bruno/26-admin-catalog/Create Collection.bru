@@ -1,0 +1,39 @@
+meta {
+  name: Create Collection
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/collections/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "name": "Example",
+    "slug": "example-slug"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `CollectionCreate`:
+  - `name`: string (required)
+  - `slug`: string (required)
+  - `description`: string|null
+  - `is_active`: boolean
+  - `sort_order`: integer
+  - `type`: string — one of ['manual', 'smart']
+  - `name_pl`: string|null
+  - `slug_pl`: string|null
+  - `description_pl`: string|null
+  - `meta_title`: string|null
+  - `meta_description`: string|null
+  - `meta_title_pl`: string|null
+  - `meta_description_pl`: string|null
+
+**Responses:** 201, 422
+}

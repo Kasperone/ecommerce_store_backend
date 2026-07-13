@@ -1,0 +1,27 @@
+meta {
+  name: Add To Wishlist
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/v1/wishlist
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "product_id": 1
+  }
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Request body** `WishlistItemCreate`:
+  - `product_id`: integer (required)
+  - `variant_id`: integer|null
+
+**Responses:** 200, 422
+}

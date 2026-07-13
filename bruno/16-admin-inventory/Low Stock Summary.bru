@@ -1,0 +1,17 @@
+meta {
+  name: Low Stock Summary
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/inventory/low-stock-summary
+  body: none
+  auth: inherit
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200
+}

@@ -1,0 +1,31 @@
+meta {
+  name: Sync My Cart
+  type: http
+  seq: 1
+}
+
+put {
+  url: {{baseUrl}}/api/v1/carts/mine
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "items": [
+      {
+        "product_id": 1,
+        "quantity": 1
+      }
+    ]
+  }
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Request body** `SavedCartSyncRequest`:
+  - `items`: array[SavedCartItemIn] (required)
+
+**Responses:** 200, 422
+}

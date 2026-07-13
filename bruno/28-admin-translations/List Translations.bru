@@ -1,0 +1,29 @@
+meta {
+  name: List Translations
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/translations/:resource_type
+  body: none
+  auth: inherit
+}
+
+params:path {
+  resource_type: 1
+}
+
+params:query {
+  ~locale: en
+  ~status:
+  ~q: shirt
+  ~page: 1
+  ~page_size: 20
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

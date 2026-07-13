@@ -1,0 +1,40 @@
+meta {
+  name: Update Draft Order
+  type: http
+  seq: 5
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/admin/draft-orders/:draft_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  draft_id: 1
+}
+
+body:json {
+  {
+    "user_id": 1,
+    "guest_email": "buyer@example.com",
+    "shipping_address": "string"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `DraftOrderUpdate`:
+  - `user_id`: integer|null
+  - `guest_email`: string|null
+  - `shipping_address`: string|null
+  - `shipping_city`: string|null
+  - `shipping_postal_code`: string|null
+  - `shipping_country`: string|null
+  - `shipping_method_id`: integer|null
+  - `discount`: number|null
+  - `notes`: string|null
+
+**Responses:** 200, 422
+}

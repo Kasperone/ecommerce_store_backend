@@ -1,0 +1,21 @@
+meta {
+  name: List Resource Types
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/translations/resource-types
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~locale: en
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}
