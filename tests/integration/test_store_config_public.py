@@ -25,6 +25,7 @@ SETTINGS_URL = "/api/v1/admin/settings"
 PUBLIC_KEYS = {
     "store_name",
     "brand_tagline",
+    "primary_color",
     "logo_url",
     "legal_name",
     "address_line",
