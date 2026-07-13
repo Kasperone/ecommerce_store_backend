@@ -24,10 +24,10 @@ from sqlalchemy.orm import Query, Session, selectinload
 from app.core.money import ZERO_MONEY, quantize_money
 from app.crud.inventory import inventory as crud_inventory
 from app.crud.order import (
-    InsufficientStockError,
-    ProductUnavailableError,
+    OrderLineSpec,
     VariantRequiredError,
     VariantUnavailableError,
+    build_order_items,
     load_variants_for_lines,
     resolve_line_variant,
 )
@@ -35,9 +35,8 @@ from app.crud.order import order as crud_order
 from app.crud.warehouse import warehouse as crud_warehouse
 from app.models.company import Company
 from app.models.inventory_movement import InventoryMovementReason
-from app.models.order import Order, OrderItem, OrderStatus
+from app.models.order import Order, OrderStatus
 from app.models.product import Product
-from app.models.product_variant import ProductVariant
 from app.models.quote import Quote, QuoteItem, QuoteStatus
 from app.schemas.quote import QuoteCreate, QuoteItemCreate, QuoteRequestCreate, QuoteUpdate
 
@@ -406,55 +405,42 @@ class CRUDQuote:
         variants = load_variants_for_lines(
             db, [line.variant_id for line in quote.items if line.variant_id is not None]
         )
-        remaining: dict[tuple[int, int | None], int] = {}
-        order_items: list[OrderItem] = []
-        line_variants: dict[int, ProductVariant | None] = {}
+        # Shared stock-check + snapshot loop (crud_order.build_order_items):
+        # honours the quoted unit_price (does NOT re-price) and snapshots
+        # vat_rate from the product so converted B2B orders faktura-decompose
+        # correctly for reduced-rate goods. Variant eligibility — a stale line
+        # (variant deleted → SET NULL on a product that still has active
+        # variants) or a missing/inactive/foreign variant must fail with a
+        # clear reason rather than silently converting at product grain
+        # (plan §7 risk 9).
+        line_specs = []
         for line in quote.items:
-            # product_id is guaranteed non-None by the free_text_line guard above;
-            # bind a non-Optional local so the lookups/error are typed cleanly.
+            # product_id is guaranteed non-None by the free_text_line guard above.
             assert line.product_id is not None  # noqa: S101 -- guarded by the free_text_line check above
-            product_id = line.product_id
-            product = products.get(product_id)
-            if product is None or not product.is_active:
-                raise ProductUnavailableError(product_id)
-            # Variant eligibility — a stale line (variant deleted → SET NULL on
-            # a product that still has active variants) or a missing/inactive/
-            # foreign variant must fail with a clear reason rather than
-            # silently converting at product grain (plan §7 risk 9).
-            try:
-                variant = resolve_line_variant(product, line.variant_id, variants)
-            except (VariantRequiredError, VariantUnavailableError) as exc:
-                raise QuoteNotConvertibleError(
-                    reason="variant_unavailable",
-                    message=str(exc),
-                    status_code=422,
-                ) from exc
-            line_variants[line.id] = variant
-            key = (product.id, variant.id if variant is not None else None)
-            available = remaining.get(
-                key,
-                crud_inventory.get_level_quantity(
-                    db, product=product, warehouse_id=default_warehouse.id, variant=variant
-                ),
-            )
-            if available < line.quantity and not product.allow_backorder:
-                name = product.name if variant is None else f"{product.name} — {variant.title}"
-                raise InsufficientStockError(product.id, name, line.quantity, available)
-            remaining[key] = available - line.quantity
-            order_items.append(
-                OrderItem(
-                    product_id=product.id,
-                    variant_id=variant.id if variant is not None else None,
-                    product_name=product.name,
-                    variant_title=variant.title if variant is not None else None,
-                    product_sku=(variant.sku or product.sku)
-                    if variant is not None
-                    else product.sku,
+            line_specs.append(
+                OrderLineSpec(
+                    product_id=line.product_id,
+                    variant_id=line.variant_id,
                     quantity=line.quantity,
                     unit_price=line.unit_price,  # honour the quoted price — do NOT re-price
-                    total_price=quantize_money(line.unit_price * line.quantity),
+                    line_key=line.id,
                 )
             )
+        try:
+            order_items, _, line_variants = build_order_items(
+                db,
+                line_specs=line_specs,
+                products=products,
+                variants=variants,
+                default_warehouse_id=default_warehouse.id,
+                currency=quote.currency,
+            )
+        except (VariantRequiredError, VariantUnavailableError) as exc:
+            raise QuoteNotConvertibleError(
+                reason="variant_unavailable",
+                message=str(exc),
+                status_code=422,
+            ) from exc
 
         company_name = quote.company.name
         order = Order(

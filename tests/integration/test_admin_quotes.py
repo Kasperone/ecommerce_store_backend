@@ -478,6 +478,36 @@ async def test_convert_happy_path(
     assert detail.json()["converted_order_id"] == body["id"]
 
 
+async def test_convert_snapshots_reduced_vat_rate(
+    client, user_factory, company_factory, product_factory, db_session
+):
+    """Converted order items must carry the product's vat_rate (regression).
+
+    The conversion loop previously omitted ``vat_rate``, silently defaulting
+    every converted line to 23% — wrong fakturas for reduced-rate goods. Now
+    the shared ``build_order_items`` snapshots it on every path.
+    """
+    from app.models.order import OrderItem
+
+    admin = user_factory(email="qt-vat-admin@example.com", role=UserRole.ADMIN)
+    contact = user_factory(email="qt-vat-contact@example.com", role=UserRole.CUSTOMER)
+    company = company_factory(name="VatCo", primary_user_id=contact.id)
+    product = product_factory(stock=5, name="Reduced VAT Good", sku="CV-VAT8", vat_rate=8)
+    qid = await _make_quote(
+        client,
+        admin,
+        company.id,
+        product_id=product.id,
+        quantity=1,
+        unit_price=10.0,
+        status="accepted",
+    )
+    resp = await client.post(f"/api/v1/admin/quotes/{qid}/convert", headers=_headers(admin))
+    assert resp.status_code == 201
+    item = db_session.query(OrderItem).filter(OrderItem.order_id == resp.json()["id"]).one()
+    assert item.vat_rate == 8
+
+
 async def test_convert_404(client, user_factory):
     admin = user_factory(email="qt-conv-404@example.com", role=UserRole.ADMIN)
     assert (
