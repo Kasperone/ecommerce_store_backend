@@ -9,6 +9,7 @@ from app.core.security import get_password_hash, verify_password
 from app.crud.base import CRUDBase
 from app.crud.refresh_token import refresh_token as crud_refresh_token
 from app.models.order import Order, OrderStatus
+from app.models.saved_cart import SavedCart
 from app.models.tag import Tag
 from app.models.user import User, UserRole
 from app.schemas.user import UserCreate, UserUpdate
@@ -403,6 +404,11 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
 
         # Address-book rows are pure PII — drop them entirely (cascade-managed).
         user.addresses.clear()
+
+        # The saved-cart snapshot (abandoned-cart mirror) is behavioural data
+        # tied to the account — drop it too. The FK cascades on hard delete,
+        # but anonymize keeps the user row, so the delete must be explicit.
+        db.query(SavedCart).filter(SavedCart.user_id == user.id).delete()
 
         db.add(user)
         # Revoke every active refresh token so no live session survives the scrub.

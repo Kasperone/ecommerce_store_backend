@@ -217,3 +217,46 @@ async def test_patch_rejects_negative_returns_window(client, user_factory):
         SETTINGS_URL, json={"returns_window_days": -1}, headers=_headers(admin)
     )
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# abandoned-cart recovery config
+# ---------------------------------------------------------------------------
+
+
+async def test_get_returns_abandoned_cart_defaults(client, user_factory):
+    admin = user_factory(email="set-admin-ac0@example.com", role=UserRole.ADMIN)
+    resp = await client.get(SETTINGS_URL, headers=_headers(admin))
+    assert resp.status_code == 200
+    body = resp.json()
+    # Ships disabled (D9); threshold server-defaults to 24h.
+    assert body["abandoned_cart_enabled"] is False
+    assert body["abandoned_cart_threshold_hours"] == 24
+
+
+async def test_patch_updates_abandoned_cart_fields(client, user_factory):
+    admin = user_factory(email="set-admin-ac1@example.com", role=UserRole.ADMIN)
+    resp = await client.patch(
+        SETTINGS_URL,
+        json={"abandoned_cart_enabled": True, "abandoned_cart_threshold_hours": 6},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["abandoned_cart_enabled"] is True
+    assert body["abandoned_cart_threshold_hours"] == 6
+
+    reget = await client.get(SETTINGS_URL, headers=_headers(admin))
+    assert reget.json()["abandoned_cart_enabled"] is True
+    assert reget.json()["abandoned_cart_threshold_hours"] == 6
+
+
+@pytest.mark.parametrize("bad_hours", [0, -1, 721])
+async def test_patch_rejects_out_of_range_abandoned_cart_threshold(client, user_factory, bad_hours):
+    admin = user_factory(email=f"set-admin-ac{bad_hours}@example.com", role=UserRole.ADMIN)
+    resp = await client.patch(
+        SETTINGS_URL,
+        json={"abandoned_cart_threshold_hours": bad_hours},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 422

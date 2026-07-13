@@ -64,6 +64,9 @@ class DataExportResponse(BaseModel):
     addresses: list[dict[str, Any]]
     orders: list[dict[str, Any]]
     consents: list[dict[str, Any]]
+    # The server-side saved-cart snapshot (abandoned-cart recovery mirror);
+    # ``null`` when the user has no row.
+    saved_cart: dict[str, Any] | None = None
 
 
 class AccountDeletionResponse(BaseModel):

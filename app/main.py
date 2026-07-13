@@ -102,6 +102,7 @@ from app.api.v1 import (  # noqa: E402
     auth,
     banners,
     blocks,
+    carts,
     categories,
     collections,
     companies,
@@ -131,6 +132,7 @@ app.include_router(products.router, prefix="/api/v1/products", tags=["Products"]
 app.include_router(categories.router, prefix="/api/v1/categories", tags=["Categories"])
 app.include_router(collections.router, prefix="/api/v1/collections", tags=["Collections"])
 app.include_router(orders.router, prefix="/api/v1/orders", tags=["Orders"])
+app.include_router(carts.router, prefix="/api/v1/carts", tags=["Carts"])
 app.include_router(coupons.router, prefix="/api/v1/coupons", tags=["Coupons"])
 app.include_router(contact.router, prefix="/api/v1", tags=["Contact"])
 app.include_router(banners.router, prefix="/api/v1/banners", tags=["Banners"])

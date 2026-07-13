@@ -20,7 +20,7 @@ admin's edits flow through to invoices/emails without a redeploy. See
 
 from __future__ import annotations
 
-from sqlalchemy import CheckConstraint, Integer, String
+from sqlalchemy import Boolean, CheckConstraint, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import BaseModel
@@ -51,6 +51,10 @@ class StoreConfig(BaseModel):
         CheckConstraint(
             "low_stock_default_threshold IS NULL OR low_stock_default_threshold >= 0",
             name="ck_store_config_low_stock_default_threshold_nonneg",
+        ),
+        CheckConstraint(
+            "abandoned_cart_threshold_hours >= 1",
+            name="ck_store_config_abandoned_cart_threshold_hours_min",
         ),
     )
 
@@ -90,6 +94,13 @@ class StoreConfig(BaseModel):
     # effective threshold is ``COALESCE(product.low_stock_threshold, this)``.
     # Guarded ``>= 0 OR NULL`` by the CHECK above + the schema.
     low_stock_default_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Abandoned-cart recovery emails. Ships disabled (D9 of the abandoned-cart
+    # plan) — enabling is an admin Settings toggle + the external cron entry that
+    # runs ``python -m app.scripts.send_abandoned_cart_emails``.
+    abandoned_cart_enabled: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    # Hours of saved-cart inactivity before a cart counts as abandoned.
+    # Guarded >= 1 by the CHECK above + the schema (ge=1, le=720).
+    abandoned_cart_threshold_hours: Mapped[int] = mapped_column(Integer, server_default="24")
 
     def __repr__(self) -> str:
         return f"<StoreConfig id={self.id} {self.store_name!r} vat={self.invoice_vat_rate}>"
