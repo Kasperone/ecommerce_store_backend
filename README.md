@@ -92,6 +92,19 @@ command on an existing store is safe: admin-edited shipping rates, homepage
 content, store config, and the existing admin's password are all left
 untouched (steps report `OK`/`SKIP`, nothing is duplicated or overwritten).
 
+**Demo catalog (`--demo`)** — add `--demo` to also seed a small browsable
+demo catalog for client demos (inserted before the search reindex, so demo
+products get indexed too): 3 categories, 6 products (multi-currency prices,
+full EN+PL copy, one reduced-VAT item, one with a Size × Color variant
+matrix), a `demo-bestsellers` collection and a `DEMO10` coupon (10% off).
+Everything uses a `demo-` slug prefix (coupon `DEMO10`, SKUs `DEMO-*`), so
+it is easy to find and remove before go-live — either deactivate/delete via
+the admin catalog pages, or in SQL start from
+`SELECT id FROM products WHERE slug LIKE 'demo-%'` (same `LIKE 'demo-%'`
+pattern for `categories` and `collections`, plus the `DEMO10` coupon). The
+demo step is idempotent like the rest: existing `demo-` objects are skipped,
+never duplicated or updated. Standalone rerun: `python -m app.scripts.seed_demo`.
+
 To create or rotate an admin on its own:
 
 ```bash

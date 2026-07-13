@@ -12,9 +12,16 @@ idempotent so the whole command is safe to re-run at any time:
   4. homepage CMS page seed            (published ``home`` page, en + pl)
   5. initial admin user                (only when ADMIN_EMAIL + ADMIN_PASSWORD
                                         env vars are set, else SKIP with hint)
-  6. Meilisearch reindex               (fail-SOFT: unconfigured/unreachable
+  6. demo catalog                      (only with ``--demo``: browsable demo
+                                        categories/products/variants/collection
+                                        + a DEMO10 coupon, all ``demo-`` prefixed)
+  7. Meilisearch reindex               (fail-SOFT: unconfigured/unreachable
                                         engine logs a warning and the exit
                                         code stays 0; ``--skip-search`` skips)
+
+Without ``--demo`` the demo step is omitted entirely (5 seeding steps + the
+reindex, numbered [n/6] exactly as before). The demo step runs *before* the
+reindex so demo products land in the search indexes in the same bootstrap.
 
 Every step other than the search reindex is fatal on failure (non-zero exit,
 fail-fast) so scripted provisioning can't half-succeed silently.
@@ -34,7 +41,7 @@ from app.core.search import meili_configured
 from app.crud.store_config import SINGLETON_ID
 from app.crud.store_config import store_config as crud_store_config
 from app.models.store_config import StoreConfig
-from app.scripts import reindex_search, seed_homepage_page, seed_shipping
+from app.scripts import reindex_search, seed_demo, seed_homepage_page, seed_shipping
 from app.scripts.create_admin import main as create_admin_main
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -111,6 +118,13 @@ def step_admin() -> str | None:
     return None
 
 
+def step_demo() -> None:
+    """Demo catalog (idempotent get-or-create on ``demo-`` slugs / DEMO10)."""
+    rc = seed_demo.main()
+    if rc != 0:
+        raise RuntimeError(f"seed_demo exited {rc}")
+
+
 def step_search() -> str | None:
     """Rebuild the Meilisearch indexes. Returns a skip-reason string when the
     engine is unconfigured; raises when configured but unreachable (the caller
@@ -127,15 +141,18 @@ def step_search() -> str | None:
 def run(args: argparse.Namespace) -> int:
     """Sequence the bootstrap steps. Fail-fast on any fatal step; the search
     reindex is the single fail-soft step (warn + exit 0)."""
+    # ``--demo`` inserts one extra step before the reindex; without it the
+    # numbering is exactly the historical [n/6].
+    total = TOTAL_STEPS + (1 if args.demo else 0)
 
     def ok(n: int, name: str, detail: str = "") -> None:
-        logger.info("[%d/%d] %s ... OK%s", n, TOTAL_STEPS, name, f" ({detail})" if detail else "")
+        logger.info("[%d/%d] %s ... OK%s", n, total, name, f" ({detail})" if detail else "")
 
     def skip(n: int, name: str, reason: str) -> None:
-        logger.info("[%d/%d] %s ... SKIP — %s", n, TOTAL_STEPS, name, reason)
+        logger.info("[%d/%d] %s ... SKIP — %s", n, total, name, reason)
 
     def fail(n: int, name: str) -> int:
-        logger.exception("[%d/%d] %s ... FAIL", n, TOTAL_STEPS, name)
+        logger.exception("[%d/%d] %s ... FAIL", n, total, name)
         return 1
 
     # 1. migrations
@@ -178,22 +195,31 @@ def run(args: argparse.Namespace) -> int:
     except Exception:
         return fail(5, "initial admin")
 
-    # 6. search reindex — fail-soft
+    # 6 (only with --demo). demo catalog — before the reindex so the demo
+    # products land in the search indexes in the same bootstrap.
+    if args.demo:
+        try:
+            step_demo()
+            ok(6, "demo catalog")
+        except Exception:
+            return fail(6, "demo catalog")
+
+    # Last step: search reindex — fail-soft
     if args.skip_search:
-        skip(6, "search reindex", "--skip-search")
+        skip(total, "search reindex", "--skip-search")
     else:
         try:
             reason = step_search()
             if reason is not None:
-                skip(6, "search reindex", reason)
+                skip(total, "search reindex", reason)
             else:
-                ok(6, "search reindex")
+                ok(total, "search reindex")
         except Exception as exc:
             logger.warning(
                 "[%d/%d] search reindex ... FAIL (non-fatal): %s — rerun "
                 "python -m app.scripts.reindex_search once Meilisearch is up",
-                6,
-                TOTAL_STEPS,
+                total,
+                total,
                 exc,
             )
 
@@ -215,6 +241,14 @@ def main(argv: list[str] | None = None) -> int:
         "--skip-search",
         action="store_true",
         help="Skip the Meilisearch reindex step",
+    )
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help=(
+            "Also seed a browsable demo catalog (demo- prefixed categories/"
+            "products/variants/collection + a DEMO10 coupon)"
+        ),
     )
     return run(parser.parse_args(argv))
 
