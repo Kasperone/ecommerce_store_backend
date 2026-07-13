@@ -26,6 +26,7 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.crud import store_config as crud_store_config
 from app.models.product import Product
+from app.services.brand import get_brand_name
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -91,7 +92,7 @@ def send_low_stock_report(db: Session, recipients: list[str], products: list[Pro
     never bubble into the caller's request or transaction (mirrors the order/
     campaign best-effort posture).
     """
-    subject = f"{settings.EMAIL_FROM_NAME} — Low-stock report ({len(products)} product(s))"
+    subject = f"{get_brand_name()} — Low-stock report ({len(products)} product(s))"
     html = _report_html(products)
     for recipient in recipients:
         try:
