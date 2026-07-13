@@ -24,6 +24,7 @@ def calls(monkeypatch) -> list[str]:
     monkeypatch.setattr(seed_all, "step_shipping", lambda: log.append("shipping"))
     monkeypatch.setattr(seed_all, "step_homepage", lambda: log.append("homepage"))
     monkeypatch.setattr(seed_all, "step_admin", lambda: (log.append("admin"), None)[1])
+    monkeypatch.setattr(seed_all, "step_demo", lambda: log.append("demo"))
     monkeypatch.setattr(seed_all, "step_search", lambda: (log.append("search"), None)[1])
     return log
 
@@ -36,6 +37,34 @@ def test_happy_path_runs_all_steps_in_order(calls):
 def test_skip_flags(calls):
     assert seed_all.main(["--skip-migrations", "--skip-search"]) == 0
     assert calls == ["store_config", "shipping", "homepage", "admin"]
+
+
+def test_demo_flag_inserts_demo_step_before_search(calls):
+    assert seed_all.main(["--demo"]) == 0
+    assert calls == [
+        "migrations",
+        "store_config",
+        "shipping",
+        "homepage",
+        "admin",
+        "demo",
+        "search",
+    ]
+
+
+def test_default_run_never_touches_demo_step(calls):
+    """Without --demo the behavior is identical to the pre-demo orchestrator."""
+    assert seed_all.main([]) == 0
+    assert "demo" not in calls
+
+
+def test_demo_failure_is_fatal(calls, monkeypatch):
+    monkeypatch.setattr(
+        seed_all, "step_demo", lambda: (_ for _ in ()).throw(RuntimeError("seed_demo exited 1"))
+    )
+    assert seed_all.main(["--demo"]) == 1
+    # Fail-fast: the search reindex never ran.
+    assert "search" not in calls
 
 
 def test_search_failure_is_soft(calls, monkeypatch):
