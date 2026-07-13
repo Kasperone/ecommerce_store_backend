@@ -59,6 +59,10 @@ class StoreConfig(BaseModel):
     # Sender display name for transactional emails; blank → store_name → env
     # fallback (resolution in app/services/brand.py::get_email_brand_name).
     email_from_name: Mapped[str] = mapped_column(String(255), server_default="")
+    # Storefront primary brand color as '#rrggbb' (lowercase); blank = the
+    # built-in default theme. The frontend generates the full Nuxt UI
+    # primary-color ramp from this at render time (shared/utils/theme.ts).
+    primary_color: Mapped[str] = mapped_column(String(7), server_default="")
     logo_url: Mapped[str] = mapped_column(String(1024), server_default="")
     legal_name: Mapped[str] = mapped_column(String(255), server_default="")
     address_line: Mapped[str] = mapped_column(String(255), server_default="")
