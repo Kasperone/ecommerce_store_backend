@@ -1,0 +1,21 @@
+meta {
+  name: Delete Segment
+  type: http
+  seq: 4
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/admin/segments/:segment_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  segment_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 204, 422
+}

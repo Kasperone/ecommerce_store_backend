@@ -1,0 +1,29 @@
+meta {
+  name: Create Draft Order
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/draft-orders/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "currency": "USD"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `DraftOrderCreate`:
+  - `currency`: string (required) — one of ['USD', 'PLN', 'EUR']
+  - `user_id`: integer|null
+  - `guest_email`: string|null
+  - `notes`: string|null
+
+**Responses:** 201, 422
+}

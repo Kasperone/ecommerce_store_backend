@@ -1,0 +1,17 @@
+meta {
+  name: Email Low Stock Report
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/inventory/low-stock-report/email
+  body: none
+  auth: inherit
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200
+}

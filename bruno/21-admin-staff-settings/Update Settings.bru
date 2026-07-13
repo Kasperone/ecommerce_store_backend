@@ -14,7 +14,7 @@ body:json {
   {
     "store_name": "Example",
     "brand_tagline": "string",
-    "logo_url": "https://example.com/image.jpg"
+    "email_from_name": "buyer@example.com"
   }
 }
 
@@ -24,6 +24,8 @@ docs {
 **Request body** `StoreConfigUpdate`:
   - `store_name`: string|null
   - `brand_tagline`: string|null
+  - `email_from_name`: string|null
+  - `primary_color`: string|null
   - `logo_url`: string|null
   - `legal_name`: string|null
   - `address_line`: string|null
@@ -42,6 +44,9 @@ docs {
   - `social_youtube`: string|null
   - `invoice_vat_rate`: integer|null
   - `returns_window_days`: integer|null
+  - `low_stock_default_threshold`: integer|null
+  - `abandoned_cart_enabled`: boolean|null
+  - `abandoned_cart_threshold_hours`: integer|null
 
 **Responses:** 200, 422
 }

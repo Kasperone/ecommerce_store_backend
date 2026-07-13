@@ -1,0 +1,25 @@
+meta {
+  name: Upload Collection Hero
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/collections/:collection_id/hero
+  body: multipartForm
+  auth: inherit
+}
+
+params:path {
+  collection_id: 1
+}
+
+body:multipart-form {
+  file: @file()
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 201, 422
+}

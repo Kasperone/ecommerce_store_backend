@@ -1,0 +1,21 @@
+meta {
+  name: Get Draft Order
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/draft-orders/:draft_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  draft_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

@@ -31,6 +31,7 @@ docs {
   - `gtin`: string|null
   - `mpn`: string|null
   - `condition`: string — one of ['new', 'refurbished', 'used']
+  - `google_product_category`: string|null
   - `meta_title`: string|null
   - `meta_description`: string|null
   - `meta_title_pl`: string|null
@@ -38,6 +39,7 @@ docs {
   - `price_usd`: number|null
   - `price_pln`: number|null
   - `price_eur`: number|null
+  - `vat_rate`: integer
   - `stock`: integer
   - `low_stock_threshold`: integer|null
   - `allow_backorder`: boolean
@@ -48,6 +50,7 @@ docs {
   - `is_active`: boolean
   - `is_featured`: boolean
   - `category_id`: integer|null
+  - `tags`: array|null
 
 **Responses:** 201, 422
 }

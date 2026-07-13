@@ -1,0 +1,25 @@
+meta {
+  name: Import Products
+  type: http
+  seq: 18
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/products/import
+  body: multipartForm
+  auth: inherit
+}
+
+params:query {
+  ~dry_run:
+}
+
+body:multipart-form {
+  file: @file()
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

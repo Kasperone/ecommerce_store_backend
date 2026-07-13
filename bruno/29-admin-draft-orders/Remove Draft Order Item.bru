@@ -1,0 +1,22 @@
+meta {
+  name: Remove Draft Order Item
+  type: http
+  seq: 8
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/admin/draft-orders/:draft_id/items/:item_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  draft_id: 1
+  item_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 204, 422
+}

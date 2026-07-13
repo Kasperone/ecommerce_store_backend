@@ -1,0 +1,22 @@
+meta {
+  name: List Collections
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/collections/
+  body: none
+  auth: none
+}
+
+params:query {
+  ~skip: 0
+  ~limit: 10
+}
+
+docs {
+**Access:** Public (no token)
+
+**Responses:** 200, 422
+}
