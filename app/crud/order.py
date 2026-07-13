@@ -13,7 +13,10 @@ Tax and shipping are 0.0 for now — there is no tax/shipping engine yet, so
 from __future__ import annotations
 
 import secrets
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 
 from sqlalchemy.orm import Query, Session, selectinload
 
@@ -160,6 +163,93 @@ def load_variants_for_lines(db: Session, variant_ids: list[int]) -> dict[int, Pr
     }
 
 
+@dataclass(frozen=True)
+class OrderLineSpec:
+    """One catalog line to build into an ``OrderItem``.
+
+    ``unit_price=None`` means "price from the live catalog at ``currency``"
+    (the storefront checkout behavior); a concrete ``Decimal`` pins the line to
+    a negotiated/overridden price (quote conversion, admin draft orders).
+    ``line_key`` is an opaque caller identifier echoed back in the resolved-
+    variants map (quote conversion keys it by quote-line id for the later
+    inventory pass).
+    """
+
+    product_id: int
+    variant_id: int | None
+    quantity: int
+    unit_price: Decimal | None = None
+    line_key: int | None = None
+
+
+def build_order_items(
+    db: Session,
+    *,
+    line_specs: Sequence[OrderLineSpec],
+    products: dict[int, Product],
+    variants: dict[int, ProductVariant],
+    default_warehouse_id: int,
+    currency: str,
+) -> tuple[list[OrderItem], Decimal, dict[int | None, ProductVariant | None]]:
+    """The stock-check + snapshot loop shared by checkout and admin conversions.
+
+    For each line: validates the product is live, resolves the variant grain
+    (``VariantRequiredError`` / ``VariantUnavailableError``), checks
+    default-warehouse availability against a local running remainder (so
+    duplicate lines for the same (product, variant) pair are checked against
+    the not-yet-committed level; ``allow_backorder`` bypasses), prices it
+    (catalog price at ``currency`` unless the spec pins ``unit_price``), and
+    snapshots the ``OrderItem`` — including ``vat_rate`` from the product, so
+    per-line VAT is always faktura-correct regardless of the calling path.
+
+    Returns ``(items, subtotal, resolved_variants_by_line_key)``. The caller
+    owns the later stock decrement (``apply_delta`` needs ``order.id``, which
+    only exists post-flush).
+    """
+    items: list[OrderItem] = []
+    subtotal = ZERO_MONEY
+    resolved: dict[int | None, ProductVariant | None] = {}
+    remaining: dict[tuple[int, int | None], int] = {}
+    for spec in line_specs:
+        product = products.get(spec.product_id)
+        if product is None or not product.is_active:
+            raise ProductUnavailableError(spec.product_id)
+        variant = resolve_line_variant(product, spec.variant_id, variants)
+        resolved[spec.line_key] = variant
+        key = (product.id, variant.id if variant is not None else None)
+        available = remaining.get(
+            key,
+            crud_inventory.get_level_quantity(
+                db, product=product, warehouse_id=default_warehouse_id, variant=variant
+            ),
+        )
+        if available < spec.quantity and not product.allow_backorder:
+            name = product.name if variant is None else f"{product.name} — {variant.title}"
+            raise InsufficientStockError(product.id, name, spec.quantity, available)
+        remaining[key] = available - spec.quantity
+        unit_price = spec.unit_price
+        if unit_price is None:
+            unit_price = (
+                variant.get_price(currency) if variant is not None else product.get_price(currency)
+            )
+        line_total = quantize_money(unit_price * spec.quantity)
+        subtotal += line_total
+        items.append(
+            OrderItem(
+                product_id=product.id,
+                variant_id=variant.id if variant is not None else None,
+                product_name=product.name,
+                variant_title=variant.title if variant is not None else None,
+                product_sku=(variant.sku or product.sku) if variant is not None else product.sku,
+                quantity=spec.quantity,
+                unit_price=unit_price,
+                total_price=line_total,
+                vat_rate=product.vat_rate,
+            )
+        )
+    return items, quantize_money(subtotal), resolved
+
+
 def status_transition_error(current: OrderStatus, target: OrderStatus) -> str | None:
     """Return an error message if ``current → target`` is not allowed, else None.
 
@@ -240,51 +330,26 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         if default_warehouse is None:
             raise RuntimeError("No default warehouse configured; run migrations")
 
-        items: list[OrderItem] = []
-        subtotal = ZERO_MONEY
-        # Validate against a local running remainder so duplicate lines for the
-        # same (product, variant) pair are checked against the not-yet-committed
-        # default-warehouse level. The real decrement + ledger write happens
-        # after the flush (apply_delta needs order.id) — see the second loop below.
-        remaining: dict[tuple[int, int | None], int] = {}
-        for line in obj_in.items:
-            product = products.get(line.product_id)
-            if product is None or not product.is_active:
-                raise ProductUnavailableError(line.product_id)
-            variant = resolve_line_variant(product, line.variant_id, variants)
-            key = (product.id, variant.id if variant is not None else None)
-            available = remaining.get(
-                key,
-                crud_inventory.get_level_quantity(
-                    db, product=product, warehouse_id=default_warehouse.id, variant=variant
-                ),
-            )
-            if available < line.quantity and not product.allow_backorder:
-                name = product.name if variant is None else f"{product.name} — {variant.title}"
-                raise InsufficientStockError(product.id, name, line.quantity, available)
-            remaining[key] = available - line.quantity
-            unit_price = (
-                variant.get_price(currency) if variant is not None else product.get_price(currency)
-            )
-            line_total = quantize_money(unit_price * line.quantity)
-            subtotal += line_total
-            items.append(
-                OrderItem(
-                    product_id=product.id,
-                    variant_id=variant.id if variant is not None else None,
-                    product_name=product.name,
-                    variant_title=variant.title if variant is not None else None,
-                    product_sku=(variant.sku or product.sku)
-                    if variant is not None
-                    else product.sku,
+        # The stock-check + snapshot loop is shared with admin conversions
+        # (quote → order today, draft orders next); duplicate-line remainder
+        # semantics and the vat_rate snapshot live in build_order_items. The
+        # real decrement + ledger write happens after the flush (apply_delta
+        # needs order.id) — see the second loop below.
+        items, subtotal, _ = build_order_items(
+            db,
+            line_specs=[
+                OrderLineSpec(
+                    product_id=line.product_id,
+                    variant_id=line.variant_id,
                     quantity=line.quantity,
-                    unit_price=unit_price,
-                    total_price=line_total,
-                    vat_rate=product.vat_rate,
                 )
-            )
-
-        subtotal = quantize_money(subtotal)
+                for line in obj_in.items
+            ],
+            products=products,
+            variants=variants,
+            default_warehouse_id=default_warehouse.id,
+            currency=currency,
+        )
 
         # Shipping resolution: validate the chosen method has a rate for the
         # caller's country+currency, then compute the amount via the central
