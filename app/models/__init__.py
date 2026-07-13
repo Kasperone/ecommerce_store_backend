@@ -72,6 +72,7 @@ from app.models.return_request import (
 )
 from app.models.review import Review, ReviewStatus
 from app.models.review_vote import ReviewVote
+from app.models.saved_cart import SavedCart
 from app.models.segment import Segment
 from app.models.shipping import (
     ShippingMethod,
@@ -166,6 +167,7 @@ __all__ = [
     "Review",
     "ReviewStatus",
     "ReviewVote",
+    "SavedCart",
     "Segment",
     "ShippingMethod",
     "ShippingRate",

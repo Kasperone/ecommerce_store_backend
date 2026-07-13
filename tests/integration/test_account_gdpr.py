@@ -95,7 +95,9 @@ async def test_data_export_shape_and_contents(client, db_session, user_factory, 
     assert resp.status_code == 200
     body = resp.json()
 
-    assert set(body.keys()) == {"user", "addresses", "orders", "consents"}
+    assert set(body.keys()) == {"user", "addresses", "orders", "consents", "saved_cart"}
+    # No server-side cart snapshot for this user.
+    assert body["saved_cart"] is None
     assert body["user"]["email"] == "export-shape@example.com"
     assert body["user"]["first_name"] == "Anna"
     # Secrets never leak.
@@ -130,6 +132,21 @@ async def test_data_export_owner_scoped(client, db_session, user_factory, produc
 async def test_data_export_requires_auth(client):
     resp = await client.post("/api/v1/me/data-export")
     assert resp.status_code == 401
+
+
+async def test_data_export_includes_saved_cart(client, db_session, user_factory, product_factory):
+    """The server-side cart snapshot (abandoned-cart mirror) is personal data."""
+    product = product_factory()
+    user = user_factory(email="export-cart@example.com")
+    items = [{"product_id": product.id, "variant_id": None, "quantity": 2}]
+    await client.put("/api/v1/carts/mine", json={"items": items}, headers=_headers(user))
+
+    resp = await client.post("/api/v1/me/data-export", headers=_headers(user))
+    assert resp.status_code == 200
+    saved_cart = resp.json()["saved_cart"]
+    assert saved_cart is not None
+    assert saved_cart["user_id"] == user.id
+    assert saved_cart["items"] == items
 
 
 # --- account deletion ------------------------------------------------------
@@ -167,6 +184,22 @@ async def test_deletion_request_sets_flag_and_anonymizes(client, db_session, use
     assert user.company_name is None
     assert user.is_active is False
     assert user.addresses == []
+
+
+async def test_deletion_removes_saved_cart(client, db_session, user_factory, product_factory):
+    """Anonymize drops the saved-cart snapshot (the user row is kept, so the
+    FK cascade never fires — the delete is explicit in ``crud_user.anonymize``)."""
+    from app.models.saved_cart import SavedCart
+
+    product = product_factory()
+    user = user_factory(email="delete-cart@example.com")
+    items = [{"product_id": product.id, "variant_id": None, "quantity": 1}]
+    await client.put("/api/v1/carts/mine", json={"items": items}, headers=_headers(user))
+    assert db_session.query(SavedCart).filter(SavedCart.user_id == user.id).count() == 1
+
+    resp = await client.post("/api/v1/me/account-deletion-request", headers=_headers(user))
+    assert resp.status_code == 200
+    assert db_session.query(SavedCart).filter(SavedCart.user_id == user.id).count() == 0
 
 
 async def test_deletion_keeps_order_rows(client, db_session, user_factory, product_factory):
