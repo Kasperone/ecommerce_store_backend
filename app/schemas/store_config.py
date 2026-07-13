@@ -12,11 +12,26 @@ untouched (``exclude_unset`` in the CRUD layer).
 
 from __future__ import annotations
 
+import re
 from typing import Annotated
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from app.schemas.base import BaseSchema, TimestampSchema
+
+_HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _validate_primary_color(value: str | None) -> str | None:
+    """Blank stays blank (default theme); otherwise require '#rrggbb', lowercased."""
+    if value is None:
+        return value
+    value = value.strip()
+    if value == "":
+        return value
+    if not _HEX_COLOR_RE.match(value):
+        raise ValueError("primary_color must be '#rrggbb' hex or blank")
+    return value.lower()
 
 
 class StoreConfigBase(BaseSchema):
@@ -25,6 +40,7 @@ class StoreConfigBase(BaseSchema):
     store_name: Annotated[str, Field(max_length=255)]
     brand_tagline: Annotated[str, Field(max_length=255)]
     email_from_name: Annotated[str, Field(max_length=255)]
+    primary_color: Annotated[str, Field(max_length=7)]
     logo_url: Annotated[str, Field(max_length=1024)]
     legal_name: Annotated[str, Field(max_length=255)]
     address_line: Annotated[str, Field(max_length=255)]
@@ -59,6 +75,7 @@ class StoreConfigUpdate(BaseSchema):
     store_name: Annotated[str | None, Field(max_length=255)] = None
     brand_tagline: Annotated[str | None, Field(max_length=255)] = None
     email_from_name: Annotated[str | None, Field(max_length=255)] = None
+    primary_color: Annotated[str | None, Field(max_length=7)] = None
     logo_url: Annotated[str | None, Field(max_length=1024)] = None
     legal_name: Annotated[str | None, Field(max_length=255)] = None
     address_line: Annotated[str | None, Field(max_length=255)] = None
@@ -81,6 +98,8 @@ class StoreConfigUpdate(BaseSchema):
     # back to "no global default"; omit the field to leave it unchanged.
     low_stock_default_threshold: Annotated[int | None, Field(ge=0)] = None
 
+    _validate_primary_color = field_validator("primary_color")(_validate_primary_color)
+
 
 class StoreConfigResponse(StoreConfigBase, TimestampSchema):
     """The store-config row as the API returns it (includes ``id`` + timestamps)."""
@@ -97,6 +116,7 @@ class StoreConfigPublic(BaseSchema):
 
     store_name: str
     brand_tagline: str
+    primary_color: str
     logo_url: str
     legal_name: str
     address_line: str

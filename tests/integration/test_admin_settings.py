@@ -170,6 +170,29 @@ async def test_patch_accepts_boundary_vat(client, user_factory, ok_rate):
     assert resp.json()["invoice_vat_rate"] == ok_rate
 
 
+@pytest.mark.parametrize("bad_color", ["red", "#12345", "#1234567", "12ab34", "#12gh56"])
+async def test_patch_rejects_malformed_primary_color(client, user_factory, bad_color):
+    admin = user_factory(email=f"set-admin-col-{hash(bad_color)}@example.com", role=UserRole.ADMIN)
+    resp = await client.patch(
+        SETTINGS_URL, json={"primary_color": bad_color}, headers=_headers(admin)
+    )
+    assert resp.status_code == 422
+
+
+async def test_patch_primary_color_normalizes_and_clears(client, user_factory):
+    admin = user_factory(email="set-admin-color@example.com", role=UserRole.ADMIN)
+    # Uppercase hex is accepted and normalized to lowercase.
+    resp = await client.patch(
+        SETTINGS_URL, json={"primary_color": "#1E40AF"}, headers=_headers(admin)
+    )
+    assert resp.status_code == 200
+    assert resp.json()["primary_color"] == "#1e40af"
+    # Blank clears back to the default theme.
+    resp = await client.patch(SETTINGS_URL, json={"primary_color": ""}, headers=_headers(admin))
+    assert resp.status_code == 200
+    assert resp.json()["primary_color"] == ""
+
+
 # ---------------------------------------------------------------------------
 # returns_window_days (RMA)
 # ---------------------------------------------------------------------------
