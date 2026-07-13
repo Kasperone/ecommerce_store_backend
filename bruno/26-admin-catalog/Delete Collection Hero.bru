@@ -1,0 +1,21 @@
+meta {
+  name: Delete Collection Hero
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/admin/collections/:collection_id/hero
+  body: none
+  auth: inherit
+}
+
+params:path {
+  collection_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 204, 422
+}

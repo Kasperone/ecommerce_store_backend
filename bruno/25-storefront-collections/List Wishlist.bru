@@ -1,0 +1,17 @@
+meta {
+  name: List Wishlist
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/api/v1/wishlist
+  body: none
+  auth: inherit
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Responses:** 200
+}

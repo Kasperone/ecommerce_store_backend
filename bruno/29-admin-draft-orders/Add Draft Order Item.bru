@@ -1,0 +1,34 @@
+meta {
+  name: Add Draft Order Item
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/draft-orders/:draft_id/items
+  body: json
+  auth: inherit
+}
+
+params:path {
+  draft_id: 1
+}
+
+body:json {
+  {
+    "product_id": 1,
+    "quantity": 1
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `DraftOrderItemCreate`:
+  - `product_id`: integer (required)
+  - `variant_id`: integer|null
+  - `quantity`: integer (required)
+  - `unit_price_override`: number|null
+
+**Responses:** 201, 422
+}

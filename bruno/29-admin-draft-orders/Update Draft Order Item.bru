@@ -1,0 +1,33 @@
+meta {
+  name: Update Draft Order Item
+  type: http
+  seq: 9
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/admin/draft-orders/:draft_id/items/:item_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  draft_id: 1
+  item_id: 1
+}
+
+body:json {
+  {
+    "quantity": 1,
+    "unit_price_override": 10.0
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `DraftOrderItemUpdate`:
+  - `quantity`: integer|null
+  - `unit_price_override`: number|null
+
+**Responses:** 200, 422
+}

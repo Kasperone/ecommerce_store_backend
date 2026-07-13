@@ -1,0 +1,41 @@
+meta {
+  name: Preview Unsaved Segment
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/segments/preview
+  body: json
+  auth: inherit
+}
+
+params:query {
+  ~limit: 10
+}
+
+body:json {
+  {
+    "tag_ids": [],
+    "tag_match": "any",
+    "min_order_count": 1
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `SegmentFilters`:
+  - `tag_ids`: array|null
+  - `tag_match`: string — one of ['any', 'all']
+  - `min_order_count`: integer|null
+  - `max_order_count`: integer|null
+  - `min_total_spent`: number|null
+  - `currency`: string|null
+  - `last_order_before`: string|null
+  - `last_order_after`: string|null
+  - `country`: string|null
+  - `role`: string|null
+
+**Responses:** 200, 422
+}

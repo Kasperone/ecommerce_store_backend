@@ -1,0 +1,21 @@
+meta {
+  name: Delete Product Tag
+  type: http
+  seq: 14
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/admin/product-tags/:tag_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  tag_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 204, 422
+}

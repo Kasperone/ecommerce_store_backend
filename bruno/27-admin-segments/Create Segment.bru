@@ -1,0 +1,29 @@
+meta {
+  name: Create Segment
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/segments/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "name": "Example"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `SegmentCreate`:
+  - `name`: string (required)
+  - `description`: string|null
+  - `filters`: SegmentFilters
+  - `is_active`: boolean
+
+**Responses:** 201, 422
+}

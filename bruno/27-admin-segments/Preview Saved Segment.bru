@@ -1,0 +1,25 @@
+meta {
+  name: Preview Saved Segment
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/segments/:segment_id/preview
+  body: none
+  auth: inherit
+}
+
+params:path {
+  segment_id: 1
+}
+
+params:query {
+  ~limit: 10
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

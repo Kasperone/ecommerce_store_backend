@@ -1,0 +1,21 @@
+meta {
+  name: Remove From Wishlist
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/api/v1/wishlist/:item_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  item_id: 1
+}
+
+docs {
+**Access:** Customer (bearer)
+
+**Responses:** 204, 422
+}

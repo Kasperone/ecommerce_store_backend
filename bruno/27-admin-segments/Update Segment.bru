@@ -1,0 +1,39 @@
+meta {
+  name: Update Segment
+  type: http
+  seq: 6
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/admin/segments/:segment_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  segment_id: 1
+}
+
+body:json {
+  {
+    "name": "Example",
+    "description": "string",
+    "filters": {
+      "tag_ids": [],
+      "tag_match": "any",
+      "min_order_count": 1
+    }
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `SegmentUpdate`:
+  - `name`: string|null
+  - `description`: string|null
+  - `filters`: SegmentFilters|null
+  - `is_active`: boolean|null
+
+**Responses:** 200, 422
+}

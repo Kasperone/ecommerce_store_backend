@@ -1,0 +1,34 @@
+meta {
+  name: Convert Draft Order
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/draft-orders/:draft_id/convert
+  body: json
+  auth: inherit
+}
+
+params:path {
+  draft_id: 1
+}
+
+body:json {
+  {
+    "payment_method": "manual",
+    "mark_as_paid": false,
+    "send_email": false
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `DraftOrderConvert`:
+  - `payment_method`: string — one of ['manual', 'cod']
+  - `mark_as_paid`: boolean
+  - `send_email`: boolean
+
+**Responses:** 201, 422
+}
