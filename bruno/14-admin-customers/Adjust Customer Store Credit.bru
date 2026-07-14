@@ -1,0 +1,33 @@
+meta {
+  name: Adjust Customer Store Credit
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/customers/:customer_id/store-credit/adjust
+  body: json
+  auth: inherit
+}
+
+params:path {
+  customer_id: 1
+}
+
+body:json {
+  {
+    "amount": 10.0,
+    "currency": "USD"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `StoreCreditAdjustRequest`:
+  - `amount`: number (required)
+  - `currency`: string (required) — one of ['USD', 'PLN', 'EUR']
+  - `note`: string|null
+
+**Responses:** 200, 422
+}

@@ -1,0 +1,30 @@
+meta {
+  name: Check Gift Card
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/gift-cards/check
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "code": "EXAMPLE10",
+    "currency": "USD"
+  }
+}
+
+docs {
+**Access:** Public (no token)
+
+**Rate limit:** 10/minute
+
+**Request body** `GiftCardCheckRequest`:
+  - `code`: string (required)
+  - `currency`: string (required) — one of ['USD', 'PLN', 'EUR']
+
+**Responses:** 200, 422
+}

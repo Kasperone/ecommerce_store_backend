@@ -1,0 +1,33 @@
+meta {
+  name: Issue Gift Card
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/v1/admin/gift-cards/
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "initial_value": 10.0,
+    "currency": "USD"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `GiftCardIssueRequest`:
+  - `initial_value`: number (required)
+  - `currency`: string (required) — one of ['USD', 'PLN', 'EUR']
+  - `expires_at`: string|null
+  - `recipient_email`: string|null
+  - `user_id`: integer|null
+  - `note`: string|null
+  - `locale`: string — one of ['en', 'pl']
+
+**Responses:** 201, 422
+}
