@@ -97,6 +97,14 @@ class OrderCreate(OrderBase):
     # methods (stripe/payu) are chosen AFTER create on the payment page, never
     # here. ``None`` = a normal online order (pay on the success page).
     payment_method: Literal["cod"] | None = None
+    # Stored-value tenders (D2/D10, applied after the coupon). A typed gift-card
+    # code is validated server-side and fails LOUD (400 machine code, like a bad
+    # coupon); ``use_store_credit`` is opportunistic — it applies
+    # ``min(balance, remainder)`` and contributes 0 when there is nothing to
+    # spend. Both are gated on the store_config toggles (409 when off);
+    # ``use_store_credit`` additionally requires an account (400 on guest).
+    gift_card_code: str | None = Field(default=None, max_length=64)
+    use_store_credit: bool = False
 
     @field_validator("invoice_nip", mode="before")
     @classmethod
@@ -152,6 +160,15 @@ class OrderResponse(OrderBase, TimestampSchema):
     coupon_code: str | None = None
     total: float
     currency: str
+
+    # Stored-value tenders (D2): what a gift card / store credit already covered.
+    # ``total`` is unchanged; ``amount_due = total - gift_card_amount -
+    # store_credit_amount`` is what a provider still collects (0 = paid at
+    # creation). ``gift_card_last4`` is the display snapshot (null when no card).
+    gift_card_amount: float = 0.0
+    store_credit_amount: float = 0.0
+    amount_due: float
+    gift_card_last4: str | None = None
 
     # B2C faktura request (null on a plain consumer order).
     invoice_nip: str | None = None
@@ -223,6 +240,13 @@ class GuestOrderResponse(BaseSchema):
     shipping: float
     total: float
     currency: str
+    # Stored-value tenders — the guest payment step needs ``amount_due`` (and
+    # the summary shows what the card/credit covered), same shape as
+    # OrderResponse.
+    gift_card_amount: float = 0.0
+    store_credit_amount: float = 0.0
+    amount_due: float
+    gift_card_last4: str | None = None
     shipping_method_name: str | None = None
     shipping_carrier: str | None = None
     tracking_number: str | None = None

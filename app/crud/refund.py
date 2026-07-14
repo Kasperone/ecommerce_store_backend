@@ -40,6 +40,8 @@ from app.core.money import quantize_money
 from app.crud.corrective_invoice import corrective_invoice as crud_corrective
 from app.crud.inventory import inventory as crud_inventory
 from app.crud.invoice import invoice as crud_invoice
+from app.crud.store_credit import StoreCreditError
+from app.crud.store_credit import store_credit as crud_store_credit
 from app.models.inventory_movement import InventoryMovementReason
 from app.models.order import Order, OrderStatus
 from app.models.product import Product
@@ -152,6 +154,7 @@ class CRUDRefund:
                 joinedload(Refund.actor),
                 joinedload(Refund.corrective_invoice),
                 selectinload(Refund.items).joinedload(RefundItem.order_item),
+                selectinload(Refund.store_credit_entries),
             )
             .filter(Refund.order_id == order_id)
             .order_by(Refund.created_at.asc(), Refund.id.asc())
@@ -173,6 +176,7 @@ class CRUDRefund:
         restock: bool,
         actor_user_id: int | None,
         items: list[tuple[int, int]] | None = None,
+        destination: str = "original",
     ) -> Refund:
         """Validate, write the refund row + picked lines, optionally restock, flip status.
 
@@ -208,6 +212,15 @@ class CRUDRefund:
         order_status = OrderStatus(order.status)
         if order_status not in REFUNDABLE_STATUSES:
             raise OrderNotRefundableError(order_status)
+
+        # D6: crediting store credit needs an account to credit — guest orders
+        # have none. Checked before any write so nothing is staged. The route
+        # maps the machine code to 400.
+        if destination == "store_credit" and order.user_id is None:
+            raise StoreCreditError(
+                "store_credit_requires_account",
+                "Cannot refund a guest order to store credit — there is no account to credit.",
+            )
 
         items_list = items or []
 
@@ -315,6 +328,22 @@ class CRUDRefund:
                     note=note,
                 )
 
+        # D6 destination: credit the customer's store-credit account in this
+        # same transaction (ledger kind ``refund``, linked by refund_id — the
+        # link is what ``Refund.destination`` derives from). ``"original"``
+        # stays record-only, exactly the pre-D6 behavior. The guest guard ran
+        # before any write, so ``order.user_id`` is non-NULL here.
+        if destination == "store_credit" and order.user_id is not None:
+            crud_store_credit.credit_refund(
+                db,
+                user_id=order.user_id,
+                currency=order.currency,
+                amount=amount_r,
+                refund_id=refund.id,
+                order_id=order.id,
+                actor_user_id=actor_user_id,
+            )
+
         original_invoice = crud_invoice.get_by_order_id(db, order.id)
         if original_invoice is not None:
             crud_corrective.issue_for_refund(db, refund=refund, original_invoice=original_invoice)
@@ -341,6 +370,7 @@ class CRUDRefund:
                 joinedload(Refund.actor),
                 joinedload(Refund.corrective_invoice),
                 selectinload(Refund.items).joinedload(RefundItem.order_item),
+                selectinload(Refund.store_credit_entries),
             )
             .filter(Refund.id == refund_id)
             .first()
@@ -373,4 +403,5 @@ def order_refunds_load_options():
         selectinload(Order.refunds).joinedload(Refund.actor),
         selectinload(Order.refunds).joinedload(Refund.corrective_invoice),
         selectinload(Order.refunds).selectinload(Refund.items).joinedload(RefundItem.order_item),
+        selectinload(Order.refunds).selectinload(Refund.store_credit_entries),
     )
