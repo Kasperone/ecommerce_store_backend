@@ -1,0 +1,34 @@
+meta {
+  name: Update Gift Card
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/api/v1/admin/gift-cards/:gift_card_id
+  body: json
+  auth: inherit
+}
+
+params:path {
+  gift_card_id: 1
+}
+
+body:json {
+  {
+    "status": "string",
+    "expires_at": "2026-12-31T23:59:59",
+    "note": "string"
+  }
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Request body** `GiftCardUpdate`:
+  - `status`: string|null
+  - `expires_at`: string|null
+  - `note`: string|null
+
+**Responses:** 200, 422
+}

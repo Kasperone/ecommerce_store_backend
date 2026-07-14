@@ -1,0 +1,25 @@
+meta {
+  name: List Gift Cards
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/gift-cards/
+  body: none
+  auth: inherit
+}
+
+params:query {
+  ~page: 1
+  ~page_size: 20
+  ~status:
+  ~currency: USD
+  ~q: shirt
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}
