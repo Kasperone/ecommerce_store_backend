@@ -67,6 +67,11 @@ class DataExportResponse(BaseModel):
     # The server-side saved-cart snapshot (abandoned-cart recovery mirror);
     # ``null`` when the user has no row.
     saved_cart: dict[str, Any] | None = None
+    # Stored-value data (gift-cards + store-credit program): gift cards linked
+    # to the account (code hash stripped) and the store-credit accounts +
+    # ledger. Empty for users without either.
+    gift_cards: list[dict[str, Any]] = Field(default_factory=list)
+    store_credit: dict[str, Any] = Field(default_factory=dict)
 
 
 class AccountDeletionResponse(BaseModel):

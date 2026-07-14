@@ -83,6 +83,7 @@ from app.api.v1 import (  # noqa: E402
     admin_customers,
     admin_dashboard,
     admin_draft_orders,
+    admin_gift_cards,
     admin_inventory,
     admin_media,
     admin_pages,
@@ -111,6 +112,7 @@ from app.api.v1 import (  # noqa: E402
     cookie_consent,
     coupons,
     feeds,
+    gift_cards,
     newsletter,
     orders,
     pages,
@@ -123,6 +125,7 @@ from app.api.v1 import (  # noqa: E402
     shipping,
     sitemap,
     store_config,
+    store_credit,
     uploads,
     wishlist,
 )
@@ -134,6 +137,7 @@ app.include_router(collections.router, prefix="/api/v1/collections", tags=["Coll
 app.include_router(orders.router, prefix="/api/v1/orders", tags=["Orders"])
 app.include_router(carts.router, prefix="/api/v1/carts", tags=["Carts"])
 app.include_router(coupons.router, prefix="/api/v1/coupons", tags=["Coupons"])
+app.include_router(gift_cards.router, prefix="/api/v1/gift-cards", tags=["Gift Cards"])
 app.include_router(contact.router, prefix="/api/v1", tags=["Contact"])
 app.include_router(banners.router, prefix="/api/v1/banners", tags=["Banners"])
 app.include_router(pages.router, prefix="/api/v1/pages", tags=["Pages"])
@@ -177,6 +181,9 @@ app.include_router(
 )
 app.include_router(admin_coupons.router, prefix="/api/v1/admin/coupons", tags=["Admin Coupons"])
 app.include_router(
+    admin_gift_cards.router, prefix="/api/v1/admin/gift-cards", tags=["Admin Gift Cards"]
+)
+app.include_router(
     admin_collections.router, prefix="/api/v1/admin/collections", tags=["Admin Collections"]
 )
 app.include_router(admin_quotes.router, prefix="/api/v1/admin/quotes", tags=["Admin Quotes"])
@@ -205,6 +212,9 @@ app.include_router(reviews.router, prefix="/api/v1/products", tags=["Reviews"])
 # /api/v1/products/{id}/options and /api/v1/products/{id}/variants...
 app.include_router(product_variants.router, prefix="/api/v1/products", tags=["Product Variants"])
 app.include_router(account.router, prefix="/api/v1/me", tags=["Account"])
+# Store credit lives at /api/v1/account (not /me) per the pinned gift-cards
+# program contract — the FE lanes build against GET /api/v1/account/store-credit.
+app.include_router(store_credit.router, prefix="/api/v1/account", tags=["Store Credit"])
 app.include_router(addresses.router, prefix="/api/v1/addresses", tags=["Addresses"])
 app.include_router(wishlist.router, prefix="/api/v1/wishlist", tags=["Wishlist"])
 app.include_router(quotes.router, prefix="/api/v1/quotes", tags=["Quotes"])

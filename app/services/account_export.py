@@ -14,7 +14,9 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.crud import saved_cart as crud_saved_cart
+from app.crud import store_credit as crud_store_credit
 from app.crud import user_consent as crud_user_consent
+from app.models.gift_card import GiftCard
 from app.models.order import Order
 from app.models.user import User
 
@@ -27,6 +29,10 @@ _USER_SECRET_FIELDS = frozenset(
         "totp_secret_enc",
     }
 )
+
+# The gift-card code hash is derived security material (codes are bearer money,
+# D4) — no reason to hand it out, even to the linked user.
+_GIFT_CARD_SECRET_FIELDS = frozenset({"code_hash"})
 
 
 def _columns_to_dict(obj: Any, *, exclude: frozenset[str] = frozenset()) -> dict[str, Any]:
@@ -76,10 +82,34 @@ def build_export(db: Session, *, user: User) -> dict[str, Any]:
     saved_cart_row = crud_saved_cart.get_by_user(db, user_id=user.id)
     saved_cart = _columns_to_dict(saved_cart_row) if saved_cart_row is not None else None
 
+    # Stored-value data (gift-cards + store-credit program). Gift cards are
+    # included when linked by user_id (the code hash — derived security
+    # material — is stripped); store credit is the user's accounts + the full
+    # ledger across them, newest first.
+    gift_cards = [
+        _columns_to_dict(card, exclude=_GIFT_CARD_SECRET_FIELDS)
+        for card in db.query(GiftCard)
+        .filter(GiftCard.user_id == user.id)
+        .order_by(GiftCard.created_at.desc(), GiftCard.id.desc())
+        .all()
+    ]
+    store_credit = {
+        "accounts": [
+            _columns_to_dict(account)
+            for account in crud_store_credit.accounts_for_user(db, user_id=user.id)
+        ],
+        "entries": [
+            {**_columns_to_dict(entry), "currency": currency}
+            for entry, currency in crud_store_credit.entries_for_user(db, user_id=user.id)
+        ],
+    }
+
     return {
         "user": user_snapshot,
         "addresses": addresses,
         "orders": orders_data,
         "consents": consents,
         "saved_cart": saved_cart,
+        "gift_cards": gift_cards,
+        "store_credit": store_credit,
     }

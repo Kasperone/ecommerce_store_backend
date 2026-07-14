@@ -69,6 +69,11 @@ class StoreConfigBase(BaseSchema):
     # Hours of saved-cart inactivity before a cart counts as abandoned (1-720,
     # mirrors the model CHECK).
     abandoned_cart_threshold_hours: Annotated[int, Field(ge=1, le=720)] = 24
+    # Gift cards + store credit (stored-value program; ships dark — D7). The
+    # toggles gate the redemption UX (check endpoint + checkout fields), not
+    # reads: the account store-credit page stays available regardless.
+    gift_cards_enabled: bool = False
+    store_credit_enabled: bool = False
 
 
 class StoreConfigUpdate(BaseSchema):
@@ -105,6 +110,8 @@ class StoreConfigUpdate(BaseSchema):
     low_stock_default_threshold: Annotated[int | None, Field(ge=0)] = None
     abandoned_cart_enabled: bool | None = None
     abandoned_cart_threshold_hours: Annotated[int | None, Field(ge=1, le=720)] = None
+    gift_cards_enabled: bool | None = None
+    store_credit_enabled: bool | None = None
 
     _validate_primary_color = field_validator("primary_color")(_validate_primary_color)
 
@@ -140,3 +147,7 @@ class StoreConfigPublic(BaseSchema):
     social_facebook: str
     social_tiktok: str
     social_youtube: str
+    # Stored-value toggles — the storefront hides/shows the gift-card checkout
+    # input and the store-credit checkbox off these (D7).
+    gift_cards_enabled: bool
+    store_credit_enabled: bool

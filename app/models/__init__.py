@@ -34,6 +34,14 @@ from app.models.draft_order import (
     DraftOrderItem,
     DraftOrderStatus,
 )
+from app.models.gift_card import (
+    GIFT_CARD_ENTRY_KIND_VALUES,
+    GIFT_CARD_STATUS_VALUES,
+    GiftCard,
+    GiftCardEntry,
+    GiftCardEntryKind,
+    GiftCardStatus,
+)
 from app.models.inventory_movement import InventoryMovement, InventoryMovementReason
 from app.models.invoice import Invoice, InvoiceCounter
 from app.models.newsletter_subscriber import NewsletterSubscriber
@@ -81,6 +89,12 @@ from app.models.shipping import (
     ShippingZoneCountry,
 )
 from app.models.store_config import StoreConfig
+from app.models.store_credit import (
+    STORE_CREDIT_ENTRY_KIND_VALUES,
+    StoreCreditAccount,
+    StoreCreditEntry,
+    StoreCreditEntryKind,
+)
 from app.models.tag import Tag, customer_tags
 from app.models.translation_meta import TranslationMeta
 from app.models.user import User
@@ -121,6 +135,16 @@ __all__ = [
     "CouponRedemption",
     "COUPON_DISCOUNT_TYPE_VALUES",
     "CustomerNote",
+    "GiftCard",
+    "GiftCardEntry",
+    "GiftCardEntryKind",
+    "GiftCardStatus",
+    "GIFT_CARD_ENTRY_KIND_VALUES",
+    "GIFT_CARD_STATUS_VALUES",
+    "StoreCreditAccount",
+    "StoreCreditEntry",
+    "StoreCreditEntryKind",
+    "STORE_CREDIT_ENTRY_KIND_VALUES",
     "DraftOrder",
     "DraftOrderItem",
     "DraftOrderStatus",
