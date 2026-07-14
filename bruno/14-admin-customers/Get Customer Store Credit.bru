@@ -1,0 +1,21 @@
+meta {
+  name: Get Customer Store Credit
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/customers/:customer_id/store-credit
+  body: none
+  auth: inherit
+}
+
+params:path {
+  customer_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}

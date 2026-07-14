@@ -1,0 +1,21 @@
+meta {
+  name: Get Gift Card
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/api/v1/admin/gift-cards/:gift_card_id
+  body: none
+  auth: inherit
+}
+
+params:path {
+  gift_card_id: 1
+}
+
+docs {
+**Access:** Admin (bearer)
+
+**Responses:** 200, 422
+}
