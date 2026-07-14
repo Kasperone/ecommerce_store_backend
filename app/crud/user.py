@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.security import get_password_hash, verify_password
 from app.crud.base import CRUDBase
 from app.crud.refresh_token import refresh_token as crud_refresh_token
+from app.models.gift_card import GiftCard
 from app.models.order import Order, OrderStatus
 from app.models.saved_cart import SavedCart
 from app.models.tag import Tag
@@ -386,6 +387,16 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
         if user.deletion_requested_at is None:
             user.deletion_requested_at = now
         user.anonymized_at = now
+
+        # Gift-card recipient emails are a PII copy of this subject's address —
+        # scrub them (on cards linked by user_id AND on unlinked cards issued to
+        # this email) BEFORE the address itself is overwritten below. The card
+        # rows themselves are financial records and are KEPT, exactly like
+        # orders/refunds: user_id stays, pointing at the now-scrubbed row.
+        # Store-credit accounts + ledgers carry no PII columns and are KEPT too.
+        db.query(GiftCard).filter(
+            (GiftCard.user_id == user.id) | (GiftCard.recipient_email == user.email)
+        ).update({GiftCard.recipient_email: None}, synchronize_session=False)
 
         user.email = f"deleted-user-{user.id}@anon.invalid"
         user.first_name = "deleted"

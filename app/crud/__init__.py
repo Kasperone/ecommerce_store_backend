@@ -12,6 +12,7 @@ from app.crud.coupon import coupon
 from app.crud.customer_note import customer_note
 from app.crud.dashboard import dashboard
 from app.crud.draft_order import draft_order
+from app.crud.gift_card import gift_card
 from app.crud.inventory import inventory
 from app.crud.invoice import invoice
 from app.crud.newsletter import newsletter
@@ -35,6 +36,7 @@ from app.crud.shipping import method as shipping_method
 from app.crud.shipping import rate as shipping_rate
 from app.crud.shipping import zone as shipping_zone
 from app.crud.store_config import store_config
+from app.crud.store_credit import store_credit
 from app.crud.tag import tag
 from app.crud.user import user
 from app.crud.user_consent import user_consent
@@ -53,6 +55,8 @@ __all__ = [
     "customer_note",
     "dashboard",
     "draft_order",
+    "gift_card",
+    "store_credit",
     "product",
     "product_image",
     "product_tag",
