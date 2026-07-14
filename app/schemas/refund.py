@@ -107,6 +107,14 @@ class RefundCreate(BaseSchema):
             "with no line attribution; required when ``restock=True``."
         ),
     )
+    destination: Literal["original", "store_credit"] = Field(
+        default="original",
+        description=(
+            "Where the money goes (D6). ``original`` = record-only (today's "
+            "behavior); ``store_credit`` credits the order's user account in the "
+            "same transaction (400 ``store_credit_requires_account`` on guest orders)."
+        ),
+    )
 
 
 class CorrectiveInvoiceResponse(TimestampSchema):
@@ -138,6 +146,9 @@ class RefundResponse(TimestampSchema):
     reason: RefundReasonLiteral
     note: str | None
     restock: bool
+    # Where the money went (D6) — derived on the model from the store-credit
+    # ledger link (``Refund.destination`` property), not a stored column.
+    destination: Literal["original", "store_credit"] = "original"
     provider_refund_id: str | None
     actor_user_id: int | None
     actor_email: str | None = None

@@ -164,6 +164,45 @@ class CRUDStoreCredit:
         )
         return account, entry
 
+    def credit_refund(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        currency: str,
+        amount: Decimal,
+        refund_id: int,
+        order_id: int | None = None,
+        actor_user_id: int | None = None,
+    ) -> tuple[StoreCreditAccount, StoreCreditEntry]:
+        """Credit a refund to the customer's account (D6 ``destination="store_credit"``).
+
+        Ledger kind ``refund`` with the ``refund_id`` linked — that link is what
+        ``Refund.destination`` derives from, so the credit and the refund row
+        must land in the same unit of work (caller = ``crud_refund.create_for_order``,
+        which owns neither commit — the route does). Creates the account lazily
+        like ``adjust``.
+        """
+        if amount <= 0:
+            raise ValueError("refund credit amount must be positive")
+        account = self._locked(db, user_id=user_id, currency=currency)
+        if account is None:
+            # Same lazy-create + UNIQUE-backstop rationale as ``adjust``.
+            account = StoreCreditAccount(user_id=user_id, currency=currency, balance=ZERO_MONEY)
+            db.add(account)
+            db.flush()
+        entry = self._apply(
+            db,
+            account=account,
+            amount=quantize_money(amount),
+            kind=StoreCreditEntryKind.REFUND.value,
+            error_code="store_credit_balance_negative",
+            order_id=order_id,
+            refund_id=refund_id,
+            actor_user_id=actor_user_id,
+        )
+        return account, entry
+
     def debit(
         self,
         db: Session,

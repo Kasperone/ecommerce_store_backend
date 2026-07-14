@@ -55,15 +55,16 @@ def _paid_amount_matches(
     the order's.
 
     Charge amounts are computed server-side at session/intent creation
-    (``round(order.total * 100)``), so the buyer can't choose a different amount
-    — this is belt-and-suspenders against a tampered/misrouted notification or a
+    (``round(order.amount_due * 100)`` — the total minus any gift-card /
+    store-credit tender), so the buyer can't choose a different amount — this
+    is belt-and-suspenders against a tampered/misrouted notification or a
     future flow that lets the client influence the charge. When the provider
     omits the fields we don't block (the signature is the real boundary); a
     present-but-mismatched amount refuses to settle.
     """
     if paid_amount_minor is None or paid_currency is None:
         return True
-    expected_minor = round(order.total * 100)
+    expected_minor = round(order.amount_due * 100)
     if paid_amount_minor == expected_minor and paid_currency.upper() == order.currency.upper():
         return True
     logger.warning(
@@ -175,7 +176,7 @@ async def create_payu_checkout(
     try:
         result = await client.create_order(
             ext_order_id=order.order_number,
-            amount_minor=round(order.total * 100),
+            amount_minor=round(order.amount_due * 100),
             currency=order.currency,
             description=f"Order {order.order_number}",
             buyer_email=_buyer_email(order, current_user),
@@ -268,7 +269,7 @@ async def create_stripe_checkout(
         result = await run_in_threadpool(
             service.create_checkout_session,
             ext_order_id=order.order_number,
-            amount_minor=round(order.total * 100),
+            amount_minor=round(order.amount_due * 100),
             currency=order.currency,
             description=f"Order {order.order_number}",
             buyer_email=_buyer_email(order, current_user),
@@ -328,7 +329,7 @@ async def create_stripe_payment_intent(
         result = await run_in_threadpool(
             service.create_payment_intent,
             ext_order_id=order.order_number,
-            amount_minor=round(order.total * 100),
+            amount_minor=round(order.amount_due * 100),
             currency=order.currency,
             description=f"Order {order.order_number}",
             buyer_email=_buyer_email(order, current_user),

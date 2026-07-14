@@ -7,6 +7,7 @@ from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, Numeric, 
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.money import quantize_money
 from app.models.base import BaseModel
 
 if TYPE_CHECKING:
@@ -184,6 +185,20 @@ class Order(BaseModel):
     def customer_email(self) -> str | None:
         """Email of the ordering user (guest orders fall back to ``guest_email``)."""
         return self.user.email if self.user else self.guest_email
+
+    @property
+    def amount_due(self) -> Decimal:
+        """What a payment provider must still collect (D2 — tenders, not discounts).
+
+        ``total`` is unchanged by gift-card/store-credit tenders; the snapshots
+        record what stored value already covered. ≥ 0 by construction (the
+        checkout applies ``min(balance, remainder)`` per D10). Surfaced on the
+        wire via ``OrderResponse.amount_due`` and used by every provider charge
+        + webhook amount check.
+        """
+        return quantize_money(
+            self.total - (self.gift_card_amount or 0) - (self.store_credit_amount or 0)
+        )
 
 
 class OrderItem(BaseModel):
