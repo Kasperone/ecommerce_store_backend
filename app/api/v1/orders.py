@@ -29,6 +29,7 @@ from app.crud import refund as crud_refund
 from app.crud import return_request as crud_return_request
 from app.crud import store_config as crud_store_config
 from app.crud.coupon import CouponRedemptionError
+from app.crud.gift_card import GiftCardError
 from app.crud.order import (
     InPostPointRequiredError,
     InsufficientStockError,
@@ -52,6 +53,7 @@ from app.crud.return_request import (
     ReturnWindowClosedError,
 )
 from app.crud.shipping import ShippingRateUnavailableError
+from app.crud.store_credit import StoreCreditError
 from app.models.order import OrderStatus
 from app.models.user import User, UserRole
 from app.schemas.order import (
@@ -152,6 +154,23 @@ async def create_order(
             detail="guest_email is not allowed on an authenticated order",
         )
 
+    # Stored-value tender gating (D7/D8). Toggle-off mirrors the public check
+    # endpoint (409 + machine code); store credit is account-bound, so a guest
+    # asking for it is a 400 machine code. All ``detail`` values here are
+    # machine codes — the FE matches on them, never on prose.
+    if order_in.gift_card_code or order_in.use_store_credit:
+        config = crud_store_config.get_singleton(db)
+        if order_in.gift_card_code and not config.gift_cards_enabled:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="gift_cards_disabled")
+        if order_in.use_store_credit and not config.store_credit_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="store_credit_disabled"
+            )
+    if order_in.use_store_credit and current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="store_credit_requires_account"
+        )
+
     try:
         order = crud_order.create_with_items(
             db, user_id=current_user.id if current_user else None, obj_in=order_in
@@ -190,6 +209,29 @@ async def create_order(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=exc.message,
+        ) from exc
+    except GiftCardError as exc:
+        # A bad gift-card code fails the order LOUD, like a bad coupon code —
+        # never silently ignored. ``detail`` is the machine code, and the
+        # statuses mirror the public check endpoint (pinned contract): 404
+        # ``gift_card_not_found``; 409 ``gift_card_disabled`` /
+        # ``gift_card_expired`` / ``gift_card_depleted`` /
+        # ``gift_card_currency_mismatch``.
+        raise HTTPException(
+            status_code=(
+                status.HTTP_404_NOT_FOUND
+                if exc.code == "gift_card_not_found"
+                else status.HTTP_409_CONFLICT
+            ),
+            detail=exc.code,
+        ) from exc
+    except StoreCreditError as exc:
+        # Only reachable on an under-lock race (store_credit_insufficient) —
+        # the create path applies min(balance, remainder) up front. 409 like
+        # the gift-card conflict codes.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=exc.code,
         ) from exc
 
     db.commit()
@@ -515,6 +557,7 @@ async def issue_refund(
             restock=refund_in.restock,
             actor_user_id=current_admin.id,
             items=item_tuples,
+            destination=refund_in.destination,
         )
     except OrderNotRefundableError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -526,6 +569,9 @@ async def issue_refund(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except RestockRequiresItemsError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except StoreCreditError as exc:
+        # destination="store_credit" on a guest order (machine code in detail).
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.code) from exc
 
     audit.record_create(resource_type="refund", obj=refund)
     db.commit()

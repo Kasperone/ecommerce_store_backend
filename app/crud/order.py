@@ -24,6 +24,8 @@ from app.core.money import ZERO_MONEY, quantize_money
 from app.crud import coupon as crud_coupon
 from app.crud.base import CRUDBase
 from app.crud.coupon import AppliedDiscount, CouponRedemptionError
+from app.crud.gift_card import GiftCardError
+from app.crud.gift_card import gift_card as crud_gift_card
 from app.crud.inventory import inventory as crud_inventory
 from app.crud.invoice import invoice as crud_invoice
 from app.crud.shipping import (
@@ -32,6 +34,7 @@ from app.crud.shipping import (
 from app.crud.shipping import (
     rate as crud_shipping_rate,
 )
+from app.crud.store_credit import store_credit as crud_store_credit
 from app.crud.warehouse import warehouse as crud_warehouse
 from app.models.inventory_movement import InventoryMovementReason
 from app.models.order import Order, OrderItem, OrderStatus
@@ -506,6 +509,11 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             # Cash-on-delivery is the only method chosen at create; online
             # methods are set later by the payment-start flow (NULL until then).
             payment_method=obj_in.payment_method,
+            # Tender snapshots start at 0 (not the column default) so
+            # ``amount_due`` is correct pre-flush; overwritten below when a
+            # gift card / store credit actually applies.
+            gift_card_amount=ZERO_MONEY,
+            store_credit_amount=ZERO_MONEY,
             notes=obj_in.notes,
             items=items,
         )
@@ -521,6 +529,66 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         if redeemed_coupon is not None and user_id is not None:
             crud_coupon.record_redemption(
                 db, coupon_id=redeemed_coupon.id, user_id=user_id, order_id=order.id
+            )
+
+        # Stored-value tenders (D2/D10): applied AFTER the coupon against the
+        # final total — gift card first (min(balance, total)), then store
+        # credit (min(balance, remainder)). Debits go through the FOR-UPDATE
+        # ledger seams keyed by order.id, in this same unit of work, so a
+        # rolled-back order burns nothing (mirrors stock decrement + coupon
+        # redeem). An unusable typed code fails LOUD (GiftCardError → 400 at
+        # the route, like a bad coupon code — never silently ignored); the
+        # store-credit checkbox is opportunistic (no account / zero balance
+        # simply contributes 0). Toggle gating + the guest store-credit
+        # rejection live at the route (409/400 with machine codes).
+        gift_card_amount = ZERO_MONEY
+        store_credit_amount = ZERO_MONEY
+        if obj_in.gift_card_code:
+            card = crud_gift_card.get_by_code(db, code=obj_in.gift_card_code)
+            if card is None:
+                raise GiftCardError("gift_card_not_found", "This gift card code is not valid.")
+            # Fail early with the precise machine code (disabled/expired/
+            # depleted/currency) before computing the tender; debit re-checks
+            # everything under the row lock.
+            crud_gift_card.check_usable(card=card, currency=currency)
+            gift_card_amount = min(quantize_money(card.balance), total)
+            if gift_card_amount > 0:
+                crud_gift_card.debit(
+                    db,
+                    gift_card_id=card.id,
+                    amount=gift_card_amount,
+                    currency=currency,
+                    order_id=order.id,
+                )
+            order.gift_card_id = card.id
+            order.gift_card_last4 = card.last4
+            order.gift_card_amount = gift_card_amount
+        if obj_in.use_store_credit and user_id is not None:
+            remainder = quantize_money(total - gift_card_amount)
+            account = crud_store_credit.get_account(db, user_id=user_id, currency=currency)
+            if account is not None and remainder > 0:
+                store_credit_amount = min(quantize_money(account.balance), remainder)
+                if store_credit_amount > 0:
+                    crud_store_credit.debit(
+                        db,
+                        user_id=user_id,
+                        currency=currency,
+                        amount=store_credit_amount,
+                        order_id=order.id,
+                    )
+                    order.store_credit_amount = store_credit_amount
+
+        # Fully covered → PAID in this same transaction via the mark_paid
+        # machinery (gap-free faktura included). ``payment_method`` per D10:
+        # "gift_card" when a card contributed, else "store_credit". Providers
+        # never see the order (amount_due is 0 and the payment-start pending
+        # gate 409s a PAID order).
+        if (gift_card_amount + store_credit_amount) > 0 and order.amount_due == 0:
+            self.mark_paid(
+                db,
+                order=order,
+                payment_intent_id=None,
+                payment_method="gift_card" if gift_card_amount > 0 else "store_credit",
             )
 
         # Decrement stock + append the ledger now that order.id exists; one
@@ -580,6 +648,12 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
                     order_id=order.id,
                     note=note,
                 )
+        # Release stored-value tenders back (D5, symmetric to the stock
+        # restore): ledger ``release`` entries via the idempotent seams — an
+        # order that used neither is a no-op. The snapshot columns
+        # (gift_card_amount / store_credit_amount / last4) stay for history.
+        crud_gift_card.release_for_order(db, order_id=order.id)
+        crud_store_credit.release_for_order(db, order_id=order.id)
         order.status = OrderStatus.CANCELLED
         db.add(order)
         return order
@@ -627,14 +701,17 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         db: Session,
         *,
         order: Order,
-        payment_intent_id: str,
+        payment_intent_id: str | None,
         payment_method: str,
     ) -> Order:
-        """Idempotently flip a pending order to paid (payment-provider webhook).
+        """Idempotently flip a pending order to paid.
 
         No-op when the order isn't pending, so duplicate/late notifications are
-        safe. Records the provider's payment id + method (``"payu"`` / ``"stripe"``).
-        Issues the sequential faktura number in the same transaction as the flip
+        safe. Records the provider's payment id + method (``"payu"`` /
+        ``"stripe"``); a fully-tender-covered order (gift card / store credit)
+        has no provider id — pass ``payment_intent_id=None`` and the column
+        stays NULL (the tender ledgers are the payment record). Issues the
+        sequential faktura number in the same transaction as the flip
         (gap-free — the number and the paid state commit or roll back together).
         Caller owns the commit.
         """
@@ -642,7 +719,8 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             return order
         order.status = OrderStatus.PAID
         order.payment_method = payment_method
-        order.payment_intent_id = payment_intent_id
+        if payment_intent_id is not None:
+            order.payment_intent_id = payment_intent_id
         db.add(order)
         crud_invoice.issue_for_order(db, order=order)
         return order

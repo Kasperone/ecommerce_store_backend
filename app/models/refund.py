@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from app.models.corrective_invoice import CorrectiveInvoice
     from app.models.order import Order
     from app.models.refund_item import RefundItem
+    from app.models.store_credit import StoreCreditEntry
     from app.models.user import User
 
 
@@ -118,6 +119,20 @@ class Refund(BaseModel):
         cascade="all, delete-orphan",
         order_by="RefundItem.id",
     )
+    # Store-credit ledger rows this refund credited (D6 destination). Viewonly:
+    # the ledger is written exclusively by ``crud_store_credit`` under the
+    # account-row lock; this relationship exists so ``destination`` can be
+    # derived from the source of truth instead of a duplicated column.
+    store_credit_entries: Mapped[list[StoreCreditEntry]] = relationship(
+        "StoreCreditEntry", viewonly=True
+    )
+
+    @property
+    def destination(self) -> str:
+        """Where the money went: ``"original"`` (record-only, today's default)
+        or ``"store_credit"`` (a linked ledger credit exists). Derived from the
+        ledger — no duplicated state; surfaced via ``RefundResponse``."""
+        return "store_credit" if self.store_credit_entries else "original"
 
     @property
     def actor_email(self) -> str | None:
