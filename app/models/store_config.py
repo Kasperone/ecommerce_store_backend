@@ -101,6 +101,13 @@ class StoreConfig(BaseModel):
     # Hours of saved-cart inactivity before a cart counts as abandoned.
     # Guarded >= 1 by the CHECK above + the schema (ge=1, le=720).
     abandoned_cart_threshold_hours: Mapped[int] = mapped_column(Integer, server_default="24")
+    # Gift cards + store credit (stored-value program, D7 — ships dark). Both
+    # toggles are on ``StoreConfigPublic`` so the storefront can hide/show the
+    # redemption UX; when off, the check endpoint (and, from PR2, the checkout
+    # fields) reject with 409 ``gift_cards_disabled`` / ``store_credit_disabled``.
+    # Reads (account store-credit page) stay available regardless.
+    gift_cards_enabled: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    store_credit_enabled: Mapped[bool] = mapped_column(Boolean, server_default="false")
 
     def __repr__(self) -> str:
         return f"<StoreConfig id={self.id} {self.store_name!r} vat={self.invoice_vat_rate}>"

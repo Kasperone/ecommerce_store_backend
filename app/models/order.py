@@ -91,6 +91,23 @@ class Order(BaseModel):
     )
     coupon_code: Mapped[str | None] = mapped_column(String(64))
 
+    # Gift-card + store-credit tender snapshots (D2 — tender, not discount;
+    # columns only in PR1, the checkout wiring that populates them is PR2).
+    # ``total`` is unchanged by tenders; ``amount_due = total - gift_card_amount
+    # - store_credit_amount``. ``gift_card_id`` SET NULL so deleting a card
+    # never touches the order; ``gift_card_last4`` snapshots the display
+    # fragment (same snapshot discipline as ``coupon_code``).
+    gift_card_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("gift_cards.id", ondelete="SET NULL")
+    )
+    gift_card_last4: Mapped[str | None] = mapped_column(String(4))
+    gift_card_amount: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=Decimal("0"), server_default="0"
+    )
+    store_credit_amount: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), default=Decimal("0"), server_default="0"
+    )
+
     # B2C faktura request ("Chcę fakturę / na firmę"). A consumer (or guest)
     # buying for their business supplies a NIP + the buyer name to print on the
     # faktura; both NULL on a plain consumer order. The NIP is checksum-validated

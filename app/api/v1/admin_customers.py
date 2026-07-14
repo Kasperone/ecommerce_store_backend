@@ -16,11 +16,14 @@ from sqlalchemy.orm import Session
 from app.core import email as email_service
 from app.core.config import settings
 from app.core.dependencies import get_current_admin, get_db
+from app.core.money import to_money
 from app.core.rate_limit import limiter
 from app.core.security import create_access_token
 from app.crud import customer_note as crud_customer_note
+from app.crud import store_credit as crud_store_credit
 from app.crud import tag as crud_tag
 from app.crud import user as crud_user
+from app.crud.store_credit import StoreCreditError
 from app.models.customer_note import CustomerNote
 from app.models.user import User, UserRole
 from app.schemas.auth import GenericMessage
@@ -37,6 +40,12 @@ from app.schemas.customer_note import (
     CustomerNoteCreate,
     CustomerNoteResponse,
     CustomerNoteUpdate,
+)
+from app.schemas.store_credit import (
+    StoreCreditAccountResponse,
+    StoreCreditAdjustRequest,
+    StoreCreditEntryResponse,
+    StoreCreditSummaryResponse,
 )
 from app.schemas.tag import CustomerTagAssign, TagChip
 from app.schemas.user import UserResponse
@@ -451,3 +460,89 @@ async def remove_customer_tag(
     db.commit()
     db.refresh(user)
     return [TagChip.model_validate(t) for t in user.tags]
+
+
+# ---------------------------------------------------------------------------
+# Store credit — per-customer per-currency stored-value accounts (gift-cards +
+# store-credit program). Balances only ever move through the ledger-writing
+# CRUD (``crud/store_credit.py``, FOR-UPDATE + balance_after in one unit of
+# work). Audited via record_event (resource_type="store_credit",
+# resource_id=the customer) — an adjust is a movement, not an ORM diff.
+# ---------------------------------------------------------------------------
+
+
+def _store_credit_summary(db: Session, customer_id: int) -> StoreCreditSummaryResponse:
+    """Shared summary shape (also served to the owner via /account/store-credit)."""
+    accounts = crud_store_credit.accounts_for_user(db, user_id=customer_id)
+    entries = crud_store_credit.entries_for_user(db, user_id=customer_id)
+    return StoreCreditSummaryResponse(
+        accounts=[StoreCreditAccountResponse.model_validate(a) for a in accounts],
+        entries=[
+            StoreCreditEntryResponse(
+                id=entry.id,
+                currency=currency,
+                amount=float(entry.amount),
+                kind=entry.kind,
+                balance_after=float(entry.balance_after),
+                order_id=entry.order_id,
+                refund_id=entry.refund_id,
+                note=entry.note,
+                created_at=entry.created_at,
+            )
+            for entry, currency in entries
+        ],
+    )
+
+
+@router.get("/{customer_id}/store-credit", response_model=StoreCreditSummaryResponse)
+async def get_customer_store_credit(
+    customer_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+):
+    """A customer's store credit: per-currency balances + ledger, newest first."""
+    _get_customer_or_404(db, customer_id)
+    return _store_credit_summary(db, customer_id)
+
+
+@router.post("/{customer_id}/store-credit/adjust", response_model=StoreCreditSummaryResponse)
+async def adjust_customer_store_credit(
+    customer_id: int,
+    payload: StoreCreditAdjustRequest,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
+):
+    """Apply a signed store-credit grant/correction (ledger kind ``adjust``).
+
+    Creates the (customer, currency) account lazily on the first grant. A
+    result below zero is refused with 400 ``store_credit_balance_negative``
+    (machine code in ``detail``). Returns the refreshed summary.
+    """
+    _get_customer_or_404(db, customer_id)
+    try:
+        account, _ = crud_store_credit.adjust(
+            db,
+            user_id=customer_id,
+            currency=payload.currency,
+            amount=to_money(payload.amount),  # type: ignore[arg-type] -- non-zero float, never None
+            actor_user_id=current_admin.id,
+            note=payload.note,
+        )
+    except StoreCreditError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.code) from exc
+    audit.record_event(
+        action="update",
+        resource_type="store_credit",
+        resource_id=customer_id,
+        payload={
+            "after": {
+                "currency": payload.currency,
+                "adjust_amount": payload.amount,
+                "balance": float(account.balance),
+                "note": payload.note,
+            }
+        },
+    )
+    db.commit()
+    return _store_credit_summary(db, customer_id)

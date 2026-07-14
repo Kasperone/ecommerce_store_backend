@@ -260,3 +260,32 @@ async def test_patch_rejects_out_of_range_abandoned_cart_threshold(client, user_
         headers=_headers(admin),
     )
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# gift cards + store credit toggles (stored-value program, ships dark — D7)
+# ---------------------------------------------------------------------------
+
+
+async def test_get_returns_stored_value_defaults(client, user_factory):
+    admin = user_factory(email="set-admin-gc0@example.com", role=UserRole.ADMIN)
+    body = (await client.get(SETTINGS_URL, headers=_headers(admin))).json()
+    assert body["gift_cards_enabled"] is False
+    assert body["store_credit_enabled"] is False
+
+
+async def test_patch_updates_stored_value_toggles(client, user_factory):
+    admin = user_factory(email="set-admin-gc1@example.com", role=UserRole.ADMIN)
+    resp = await client.patch(
+        SETTINGS_URL,
+        json={"gift_cards_enabled": True, "store_credit_enabled": True},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["gift_cards_enabled"] is True
+    assert body["store_credit_enabled"] is True
+
+    reget = (await client.get(SETTINGS_URL, headers=_headers(admin))).json()
+    assert reget["gift_cards_enabled"] is True
+    assert reget["store_credit_enabled"] is True

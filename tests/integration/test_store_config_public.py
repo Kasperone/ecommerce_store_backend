@@ -41,6 +41,8 @@ PUBLIC_KEYS = {
     "social_facebook",
     "social_tiktok",
     "social_youtube",
+    "gift_cards_enabled",
+    "store_credit_enabled",
 }
 
 
@@ -77,6 +79,26 @@ async def test_public_shape_excludes_internal_fields(client):
 # ---------------------------------------------------------------------------
 # admin PATCH of new fields reflected publicly
 # ---------------------------------------------------------------------------
+
+
+async def test_public_read_exposes_stored_value_toggles(client, user_factory):
+    """The gift-cards/store-credit toggles ride on StoreConfigPublic (ships
+    dark → both false by default; admin flip is publicly visible)."""
+    body = (await client.get(PUBLIC_URL)).json()
+    assert body["gift_cards_enabled"] is False
+    assert body["store_credit_enabled"] is False
+
+    admin = user_factory(email="sc-pub-admin-gc@example.com", role=UserRole.ADMIN)
+    resp = await client.patch(
+        SETTINGS_URL,
+        json={"gift_cards_enabled": True, "store_credit_enabled": True},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200
+
+    body = (await client.get(PUBLIC_URL)).json()
+    assert body["gift_cards_enabled"] is True
+    assert body["store_credit_enabled"] is True
 
 
 async def test_admin_patch_new_fields_reflected_in_public_read(client, user_factory):
