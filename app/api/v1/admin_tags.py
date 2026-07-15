@@ -8,7 +8,8 @@ audited as ``resource_type="tag"``. Tag *assignment* to a customer lives under
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import CATALOG_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.crud import tag as crud_tag
 from app.models.tag import Tag
 from app.models.user import User
@@ -16,6 +17,9 @@ from app.schemas.tag import TagCreate, TagResponse, TagUpdate
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+# Capability gate for this router's write/DELETE routes.
+_require = Depends(require_capability(CATALOG_WRITE))
 
 
 def _response(tag: Tag, usage_count: int) -> TagResponse:
@@ -38,7 +42,9 @@ async def list_tags(
     return [_response(t, count) for t, count in crud_tag.list_with_counts(db)]
 
 
-@router.post("/", response_model=TagResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/", dependencies=[_require], response_model=TagResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_tag(
     payload: TagCreate,
     db: Session = Depends(get_db),
@@ -57,7 +63,7 @@ async def create_tag(
     return _response(tag, 0)
 
 
-@router.patch("/{tag_id}", response_model=TagResponse)
+@router.patch("/{tag_id}", dependencies=[_require], response_model=TagResponse)
 async def update_tag(
     tag_id: int,
     payload: TagUpdate,
@@ -84,7 +90,7 @@ async def update_tag(
     return _response(tag, crud_tag.usage_count(db, tag_id=tag.id))
 
 
-@router.delete("/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{tag_id}", dependencies=[_require], status_code=status.HTTP_204_NO_CONTENT)
 async def delete_tag(
     tag_id: int,
     db: Session = Depends(get_db),

@@ -11,7 +11,8 @@ from math import ceil
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import INVENTORY_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.crud import warehouse as crud_warehouse
 from app.models.user import User
 from app.schemas.warehouse import (
@@ -23,6 +24,9 @@ from app.schemas.warehouse import (
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+# Capability gate for this router's write/DELETE routes.
+_require = Depends(require_capability(INVENTORY_WRITE))
 
 
 @router.get("/", response_model=WarehouseListResponse)
@@ -47,7 +51,12 @@ async def list_warehouses(
     }
 
 
-@router.post("/", response_model=WarehouseResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    dependencies=[_require],
+    response_model=WarehouseResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_warehouse(
     payload: WarehouseCreate,
     db: Session = Depends(get_db),
@@ -81,7 +90,7 @@ async def get_warehouse(
     return warehouse
 
 
-@router.patch("/{warehouse_id}", response_model=WarehouseResponse)
+@router.patch("/{warehouse_id}", dependencies=[_require], response_model=WarehouseResponse)
 async def update_warehouse(
     warehouse_id: int,
     payload: WarehouseUpdate,
@@ -116,7 +125,7 @@ async def update_warehouse(
     return warehouse
 
 
-@router.delete("/{warehouse_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{warehouse_id}", dependencies=[_require], status_code=status.HTTP_204_NO_CONTENT)
 async def delete_warehouse(
     warehouse_id: int,
     db: Session = Depends(get_db),

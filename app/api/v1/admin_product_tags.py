@@ -12,7 +12,8 @@ naming so the two systems never collide.
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import CATALOG_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.crud import product_tag as crud_product_tag
 from app.models.product_tag import ProductTag
 from app.models.user import User
@@ -20,6 +21,9 @@ from app.schemas.product_tag import ProductTagCreate, ProductTagResponse, Produc
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+# Capability gate for this router's write/DELETE routes.
+_require = Depends(require_capability(CATALOG_WRITE))
 
 
 def _response(tag: ProductTag, usage_count: int) -> ProductTagResponse:
@@ -42,7 +46,12 @@ async def list_product_tags(
     return [_response(t, count) for t, count in crud_product_tag.list_with_counts(db)]
 
 
-@router.post("/", response_model=ProductTagResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    dependencies=[_require],
+    response_model=ProductTagResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_product_tag(
     payload: ProductTagCreate,
     db: Session = Depends(get_db),
@@ -62,7 +71,7 @@ async def create_product_tag(
     return _response(tag, 0)
 
 
-@router.patch("/{tag_id}", response_model=ProductTagResponse)
+@router.patch("/{tag_id}", dependencies=[_require], response_model=ProductTagResponse)
 async def update_product_tag(
     tag_id: int,
     payload: ProductTagUpdate,
@@ -90,7 +99,7 @@ async def update_product_tag(
     return _response(tag, crud_product_tag.usage_count(db, tag_id=tag.id))
 
 
-@router.delete("/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{tag_id}", dependencies=[_require], status_code=status.HTTP_204_NO_CONTENT)
 async def delete_product_tag(
     tag_id: int,
     db: Session = Depends(get_db),

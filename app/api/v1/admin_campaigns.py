@@ -25,7 +25,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core import email as email_mod
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import MARKETING_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.crud import campaign as crud_campaign
 from app.crud.segment import segment as crud_segment
 from app.models.user import User
@@ -44,6 +45,9 @@ from app.services.audit import AuditWriter, get_audit_writer
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Capability gate for this router's write/DELETE routes.
+_require = Depends(require_capability(MARKETING_WRITE))
 
 
 @router.get("/", response_model=CampaignListResponse)
@@ -74,7 +78,12 @@ async def list_campaigns(
     }
 
 
-@router.post("/", response_model=CampaignResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    dependencies=[_require],
+    response_model=CampaignResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_campaign(
     payload: CampaignCreate,
     db: Session = Depends(get_db),
@@ -107,7 +116,7 @@ async def get_campaign(
     return campaign
 
 
-@router.patch("/{campaign_id}", response_model=CampaignResponse)
+@router.patch("/{campaign_id}", dependencies=[_require], response_model=CampaignResponse)
 async def update_campaign(
     campaign_id: int,
     payload: CampaignUpdate,
@@ -151,7 +160,7 @@ async def update_campaign(
     return campaign
 
 
-@router.post("/{campaign_id}/send", response_model=CampaignResponse)
+@router.post("/{campaign_id}/send", dependencies=[_require], response_model=CampaignResponse)
 async def send_campaign(
     campaign_id: int,
     db: Session = Depends(get_db),
@@ -215,7 +224,7 @@ async def send_campaign(
     return campaign
 
 
-@router.delete("/{campaign_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{campaign_id}", dependencies=[_require], status_code=status.HTTP_204_NO_CONTENT)
 async def delete_campaign(
     campaign_id: int,
     db: Session = Depends(get_db),

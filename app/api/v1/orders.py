@@ -15,12 +15,14 @@ from fastapi import (
 from limits import parse as parse_rate_limit
 from sqlalchemy.orm import Session
 
+from app.core.capabilities import ORDERS_REFUND, ORDERS_WRITE
 from app.core.config import settings
 from app.core.dependencies import (
     get_current_active_user,
     get_current_admin,
     get_db,
     get_optional_user,
+    require_capability,
 )
 from app.core.rate_limit import get_ip_key, limiter
 from app.crud import invoice as crud_invoice
@@ -413,7 +415,11 @@ async def download_order_invoice(
     )
 
 
-@router.patch("/{order_id}", response_model=OrderWithUser)
+@router.patch(
+    "/{order_id}",
+    response_model=OrderWithUser,
+    dependencies=[Depends(require_capability(ORDERS_WRITE))],
+)
 async def update_order(
     order_id: int,
     order_in: OrderUpdate,
@@ -505,6 +511,7 @@ async def cancel_order(
     "/{order_id}/refunds",
     response_model=RefundResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_capability(ORDERS_REFUND))],
 )
 async def issue_refund(
     order_id: int,

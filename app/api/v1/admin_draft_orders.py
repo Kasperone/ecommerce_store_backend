@@ -21,7 +21,8 @@ from math import ceil
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import ORDERS_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.crud import draft_order as crud_draft_order
 from app.crud.draft_order import (
     DraftOrderItemError,
@@ -47,6 +48,9 @@ from app.services import order_email
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+# Capability gate for this router's write/DELETE routes.
+_require = Depends(require_capability(ORDERS_WRITE))
 
 
 def _get_draft_or_404(db: Session, draft_id: int) -> DraftOrder:
@@ -100,7 +104,12 @@ async def list_draft_orders(
     }
 
 
-@router.post("/", response_model=DraftOrderResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    dependencies=[_require],
+    response_model=DraftOrderResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_draft_order(
     payload: DraftOrderCreate,
     db: Session = Depends(get_db),
@@ -129,7 +138,7 @@ async def get_draft_order(
     return _get_draft_or_404(db, draft_id)
 
 
-@router.patch("/{draft_id}", response_model=DraftOrderResponse)
+@router.patch("/{draft_id}", dependencies=[_require], response_model=DraftOrderResponse)
 async def update_draft_order(
     draft_id: int,
     payload: DraftOrderUpdate,
@@ -162,6 +171,7 @@ async def update_draft_order(
 
 @router.post(
     "/{draft_id}/convert",
+    dependencies=[_require],
     response_model=OrderResponse,
     status_code=status.HTTP_201_CREATED,
 )
@@ -229,7 +239,7 @@ async def convert_draft_order(
     return crud_order.get_scoped(db, order_id=order.id, user=current_admin)
 
 
-@router.delete("/{draft_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{draft_id}", dependencies=[_require], status_code=status.HTTP_204_NO_CONTENT)
 async def delete_draft_order(
     draft_id: int,
     db: Session = Depends(get_db),
@@ -253,7 +263,10 @@ async def delete_draft_order(
 
 
 @router.post(
-    "/{draft_id}/items", response_model=DraftOrderResponse, status_code=status.HTTP_201_CREATED
+    "/{draft_id}/items",
+    dependencies=[_require],
+    response_model=DraftOrderResponse,
+    status_code=status.HTTP_201_CREATED,
 )
 async def add_draft_order_item(
     draft_id: int,
@@ -282,7 +295,9 @@ async def add_draft_order_item(
     return crud_draft_order.get(db, draft_id)
 
 
-@router.patch("/{draft_id}/items/{item_id}", response_model=DraftOrderResponse)
+@router.patch(
+    "/{draft_id}/items/{item_id}", dependencies=[_require], response_model=DraftOrderResponse
+)
 async def update_draft_order_item(
     draft_id: int,
     item_id: int,
@@ -305,7 +320,9 @@ async def update_draft_order_item(
     return crud_draft_order.get(db, draft_id)
 
 
-@router.delete("/{draft_id}/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{draft_id}/items/{item_id}", dependencies=[_require], status_code=status.HTTP_204_NO_CONTENT
+)
 async def remove_draft_order_item(
     draft_id: int,
     item_id: int,

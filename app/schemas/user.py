@@ -61,6 +61,10 @@ class UserResponse(UserBase, TimestampSchema):
     is_active: bool
     is_verified: bool
     role: UserRole
+    # Granular staff permissions (see app/core/capabilities.py). The frontend
+    # gates admin UI off these: an owner implicitly holds every capability.
+    is_owner: bool = False
+    capabilities: list[str] = Field(default_factory=list)
 
     # Optional company/invoice data
     company_name: str | None = None
