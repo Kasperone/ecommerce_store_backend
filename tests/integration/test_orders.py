@@ -323,6 +323,40 @@ async def test_detail_ownership(client, user_factory, product_factory, test_ship
     assert (await client.get(url, headers=_headers(admin))).status_code == 200
 
 
+async def test_detail_with_anonymized_owner_does_not_500(
+    client, user_factory, product_factory, db_session: Session, test_shipping_method_id
+):
+    """S1 regression: an order whose owner was GDPR-anonymized must still open.
+
+    The anonymizer rewrites the owner's email to the reserved ``.invalid`` TLD,
+    which ``EmailStr`` rejects — the nested-user response schema relaxes it to a
+    plain ``str`` so serialization returns 200 instead of a 500.
+    """
+    from app.crud.user import user as crud_user
+
+    owner = user_factory(email="anon-owner@example.com")
+    admin = user_factory(email="anon-admin@example.com", role=UserRole.ADMIN)
+    product = product_factory(stock=10, price_usd=10.0)
+    created = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=1, shipping_method_id=test_shipping_method_id),
+        headers=_headers(owner),
+    )
+    order_id = created.json()["id"]
+
+    crud_user.anonymize(db_session, user=owner)
+    db_session.commit()
+    assert owner.email == f"deleted-user-{owner.id}@anon.invalid"
+
+    resp = await client.get(f"/api/v1/orders/{order_id}", headers=_headers(admin))
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["user"]["email"] == f"deleted-user-{owner.id}@anon.invalid"
+    # Anonymizer placeholders stay visible so the admin sees why the row is empty.
+    assert body["user"]["first_name"] == "deleted"
+    assert body["user"]["last_name"] == "user"
+
+
 # ---------------------------------------------------------------------------
 # POST /{id}/cancel
 # ---------------------------------------------------------------------------
