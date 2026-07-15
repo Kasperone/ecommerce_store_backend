@@ -137,6 +137,34 @@ class OrderUpdate(BaseSchema):
     )(_blank_to_none)
 
 
+class OrderEditLine(BaseSchema):
+    """One line in an order-edit request (the full desired line set is sent).
+
+    ``unit_price_override`` NULL prices the line from the live catalog at the
+    order's currency; a concrete value pins a negotiated/admin price (mirrors
+    draft orders). Money is a wire ``float`` (converted to Decimal in the route).
+    """
+
+    product_id: int
+    variant_id: int | None = None
+    quantity: int = Field(..., gt=0)
+    unit_price_override: float | None = Field(default=None, ge=0)
+
+
+class OrderEditRequest(BaseSchema):
+    """Request body for ``PATCH /api/v1/orders/{id}/items`` (admin, pending only).
+
+    ``lines`` is the complete desired line set (not a delta). ``discount`` sets
+    the order's manual discount (kept if omitted); ``shipping_method_id`` swaps
+    the method (kept if omitted — shipping is re-resolved either way against the
+    new lines).
+    """
+
+    lines: list[OrderEditLine] = Field(..., min_length=1)
+    discount: float | None = Field(default=None, ge=0)
+    shipping_method_id: int | None = None
+
+
 class OrderResponse(OrderBase, TimestampSchema):
     """Schema for order response"""
 

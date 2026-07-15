@@ -45,6 +45,7 @@ from app.models.shipping import ShippingMethod
 from app.models.user import User, UserRole
 from app.schemas.order import OrderCreate, OrderUpdate
 from app.services.dimensional_weight import billable_weight_kg, line_volume_cm3
+from app.services.order_math import recompute_totals
 
 # Forward-only status workflow for the admin PATCH endpoint. Terminal and
 # stock-affecting transitions are NOT in this map — cancellation goes through
@@ -118,6 +119,20 @@ def is_inpost_locker_method(method: ShippingMethod) -> bool:
     these and the order must carry the chosen point.
     """
     return bool(method.code) and method.code.lower().startswith("inpost")
+
+
+class OrderNotEditableError(Exception):
+    """An edit was attempted on a non-PENDING order (paid/fulfilled/refunded).
+
+    The immutable-order ledger is deliberate: a paid order has a faktura and a
+    settled amount, so line changes go through the refund / corrective-invoice
+    path, never an in-place recompute. v1 refuses to mutate anything but a
+    PENDING order's items.
+    """
+
+    def __init__(self, status: OrderStatus) -> None:
+        self.status = OrderStatus(status)
+        super().__init__(f"Order is not editable in status '{self.status.value}'")
 
 
 class InsufficientStockError(Exception):
@@ -753,6 +768,153 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         ):
             if field in update_data:
                 setattr(order, field, update_data[field])
+        db.add(order)
+        return order
+
+    def edit_items(
+        self,
+        db: Session,
+        *,
+        order: Order,
+        lines: Sequence[OrderLineSpec],
+        discount: Decimal | None = None,
+        shipping_method_id: int | None = None,
+        actor_id: int | None = None,
+    ) -> Order:
+        """Replace a **pending** order's line set and recompute its totals.
+
+        Refuses any non-PENDING order (``OrderNotEditableError`` → 409 at the
+        route) — a paid order has a faktura and a settled amount, so changes go
+        through the refund / corrective-invoice path, not an in-place edit.
+
+        Stock stays honest via release-then-reacquire: every current line's
+        stock is restored first (so ``build_order_items``'s availability check
+        sees the true level, incl. the units this order already held), the new
+        line set is built + priced through the shared helpers, then the new
+        lines are decremented. Both legs are ``ORDER_EDITED`` ledger rows.
+        Totals go through the shared ``order_math.recompute_totals``; shipping
+        is re-resolved when the order has a method (weight/method may have
+        changed). Writes an ``edited`` timeline event with a before/after line
+        diff. Caller owns the commit.
+        """
+        if OrderStatus(order.status) != OrderStatus.PENDING:
+            raise OrderNotEditableError(order.status)
+
+        currency = order.currency
+        before_lines = [
+            {"product_id": it.product_id, "variant_id": it.variant_id, "quantity": it.quantity}
+            for it in order.items
+        ]
+
+        default_warehouse = crud_warehouse.get_default(db)
+        if default_warehouse is None:
+            raise RuntimeError("No default warehouse configured; run migrations")
+
+        # 1. Release the current lines' stock so the availability re-check below
+        #    accounts for the units this order already holds.
+        for item in order.items:
+            product = db.get(Product, item.product_id)
+            if product is None:
+                continue
+            variant = (
+                db.get(ProductVariant, item.variant_id) if item.variant_id is not None else None
+            )
+            crud_inventory.apply_delta(
+                db,
+                product=product,
+                delta=item.quantity,
+                reason=InventoryMovementReason.ORDER_EDITED,
+                warehouse_id=default_warehouse.id,
+                variant=variant,
+                actor_user_id=actor_id,
+                order_id=order.id,
+                note="order edit: released prior line",
+            )
+        db.flush()
+
+        # 2. Build the new line set (stock check now correct against restored levels).
+        product_ids = {line.product_id for line in lines}
+        products = {
+            p.id: p
+            for p in db.query(Product)
+            .options(selectinload(Product.variants))
+            .filter(Product.id.in_(product_ids))
+            .all()
+        }
+        variants = load_variants_for_lines(
+            db, [line.variant_id for line in lines if line.variant_id is not None]
+        )
+        new_items, subtotal, _ = build_order_items(
+            db,
+            line_specs=lines,
+            products=products,
+            variants=variants,
+            default_warehouse_id=default_warehouse.id,
+            currency=currency,
+        )
+
+        # 3. Swap the order's items (delete-orphan removes the old rows on flush).
+        order.items.clear()
+        for it in new_items:
+            order.items.append(it)
+        db.flush()
+
+        # 4. Decrement stock for the new line set.
+        for line in lines:
+            crud_inventory.apply_delta(
+                db,
+                product=products[line.product_id],
+                delta=-line.quantity,
+                reason=InventoryMovementReason.ORDER_EDITED,
+                warehouse_id=default_warehouse.id,
+                variant=variants.get(line.variant_id) if line.variant_id is not None else None,
+                actor_user_id=actor_id,
+                order_id=order.id,
+                allow_negative=products[line.product_id].allow_backorder,
+                note="order edit: acquired new line",
+            )
+
+        # 5. Discount override (manual, like draft orders) — keep current if unset.
+        if discount is not None:
+            order.discount = quantize_money(discount)
+
+        # 6. Re-resolve shipping when the order carries a method (weight or the
+        #    chosen method may have changed); otherwise keep the current amount.
+        method_id = (
+            shipping_method_id if shipping_method_id is not None else order.shipping_method_id
+        )
+        if method_id is not None:
+            shipping_amount, ship_method = resolve_order_shipping(
+                db,
+                product_lines=[(products[line.product_id], line.quantity) for line in lines],
+                subtotal=subtotal,
+                country=order.shipping_country,
+                currency=currency,
+                shipping_method_id=method_id,
+                inpost_point=order.inpost_point_id,
+            )
+            order.shipping = shipping_amount
+            order.shipping_method_id = ship_method.id
+            order.shipping_method_name = ship_method.name
+
+        # 7. Recompute subtotal/total via the shared seam (draft uses the same).
+        order.subtotal, order.total = recompute_totals(
+            line_totals=[it.total_price for it in new_items],
+            discount=order.discount,
+            shipping=order.shipping,
+        )
+
+        after_lines = [
+            {"product_id": it.product_id, "variant_id": it.variant_id, "quantity": it.quantity}
+            for it in new_items
+        ]
+        crud_order_event.record(
+            db,
+            order_id=order.id,
+            kind="edited",
+            actor_id=actor_id,
+            payload={"before": before_lines, "after": after_lines},
+        )
         db.add(order)
         return order
 

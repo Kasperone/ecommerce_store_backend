@@ -23,6 +23,9 @@ class InventoryMovementReason(str, enum.Enum):
     ORDER_PLACED = "order_placed"
     ORDER_CANCELLED = "order_cancelled"
     ORDER_REFUNDED = "order_refunded"
+    # Admin edited a pending order's line items: old lines are released and the
+    # new line set re-acquired, both under this reason (net delta per SKU).
+    ORDER_EDITED = "order_edited"
     MANUAL_ADJUSTMENT = "manual_adjustment"
     RESTOCK = "restock"
     TRANSFER_OUT = "transfer_out"

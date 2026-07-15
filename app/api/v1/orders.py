@@ -24,6 +24,7 @@ from app.core.dependencies import (
     get_optional_user,
     require_capability,
 )
+from app.core.money import to_money
 from app.core.rate_limit import get_ip_key, limiter
 from app.crud import invoice as crud_invoice
 from app.crud import order as crud_order
@@ -36,6 +37,8 @@ from app.crud.gift_card import GiftCardError
 from app.crud.order import (
     InPostPointRequiredError,
     InsufficientStockError,
+    OrderLineSpec,
+    OrderNotEditableError,
     ProductUnavailableError,
     VariantRequiredError,
     VariantUnavailableError,
@@ -62,6 +65,7 @@ from app.models.user import User, UserRole
 from app.schemas.order import (
     GuestOrderResponse,
     OrderCreate,
+    OrderEditRequest,
     OrderListResponse,
     OrderResponse,
     OrderUpdate,
@@ -467,6 +471,73 @@ async def update_order(
         event = order_email.event_for_status(new_status)
         if event is not None:
             background_tasks.add_task(order_email.send_order_event_in_background, order.id, event)
+    return order
+
+
+@router.patch(
+    "/{order_id}/items",
+    response_model=OrderWithUser,
+    dependencies=[Depends(require_capability(ORDERS_WRITE))],
+)
+async def edit_order_items(
+    order_id: int,
+    payload: OrderEditRequest,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
+):
+    """Replace a **pending** order's line items and recompute its totals (admin).
+
+    Editable operations (all expressed as the full desired line set): add/remove
+    a line, change a quantity, override a line price, adjust the manual discount,
+    change the shipping method. Non-pending orders are refused with **409** —
+    a paid order's changes go through the refund / corrective-invoice path.
+    Stock is reconciled (release prior lines, re-acquire the new set) and an
+    ``edited`` timeline event is written. Gated on ``orders:write``.
+    """
+    order = crud_order.get(db, id=order_id)
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+
+    lines = [
+        OrderLineSpec(
+            product_id=line.product_id,
+            variant_id=line.variant_id,
+            quantity=line.quantity,
+            unit_price=to_money(line.unit_price_override),
+        )
+        for line in payload.lines
+    ]
+    try:
+        crud_order.edit_items(
+            db,
+            order=order,
+            lines=lines,
+            discount=to_money(payload.discount),
+            shipping_method_id=payload.shipping_method_id,
+            actor_id=current_admin.id,
+        )
+    except OrderNotEditableError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except ProductUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Product {exc.product_id} is unavailable",
+        ) from exc
+    except (VariantRequiredError, VariantUnavailableError, InsufficientStockError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    except InPostPointRequiredError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except ShippingRateUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+    audit.record_update(resource_type="order", obj=order)
+    db.commit()
+    db.refresh(order)
     return order
 
 
