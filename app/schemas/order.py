@@ -233,10 +233,26 @@ class OrderResponse(OrderBase, TimestampSchema):
     refunds: list[RefundResponse] = Field(default_factory=list)
 
 
+class OrderUserResponse(UserResponse):
+    """Nested owner for the order-detail view.
+
+    Relaxes ``email`` to a plain ``str`` (``UserResponse.email`` is ``EmailStr``)
+    so an order whose owner was GDPR-anonymized still serializes. The anonymizer
+    sets the email to the reserved ``.invalid`` TLD
+    (``deleted-user-<id>@anon.invalid``), which ``EmailStr`` rejects — without
+    this relaxation ``GET /orders/{id}`` 500s with a ``ResponseValidationError``
+    and the admin can't open the order at all. The value is still a string, just
+    not RFC-deliverable; ``first_name``/``last_name`` ("deleted"/"user") stay
+    visible so the admin sees *why* the row looks empty.
+    """
+
+    email: str
+
+
 class OrderWithUser(OrderResponse):
     """Order response with user details (``user`` is null on guest orders)"""
 
-    user: UserResponse | None = None
+    user: OrderUserResponse | None = None
 
 
 class GuestOrderItem(BaseSchema):
