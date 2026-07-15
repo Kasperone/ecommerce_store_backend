@@ -28,6 +28,7 @@ from app.crud.gift_card import GiftCardError
 from app.crud.gift_card import gift_card as crud_gift_card
 from app.crud.inventory import inventory as crud_inventory
 from app.crud.invoice import invoice as crud_invoice
+from app.crud.order_event import order_event as crud_order_event
 from app.crud.shipping import (
     ShippingRateUnavailableError,
 )
@@ -520,6 +521,13 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         db.add(order)
         db.flush()  # populate order.id before writing inventory movements
 
+        # Open the order's timeline. actor = the placing customer (None for a
+        # guest). A fully-tender-covered order emits 'paid' below (higher id →
+        # sorts newer), so the reverse-chron feed reads paid → created.
+        crud_order_event.record(
+            db, order_id=order.id, kind="created", actor_id=user_id, payload={"status": "pending"}
+        )
+
         # Record the per-user redemption now that order.id exists (same unit of
         # work as redeem() above, so a rolled-back order burns no use and records
         # no redemption). Backs Coupon.per_user_limit. Skipped for guest orders:
@@ -654,24 +662,42 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         # (gift_card_amount / store_credit_amount / last4) stay for history.
         crud_gift_card.release_for_order(db, order_id=order.id)
         crud_store_credit.release_for_order(db, order_id=order.id)
+        previous = OrderStatus(order.status).value
         order.status = OrderStatus.CANCELLED
         db.add(order)
+        crud_order_event.record(
+            db,
+            order_id=order.id,
+            kind="status_changed",
+            actor_id=actor_user_id,
+            payload={"from": previous, "to": OrderStatus.CANCELLED.value},
+        )
         return order
 
     def is_cancellable(self, order: Order) -> bool:
         return OrderStatus(order.status) in _CANCELLABLE
 
-    def apply_admin_update(self, db: Session, *, order: Order, obj_in: OrderUpdate) -> Order:
+    def apply_admin_update(
+        self,
+        db: Session,
+        *,
+        order: Order,
+        obj_in: OrderUpdate,
+        actor_user_id: int | None = None,
+    ) -> Order:
         """Apply an admin PATCH (status workflow + notes/payment/tracking fields).
 
         Coerces ``status`` to a real ``OrderStatus`` member (the schema's
         ``use_enum_values`` would otherwise hand us a raw string that the
         SQLEnum column may reject). Tracking fields are typically set alongside
         ``status=shipped`` but may be edited on their own afterwards (a no-op
-        status keeps the PATCH valid). Does not flush — the audit writer reads
-        ``get_history`` before the route commits.
+        status keeps the PATCH valid). Records timeline events (paid /
+        status_changed / tracking_added) attributed to ``actor_user_id``. Does
+        not flush — the audit writer reads ``get_history`` before the route
+        commits (record() only db.add()s, which doesn't flush).
         """
         update_data = obj_in.model_dump(exclude_unset=True)
+        previous_status = OrderStatus(order.status)
         if "status" in update_data and obj_in.status is not None:
             new_status = OrderStatus(obj_in.status)
             # Stamp the delivery timestamp on the transition INTO delivered —
@@ -683,6 +709,40 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             ):
                 order.delivered_at = datetime.now(UTC).replace(tzinfo=None)
             order.status = new_status
+            if new_status != previous_status:
+                # A genuine pending→paid gets the dedicated 'paid' event (the
+                # route issues the faktura in the same txn); other transitions
+                # are 'status_changed'.
+                if new_status == OrderStatus.PAID:
+                    crud_order_event.record(
+                        db, order_id=order.id, kind="paid", actor_id=actor_user_id
+                    )
+                else:
+                    crud_order_event.record(
+                        db,
+                        order_id=order.id,
+                        kind="status_changed",
+                        actor_id=actor_user_id,
+                        payload={"from": previous_status.value, "to": new_status.value},
+                    )
+        # Tracking added/changed → a dedicated timeline entry (the shipped email
+        # carries the link). Fire when a non-empty tracking_number is set to a
+        # new value.
+        if (
+            "tracking_number" in update_data
+            and update_data["tracking_number"]
+            and update_data["tracking_number"] != order.tracking_number
+        ):
+            crud_order_event.record(
+                db,
+                order_id=order.id,
+                kind="tracking_added",
+                actor_id=actor_user_id,
+                payload={
+                    "tracking_number": update_data["tracking_number"],
+                    "carrier": update_data.get("shipping_carrier") or order.shipping_carrier,
+                },
+            )
         for field in (
             "payment_method",
             "payment_intent_id",
@@ -723,6 +783,13 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             order.payment_intent_id = payment_intent_id
         db.add(order)
         crud_invoice.issue_for_order(db, order=order)
+        # Timeline: payment confirmed. System actor (webhook / tender close-out).
+        crud_order_event.record(
+            db,
+            order_id=order.id,
+            kind="paid",
+            payload={"payment_method": payment_method},
+        )
         return order
 
     def get_by_order_number(self, db: Session, *, order_number: str) -> Order | None:

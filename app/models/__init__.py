@@ -46,6 +46,7 @@ from app.models.inventory_movement import InventoryMovement, InventoryMovementRe
 from app.models.invoice import Invoice, InvoiceCounter
 from app.models.newsletter_subscriber import NewsletterSubscriber
 from app.models.order import Order, OrderItem
+from app.models.order_event import OrderEvent
 from app.models.page import (
     PAGE_LOCALE_VALUES,
     PAGE_STATUS_VALUES,
@@ -162,6 +163,7 @@ __all__ = [
     "QuoteStatus",
     "QUOTE_STATUS_VALUES",
     "Order",
+    "OrderEvent",
     "OrderItem",
     "Page",
     "PageVersion",

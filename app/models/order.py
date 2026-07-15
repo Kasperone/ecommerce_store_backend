@@ -11,6 +11,7 @@ from app.core.money import quantize_money
 from app.models.base import BaseModel
 
 if TYPE_CHECKING:
+    from app.models.order_event import OrderEvent
     from app.models.product import Product
     from app.models.refund import Refund
     from app.models.shipping import ShippingMethod
@@ -171,6 +172,11 @@ class Order(BaseModel):
     # hard-deleted in practice — cancel is a status change).
     refunds: Mapped[list["Refund"]] = relationship(
         "Refund", back_populates="order", order_by="Refund.created_at"
+    )
+    # Append-only per-order timeline (system milestones + staff comments).
+    # Cascade-deletes with the order (matches the FK ON DELETE CASCADE).
+    events: Mapped[list["OrderEvent"]] = relationship(
+        "OrderEvent", back_populates="order", cascade="all, delete-orphan"
     )
 
     def __repr__(self):
