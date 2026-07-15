@@ -27,6 +27,7 @@ from app.core.dependencies import (
 from app.core.rate_limit import get_ip_key, limiter
 from app.crud import invoice as crud_invoice
 from app.crud import order as crud_order
+from app.crud import order_event as crud_order_event
 from app.crud import refund as crud_refund
 from app.crud import return_request as crud_return_request
 from app.crud import store_config as crud_store_config
@@ -66,6 +67,7 @@ from app.schemas.order import (
     OrderUpdate,
     OrderWithUser,
 )
+from app.schemas.order_event import OrderEventCreate, OrderEventResponse
 from app.schemas.refund import RefundCreate, RefundResponse
 from app.schemas.return_request import (
     ReturnEligibilityLine,
@@ -449,7 +451,7 @@ async def update_order(
         if error is not None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
 
-    crud_order.apply_admin_update(db, order=order, obj_in=order_in)
+    crud_order.apply_admin_update(db, order=order, obj_in=order_in, actor_user_id=current_admin.id)
     audit.record_update(resource_type="order", obj=order)
     # Issue the sequential faktura on a genuine admin pending→paid (the webhook path
     # issues via mark_paid). After the audit read: issue_for_order flushes, which
@@ -581,6 +583,19 @@ async def issue_refund(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.code) from exc
 
     audit.record_create(resource_type="refund", obj=refund)
+    # Timeline: refund issued (records the resulting order status + amount so the
+    # feed shows partial vs full at a glance). Same txn as the refund.
+    crud_order_event.record(
+        db,
+        order_id=order.id,
+        kind="refunded",
+        actor_id=current_admin.id,
+        payload={
+            "amount": str(refund.amount),
+            "status": OrderStatus(order.status).value,
+            "destination": refund_in.destination,
+        },
+    )
     db.commit()
     # Re-load with the eager options so the response carries the KOR + actor +
     # picker without a fresh round-trip (db.refresh doesn't load relationships).
@@ -593,6 +608,55 @@ async def issue_refund(
     # Refund-confirmation email with the KOR attached (best-effort, off the hot path).
     background_tasks.add_task(order_email.send_order_event_in_background, order.id, "refunded")
     return refund
+
+
+@router.get("/{order_id}/events", response_model=list[OrderEventResponse])
+async def list_order_events(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+):
+    """The order's timeline, newest first (admin — any staff may read).
+
+    System milestones (created / paid / status_changed / refunded /
+    tracking_added / edited) plus free-text staff comments (``kind='note'``).
+    404 when the order doesn't exist.
+    """
+    order = crud_order.get(db, id=order_id)
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+    return crud_order_event.list_for_order(db, order_id=order.id)
+
+
+@router.post(
+    "/{order_id}/events",
+    response_model=OrderEventResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_capability(ORDERS_WRITE))],
+)
+async def create_order_comment(
+    order_id: int,
+    payload: OrderEventCreate,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+):
+    """Append a free-text staff comment to the order's timeline (``kind='note'``).
+
+    Gated on ``orders:write``. The comment is attributed to the acting staffer.
+    """
+    order = crud_order.get(db, id=order_id)
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+    event = crud_order_event.record(
+        db,
+        order_id=order.id,
+        kind="note",
+        actor_id=current_admin.id,
+        comment=payload.comment,
+    )
+    db.commit()
+    db.refresh(event)
+    return event
 
 
 @router.get("/{order_id}/refunds", response_model=list[RefundResponse])
