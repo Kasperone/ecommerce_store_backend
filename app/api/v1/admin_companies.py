@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.core.capabilities import CUSTOMERS_WRITE
 from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.crud import company as crud_company
+from app.crud import price_list as crud_price_list
 from app.models.quote import Quote
 from app.models.user import User
 from app.schemas.company import (
@@ -89,6 +90,11 @@ async def create_company(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Primary contact user not found",
         )
+    if payload.price_list_id is not None and crud_price_list.get(db, payload.price_list_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Price list not found",
+        )
     company = crud_company.create(db, obj_in=payload)
     audit.record_create(resource_type="company", obj=company)
     db.commit()
@@ -133,6 +139,18 @@ async def update_company(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Primary contact user not found",
+        )
+
+    # Validate a newly-assigned price list (explicit non-null). An explicit
+    # ``null`` unassigns (→ catalog pricing); an omitted field leaves it.
+    if (
+        "price_list_id" in payload.model_fields_set
+        and payload.price_list_id is not None
+        and crud_price_list.get(db, payload.price_list_id) is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Price list not found",
         )
 
     crud_company.update(db, company=company, obj_in=payload)
