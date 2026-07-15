@@ -5,7 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db, get_optional_user
+from app.core.capabilities import CATALOG_WRITE
+from app.core.dependencies import (
+    get_current_admin,
+    get_db,
+    get_optional_user,
+    require_capability,
+)
 from app.core.money import as_float
 from app.crud import price_history as crud_price_history
 from app.crud import product as crud_product
@@ -28,6 +34,12 @@ from app.services import search_index
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+# The catalog write/DELETE routes below (create/update/delete) live in this
+# public-facing router alongside the storefront read routes. They must carry the
+# same capability fence as the admin catalog tools in ``admin_products.py`` — a
+# scoped staffer without ``catalog:write`` must not be able to mutate products.
+_catalog_write = Depends(require_capability(CATALOG_WRITE))
 
 
 def _reconcile_product_tags(db: Session, product: Product, names: list[str]) -> None:
@@ -275,7 +287,12 @@ async def get_related_products(
     return crud_product.get_related(db, product=product, limit=limit)
 
 
-@router.post("/", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    response_model=ProductResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[_catalog_write],
+)
 async def create_product(
     product_in: ProductCreate,
     db: Session = Depends(get_db),
@@ -333,7 +350,7 @@ async def create_product(
     return product
 
 
-@router.put("/{product_id}", response_model=ProductResponse)
+@router.put("/{product_id}", response_model=ProductResponse, dependencies=[_catalog_write])
 async def update_product(
     product_id: int,
     product_in: ProductUpdate,
@@ -402,7 +419,9 @@ async def update_product(
     return product
 
 
-@router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{product_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[_catalog_write]
+)
 async def delete_product(
     product_id: int,
     db: Session = Depends(get_db),
