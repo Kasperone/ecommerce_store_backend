@@ -17,6 +17,7 @@ from app.crud.inventory import inventory
 from app.crud.invoice import invoice
 from app.crud.newsletter import newsletter
 from app.crud.order import order
+from app.crud.order_event import order_event
 from app.crud.page import page
 from app.crud.price_history import price_history
 from app.crud.product import product
@@ -65,6 +66,7 @@ __all__ = [
     "category",
     "collection",
     "order",
+    "order_event",
     "page",
     "inventory",
     "invoice",
