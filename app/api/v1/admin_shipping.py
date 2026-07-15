@@ -19,7 +19,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import SETTINGS_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.core.money import as_float
 from app.crud import shipping_method as crud_shipping_method
 from app.crud import shipping_rate as crud_shipping_rate
@@ -49,6 +50,9 @@ from app.schemas.shipping import (
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+# Capability gate for this router's write/DELETE routes.
+_require = Depends(require_capability(SETTINGS_WRITE))
 
 
 def _zone_detail(zone: ShippingZone) -> ShippingZoneDetail:
@@ -149,7 +153,12 @@ async def get_zone(
     return _zone_detail(zone)
 
 
-@router.post("/zones", response_model=ShippingZoneDetail, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/zones",
+    dependencies=[_require],
+    response_model=ShippingZoneDetail,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_zone(
     payload: ShippingZoneCreate,
     db: Session = Depends(get_db),
@@ -175,7 +184,7 @@ async def create_zone(
     return _zone_detail(fresh)
 
 
-@router.put("/zones/{zone_id}", response_model=ShippingZoneDetail)
+@router.put("/zones/{zone_id}", dependencies=[_require], response_model=ShippingZoneDetail)
 async def update_zone(
     zone_id: int,
     payload: ShippingZoneUpdate,
@@ -202,7 +211,7 @@ async def update_zone(
     return _zone_detail(fresh)
 
 
-@router.delete("/zones/{zone_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/zones/{zone_id}", dependencies=[_require], status_code=status.HTTP_204_NO_CONTENT)
 async def delete_zone(
     zone_id: int,
     db: Session = Depends(get_db),
@@ -260,6 +269,7 @@ async def get_method(
 
 @router.post(
     "/methods",
+    dependencies=[_require],
     response_model=ShippingMethodResponse,
     status_code=status.HTTP_201_CREATED,
 )
@@ -284,7 +294,7 @@ async def create_method(
     return method
 
 
-@router.put("/methods/{method_id}", response_model=ShippingMethodResponse)
+@router.put("/methods/{method_id}", dependencies=[_require], response_model=ShippingMethodResponse)
 async def update_method(
     method_id: int,
     payload: ShippingMethodUpdate,
@@ -311,7 +321,9 @@ async def update_method(
     return method
 
 
-@router.delete("/methods/{method_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/methods/{method_id}", dependencies=[_require], status_code=status.HTTP_204_NO_CONTENT
+)
 async def delete_method(
     method_id: int,
     db: Session = Depends(get_db),
@@ -366,6 +378,7 @@ async def list_rates(
 
 @router.post(
     "/rates",
+    dependencies=[_require],
     response_model=ShippingRateResponse,
     status_code=status.HTTP_201_CREATED,
 )
@@ -401,7 +414,7 @@ async def create_rate(
     return rate
 
 
-@router.put("/rates/{rate_id}", response_model=ShippingRateResponse)
+@router.put("/rates/{rate_id}", dependencies=[_require], response_model=ShippingRateResponse)
 async def update_rate(
     rate_id: int,
     payload: ShippingRateUpdate,
@@ -426,7 +439,7 @@ async def update_rate(
     return rate
 
 
-@router.delete("/rates/{rate_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/rates/{rate_id}", dependencies=[_require], status_code=status.HTTP_204_NO_CONTENT)
 async def delete_rate(
     rate_id: int,
     db: Session = Depends(get_db),

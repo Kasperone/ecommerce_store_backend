@@ -18,7 +18,8 @@ from math import ceil
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import ORDERS_REFUND
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.core.money import to_money
 from app.crud import gift_card as crud_gift_card
 from app.crud import user as crud_user
@@ -41,6 +42,9 @@ from app.services.gift_card_email import send_gift_card_email
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Capability gate for this router's write/DELETE routes.
+_require = Depends(require_capability(ORDERS_REFUND))
 
 
 def _detail(card) -> GiftCardDetailResponse:
@@ -82,7 +86,12 @@ async def list_gift_cards(
     }
 
 
-@router.post("/", response_model=GiftCardIssueResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    dependencies=[_require],
+    response_model=GiftCardIssueResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def issue_gift_card(
     payload: GiftCardIssueRequest,
     db: Session = Depends(get_db),
@@ -147,7 +156,7 @@ async def get_gift_card(
     return _detail(card)
 
 
-@router.patch("/{gift_card_id}", response_model=GiftCardResponse)
+@router.patch("/{gift_card_id}", dependencies=[_require], response_model=GiftCardResponse)
 async def update_gift_card(
     gift_card_id: int,
     payload: GiftCardUpdate,
@@ -174,7 +183,9 @@ async def update_gift_card(
     return card
 
 
-@router.post("/{gift_card_id}/adjust", response_model=GiftCardDetailResponse)
+@router.post(
+    "/{gift_card_id}/adjust", dependencies=[_require], response_model=GiftCardDetailResponse
+)
 async def adjust_gift_card(
     gift_card_id: int,
     payload: GiftCardAdjustRequest,

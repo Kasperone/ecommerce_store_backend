@@ -30,7 +30,8 @@ from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import CONTENT_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.crud import page as crud_page
 from app.crud.page import PREVIEW_TOKEN_TTL_SECONDS, make_preview_token
 from app.models.user import User
@@ -50,6 +51,9 @@ from app.schemas.page import (
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+# Capability gate for this router's write/DELETE routes.
+_require = Depends(require_capability(CONTENT_WRITE))
 
 # nh3 (Rust ammonia) allowlist for the custom-html block. Defaults already drop
 # <script>/<style> and event handlers; we explicitly allow a pragmatic content
@@ -204,7 +208,9 @@ async def list_pages(
     }
 
 
-@router.post("/", response_model=PageResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/", dependencies=[_require], response_model=PageResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_page(
     payload: PageCreate,
     db: Session = Depends(get_db),
@@ -252,7 +258,7 @@ async def get_page(
     return _get_or_404(db, page_id)
 
 
-@router.patch("/{page_id}/draft", response_model=PageResponse)
+@router.patch("/{page_id}/draft", dependencies=[_require], response_model=PageResponse)
 async def save_draft(
     page_id: int,
     payload: PageDraftUpdate,
@@ -279,7 +285,7 @@ async def save_draft(
     return page
 
 
-@router.post("/{page_id}/publish", response_model=PageResponse)
+@router.post("/{page_id}/publish", dependencies=[_require], response_model=PageResponse)
 async def publish_page(
     page_id: int,
     payload: PagePublishRequest | None = None,
@@ -316,6 +322,7 @@ async def publish_page(
 
 @router.post(
     "/{page_id}/preview-token",
+    dependencies=[_require],
     response_model=PreviewTokenResponse,
     status_code=status.HTTP_201_CREATED,
 )
@@ -354,7 +361,11 @@ async def list_versions(
     return {"items": versions, "total": len(versions)}
 
 
-@router.post("/{page_id}/versions/{version_id}/rollback", response_model=PageResponse)
+@router.post(
+    "/{page_id}/versions/{version_id}/rollback",
+    dependencies=[_require],
+    response_model=PageResponse,
+)
 async def rollback_version(
     page_id: int,
     version_id: int,
@@ -385,7 +396,7 @@ async def rollback_version(
 # --------------------------------------------------------------------------- #
 
 
-@router.delete("/{page_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{page_id}", dependencies=[_require], status_code=status.HTTP_204_NO_CONTENT)
 async def delete_page(
     page_id: int,
     db: Session = Depends(get_db),

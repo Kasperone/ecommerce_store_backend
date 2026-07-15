@@ -19,7 +19,8 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import SETTINGS_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.models.user import User
 from app.schemas.translation import (
     TranslationResourceListResponse,
@@ -42,6 +43,9 @@ from app.services.translation_admin import (
 )
 
 router = APIRouter()
+
+# Capability gate for this router's write/DELETE routes.
+_require = Depends(require_capability(SETTINGS_WRITE))
 
 
 def _resolve_locale(locale: str) -> str:
@@ -109,7 +113,9 @@ async def list_translations(
     }
 
 
-@router.put("/{resource_type}/{resource_id}", response_model=TranslationResourceRow)
+@router.put(
+    "/{resource_type}/{resource_id}", dependencies=[_require], response_model=TranslationResourceRow
+)
 async def update_translation(
     resource_type: str,
     resource_id: int,

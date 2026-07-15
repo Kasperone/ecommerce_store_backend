@@ -17,8 +17,9 @@ import uuid
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
+from app.core.capabilities import CATALOG_WRITE
 from app.core.config import settings
-from app.core.dependencies import get_current_admin, get_db
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.core.storage import get_r2_client
 from app.crud import collection as crud_collection
 from app.crud import product as crud_product
@@ -45,6 +46,9 @@ from app.services.image import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Capability gate for this router's write/DELETE routes.
+_require = Depends(require_capability(CATALOG_WRITE))
 
 
 def _check_slug_pl_collision(
@@ -110,7 +114,12 @@ async def get_collection(
     return _with_count(db, collection)
 
 
-@router.post("/", response_model=CollectionResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    dependencies=[_require],
+    response_model=CollectionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_collection(
     collection_in: CollectionCreate,
     db: Session = Depends(get_db),
@@ -133,7 +142,7 @@ async def create_collection(
     return collection
 
 
-@router.put("/{collection_id}", response_model=CollectionResponse)
+@router.put("/{collection_id}", dependencies=[_require], response_model=CollectionResponse)
 async def update_collection(
     collection_id: int,
     collection_in: CollectionUpdate,
@@ -170,7 +179,7 @@ async def update_collection(
     return collection
 
 
-@router.delete("/{collection_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{collection_id}", dependencies=[_require], status_code=status.HTTP_204_NO_CONTENT)
 async def delete_collection(
     collection_id: int,
     db: Session = Depends(get_db),
@@ -198,7 +207,9 @@ async def delete_collection(
 # ---------------------------------------------------------------------------
 
 
-@router.put("/{collection_id}/products", response_model=CollectionWithProductCount)
+@router.put(
+    "/{collection_id}/products", dependencies=[_require], response_model=CollectionWithProductCount
+)
 async def set_collection_products(
     collection_id: int,
     body: CollectionProductsSet,
@@ -242,6 +253,7 @@ async def set_collection_products(
 
 @router.post(
     "/{collection_id}/products/{product_id}",
+    dependencies=[_require],
     response_model=CollectionWithProductCount,
     status_code=status.HTTP_201_CREATED,
 )
@@ -275,7 +287,11 @@ async def add_collection_product(
     return _with_count(db, collection)
 
 
-@router.delete("/{collection_id}/products/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{collection_id}/products/{product_id}",
+    dependencies=[_require],
+    status_code=status.HTTP_204_NO_CONTENT,
+)
 async def remove_collection_product(
     collection_id: int,
     product_id: int,
@@ -314,6 +330,7 @@ def _r2_key_from_hero_url(url: str) -> str:
 
 @router.post(
     "/{collection_id}/hero",
+    dependencies=[_require],
     response_model=CollectionHeroResponse,
     status_code=status.HTTP_201_CREATED,
 )
@@ -375,7 +392,9 @@ async def upload_collection_hero(
     return CollectionHeroResponse.model_validate(collection)
 
 
-@router.patch("/{collection_id}/hero", response_model=CollectionHeroResponse)
+@router.patch(
+    "/{collection_id}/hero", dependencies=[_require], response_model=CollectionHeroResponse
+)
 async def update_collection_hero_alt(
     collection_id: int,
     body: CollectionHeroAltUpdate,
@@ -400,7 +419,9 @@ async def update_collection_hero_alt(
     return CollectionHeroResponse.model_validate(collection)
 
 
-@router.delete("/{collection_id}/hero", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{collection_id}/hero", dependencies=[_require], status_code=status.HTTP_204_NO_CONTENT
+)
 async def delete_collection_hero(
     collection_id: int,
     db: Session = Depends(get_db),

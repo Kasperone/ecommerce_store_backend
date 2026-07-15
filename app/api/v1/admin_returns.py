@@ -22,7 +22,8 @@ from math import ceil
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import ORDERS_REFUND, ORDERS_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.core.money import ZERO_MONEY, quantize_money
 from app.crud import refund as crud_refund
 from app.crud import return_request as crud_return_request
@@ -47,6 +48,10 @@ from app.services import order_email, return_email, search_index
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+# RMA workflow actions gate on orders:write; the money-moving refund on orders:refund.
+_orders_write = Depends(require_capability(ORDERS_WRITE))
+_orders_refund = Depends(require_capability(ORDERS_REFUND))
 
 
 def _get_or_404(db: Session, return_id: int) -> ReturnRequest:
@@ -116,7 +121,9 @@ async def get_return(
     return _get_or_404(db, return_id)
 
 
-@router.post("/{return_id}/approve", response_model=ReturnRequestResponse)
+@router.post(
+    "/{return_id}/approve", response_model=ReturnRequestResponse, dependencies=[_orders_write]
+)
 async def approve_return(
     return_id: int,
     background_tasks: BackgroundTasks,
@@ -137,7 +144,9 @@ async def approve_return(
     return ret
 
 
-@router.post("/{return_id}/reject", response_model=ReturnRequestResponse)
+@router.post(
+    "/{return_id}/reject", response_model=ReturnRequestResponse, dependencies=[_orders_write]
+)
 async def reject_return(
     return_id: int,
     background_tasks: BackgroundTasks,
@@ -159,7 +168,9 @@ async def reject_return(
     return ret
 
 
-@router.post("/{return_id}/receive", response_model=ReturnRequestResponse)
+@router.post(
+    "/{return_id}/receive", response_model=ReturnRequestResponse, dependencies=[_orders_write]
+)
 async def receive_return(
     return_id: int,
     payload: ReturnActionRequest | None = None,
@@ -179,7 +190,9 @@ async def receive_return(
     )
 
 
-@router.post("/{return_id}/refund", response_model=ReturnRequestResponse)
+@router.post(
+    "/{return_id}/refund", response_model=ReturnRequestResponse, dependencies=[_orders_refund]
+)
 async def refund_return(
     return_id: int,
     payload: ReturnRefundRequest,

@@ -16,13 +16,17 @@ made here flow through to invoices/emails without a redeploy.
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import SETTINGS_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.crud import store_config as crud_store_config
 from app.models.user import User
 from app.schemas.store_config import StoreConfigResponse, StoreConfigUpdate
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+# Capability gate for this router's write/DELETE routes.
+_require = Depends(require_capability(SETTINGS_WRITE))
 
 
 @router.get("", response_model=StoreConfigResponse)
@@ -34,7 +38,7 @@ async def get_settings(
     return crud_store_config.get_singleton(db)
 
 
-@router.patch("", response_model=StoreConfigResponse)
+@router.patch("", dependencies=[_require], response_model=StoreConfigResponse)
 async def update_settings(
     payload: StoreConfigUpdate,
     db: Session = Depends(get_db),

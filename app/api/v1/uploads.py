@@ -10,8 +10,9 @@ import uuid
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
+from app.core.capabilities import CATALOG_WRITE
 from app.core.config import settings
-from app.core.dependencies import get_current_admin, get_db
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.core.storage import get_r2_client
 from app.crud import product as crud_product
 from app.crud import product_image as crud_product_image
@@ -32,6 +33,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Capability gate for this router's write/DELETE routes.
+_require = Depends(require_capability(CATALOG_WRITE))
+
 
 def _get_image_for_product(db: Session, *, product_id: int, image_id: int) -> ProductImage:
     image = crud_product_image.get(db, id=image_id)
@@ -43,6 +47,7 @@ def _get_image_for_product(db: Session, *, product_id: int, image_id: int) -> Pr
 
 @router.post(
     "/{product_id}/images",
+    dependencies=[_require],
     response_model=ProductImageResponse,
     status_code=status.HTTP_201_CREATED,
 )
@@ -102,6 +107,7 @@ async def upload_product_image(
 
 @router.patch(
     "/{product_id}/images/{image_id}",
+    dependencies=[_require],
     response_model=ProductImageResponse,
 )
 async def update_product_image(
@@ -138,6 +144,7 @@ async def update_product_image(
 
 @router.delete(
     "/{product_id}/images/{image_id}",
+    dependencies=[_require],
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_product_image(

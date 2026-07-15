@@ -16,8 +16,9 @@ from fastapi import APIRouter, Depends, File, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.core.capabilities import CATALOG_WRITE
 from app.core.config import settings
-from app.core.dependencies import get_current_admin, get_db
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.core.storage import get_r2_client
 from app.models.user import User
 from app.services.audit import AuditWriter, get_audit_writer
@@ -29,6 +30,9 @@ from app.services.image import (
 )
 
 router = APIRouter()
+
+# Capability gate for this router's write/DELETE routes.
+_require = Depends(require_capability(CATALOG_WRITE))
 
 
 class MediaUploadResponse(BaseModel):
@@ -43,6 +47,7 @@ class MediaUploadResponse(BaseModel):
 
 @router.post(
     "",
+    dependencies=[_require],
     response_model=MediaUploadResponse,
     status_code=status.HTTP_201_CREATED,
 )

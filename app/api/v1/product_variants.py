@@ -14,7 +14,8 @@ and the Meilisearch document is re-synced after commit (best-effort).
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import CATALOG_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.crud import price_history as crud_price_history
 from app.crud import product as crud_product
 from app.crud import product_variant as crud_product_variant
@@ -34,6 +35,9 @@ from app.services import search_index
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+# Capability gate for this router's write/DELETE routes.
+_require = Depends(require_capability(CATALOG_WRITE))
 
 
 def _get_product_or_404(db: Session, product_id: int) -> Product:
@@ -77,7 +81,9 @@ async def list_product_variants(
     return [_variant_response(variant) for variant in variants]
 
 
-@router.put("/{product_id}/options", response_model=ProductOptionsMatrixResponse)
+@router.put(
+    "/{product_id}/options", dependencies=[_require], response_model=ProductOptionsMatrixResponse
+)
 async def update_product_options_matrix(
     product_id: int,
     matrix_in: ProductOptionsMatrixUpdate,
@@ -136,7 +142,11 @@ async def update_product_options_matrix(
     )
 
 
-@router.patch("/{product_id}/variants/{variant_id}", response_model=ProductVariantResponse)
+@router.patch(
+    "/{product_id}/variants/{variant_id}",
+    dependencies=[_require],
+    response_model=ProductVariantResponse,
+)
 async def update_product_variant(
     product_id: int,
     variant_id: int,
@@ -181,7 +191,11 @@ async def update_product_variant(
     return _variant_response(variant)
 
 
-@router.delete("/{product_id}/variants/{variant_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{product_id}/variants/{variant_id}",
+    dependencies=[_require],
+    status_code=status.HTTP_204_NO_CONTENT,
+)
 async def delete_product_variant(
     product_id: int,
     variant_id: int,

@@ -18,7 +18,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import CUSTOMERS_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.crud import company as crud_company
 from app.models.quote import Quote
 from app.models.user import User
@@ -32,6 +33,9 @@ from app.schemas.company import (
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+# Capability gate for this router's write/DELETE routes.
+_require = Depends(require_capability(CUSTOMERS_WRITE))
 
 
 @router.get("/", response_model=CompanyListResponse)
@@ -63,7 +67,12 @@ async def list_companies(
     }
 
 
-@router.post("/", response_model=CompanyResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    dependencies=[_require],
+    response_model=CompanyResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_company(
     payload: CompanyCreate,
     db: Session = Depends(get_db),
@@ -100,7 +109,7 @@ async def get_company(
     return company
 
 
-@router.patch("/{company_id}", response_model=CompanyResponse)
+@router.patch("/{company_id}", dependencies=[_require], response_model=CompanyResponse)
 async def update_company(
     company_id: int,
     payload: CompanyUpdate,
@@ -133,7 +142,7 @@ async def update_company(
     return company
 
 
-@router.delete("/{company_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{company_id}", dependencies=[_require], status_code=status.HTTP_204_NO_CONTENT)
 async def delete_company(
     company_id: int,
     db: Session = Depends(get_db),

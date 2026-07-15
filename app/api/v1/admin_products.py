@@ -30,7 +30,8 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, Up
 from sqlalchemy.orm import Session
 
 from app.api.v1.products import _reconcile_product_tags
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import CATALOG_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.core.money import as_float
 from app.crud import category as crud_category
 from app.crud import collection as crud_collection
@@ -51,6 +52,9 @@ from app.services import product_export, product_import, search_index
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+# Every write route in this router is a catalog mutation.
+_catalog_write = Depends(require_capability(CATALOG_WRITE))
 
 SUPPORTED_CURRENCIES_LC = tuple(c.lower() for c in SUPPORTED_CURRENCIES)
 
@@ -398,7 +402,7 @@ def _apply_stock(db: Session, product: Product, target_stock: int, actor_id: int
     )
 
 
-@router.post("/import")
+@router.post("/import", dependencies=[_catalog_write])
 async def import_products(
     file: UploadFile = File(..., description="Product CSV (the export schema)"),
     dry_run: bool = Query(True, description="Validate only (no writes) when true"),
@@ -480,7 +484,7 @@ async def import_products(
 # --------------------------------------------------------------------------- #
 
 
-@router.patch("/bulk", response_model=ProductBulkUpdateResult)
+@router.patch("/bulk", response_model=ProductBulkUpdateResult, dependencies=[_catalog_write])
 async def bulk_update_products(
     payload: ProductBulkUpdate,
     db: Session = Depends(get_db),

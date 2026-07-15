@@ -19,7 +19,8 @@ from math import ceil
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import ORDERS_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.crud import quote as crud_quote
 from app.crud.order import InsufficientStockError, ProductUnavailableError
 from app.crud.order import order as crud_order
@@ -36,6 +37,9 @@ from app.schemas.quote import (
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+# Capability gate for this router's write/DELETE routes.
+_require = Depends(require_capability(ORDERS_WRITE))
 
 
 @router.get("/", response_model=QuoteListResponse)
@@ -68,7 +72,9 @@ async def list_quotes(
     }
 
 
-@router.post("/", response_model=QuoteResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/", dependencies=[_require], response_model=QuoteResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_quote(
     payload: QuoteCreate,
     db: Session = Depends(get_db),
@@ -101,7 +107,7 @@ async def get_quote(
     return quote
 
 
-@router.patch("/{quote_id}", response_model=QuoteResponse)
+@router.patch("/{quote_id}", dependencies=[_require], response_model=QuoteResponse)
 async def update_quote(
     quote_id: int,
     payload: QuoteUpdate,
@@ -125,6 +131,7 @@ async def update_quote(
 
 @router.post(
     "/{quote_id}/convert",
+    dependencies=[_require],
     response_model=OrderResponse,
     status_code=status.HTTP_201_CREATED,
 )
@@ -174,7 +181,7 @@ async def convert_quote(
     return crud_order.get_scoped(db, order_id=order.id, user=current_admin)
 
 
-@router.delete("/{quote_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{quote_id}", dependencies=[_require], status_code=status.HTTP_204_NO_CONTENT)
 async def delete_quote(
     quote_id: int,
     db: Session = Depends(get_db),

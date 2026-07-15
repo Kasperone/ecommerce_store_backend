@@ -441,5 +441,22 @@ class CRUDUser(CRUDBase[User, UserCreate, UserUpdate]):
             query = query.filter(User.id != exclude_id)
         return query.count()
 
+    def count_active_owners(self, db: Session, *, exclude_id: int | None = None) -> int:
+        """Number of active owner accounts (``is_owner`` + active), optionally
+        excluding one user.
+
+        Backs the staff "last owner" guard: an owner is the only role that can
+        manage staff/capabilities, so the store must never be left with zero
+        active owners. Owners are always ADMIN-role, but filter on ``is_owner``
+        directly so the guard is independent of the role column.
+        """
+        query = db.query(User).filter(
+            User.is_owner.is_(True),
+            User.is_active.is_(True),
+        )
+        if exclude_id is not None:
+            query = query.filter(User.id != exclude_id)
+        return query.count()
+
 
 user = CRUDUser(User)

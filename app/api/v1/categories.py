@@ -7,8 +7,9 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.core.capabilities import CATALOG_WRITE
 from app.core.config import settings
-from app.core.dependencies import get_current_admin, get_db
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.core.storage import get_r2_client
 from app.crud import category as crud_category
 from app.crud.category import (
@@ -45,6 +46,9 @@ from app.services.image import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Capability gate for this router's write/DELETE routes.
+_require = Depends(require_capability(CATALOG_WRITE))
 
 DeleteMode = Literal["cascade", "reparent_to_root"]
 
@@ -247,7 +251,12 @@ async def get_category_by_slug(
     return cat_dict
 
 
-@router.post("/", response_model=CategoryResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    dependencies=[_require],
+    response_model=CategoryResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_category(
     category_in: CategoryCreate,
     db: Session = Depends(get_db),
@@ -277,7 +286,7 @@ async def create_category(
     return category
 
 
-@router.post("/bulk-reorder", response_model=list[CategoryTreeNode])
+@router.post("/bulk-reorder", dependencies=[_require], response_model=list[CategoryTreeNode])
 async def bulk_reorder_categories(
     body: BulkReorderRequest,
     db: Session = Depends(get_db),
@@ -318,7 +327,7 @@ async def bulk_reorder_categories(
     return await get_category_tree(db=db, is_active=None)
 
 
-@router.put("/{category_id}", response_model=CategoryResponse)
+@router.put("/{category_id}", dependencies=[_require], response_model=CategoryResponse)
 async def update_category(
     category_id: int,
     category_in: CategoryUpdate,
@@ -364,7 +373,7 @@ async def update_category(
     return category
 
 
-@router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{category_id}", dependencies=[_require], status_code=status.HTTP_204_NO_CONTENT)
 async def delete_category(
     category_id: int,
     db: Session = Depends(get_db),
@@ -480,6 +489,7 @@ def _r2_key_from_hero_url(url: str) -> str:
 
 @router.post(
     "/{category_id}/hero",
+    dependencies=[_require],
     response_model=CategoryHeroResponse,
     status_code=status.HTTP_201_CREATED,
 )
@@ -548,7 +558,7 @@ async def upload_category_hero(
     return CategoryHeroResponse.model_validate(category)
 
 
-@router.patch("/{category_id}/hero", response_model=CategoryHeroResponse)
+@router.patch("/{category_id}/hero", dependencies=[_require], response_model=CategoryHeroResponse)
 async def update_category_hero_alt(
     category_id: int,
     body: CategoryHeroAltUpdate,
@@ -577,7 +587,9 @@ async def update_category_hero_alt(
     return CategoryHeroResponse.model_validate(category)
 
 
-@router.delete("/{category_id}/hero", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{category_id}/hero", dependencies=[_require], status_code=status.HTTP_204_NO_CONTENT
+)
 async def delete_category_hero(
     category_id: int,
     db: Session = Depends(get_db),
