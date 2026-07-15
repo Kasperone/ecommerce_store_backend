@@ -56,6 +56,7 @@ from app.schemas.draft_order import (
     DraftOrderItemUpdate,
     DraftOrderUpdate,
 )
+from app.services.order_math import recompute_totals
 
 
 class DraftOrderLockedError(Exception):
@@ -551,18 +552,15 @@ class CRUDDraftOrder:
     def _recompute_totals(draft: DraftOrder) -> None:
         """Recompute ``subtotal`` / ``total`` from the current in-memory lines.
 
-        ``subtotal`` = quantized sum of resolved line totals (a stale line —
-        product deleted, no override — resolves to ``None`` and contributes
-        0); ``total = max(subtotal - discount, 0)`` — shipping is not part of
-        draft totals.
+        Delegates the arithmetic to the shared ``services.order_math.recompute_totals``
+        (the same seam real pending-order edits use). A stale line (product
+        deleted, no override) resolves to ``None`` and contributes 0; shipping
+        is not part of draft totals (``shipping=0``).
         """
-        subtotal = ZERO_MONEY
-        for item in draft.items:
-            line_total = item.line_total
-            if line_total is not None:
-                subtotal += line_total
-        draft.subtotal = quantize_money(subtotal)
-        draft.total = max(quantize_money(draft.subtotal - draft.discount), ZERO_MONEY)
+        draft.subtotal, draft.total = recompute_totals(
+            line_totals=[item.line_total for item in draft.items],
+            discount=draft.discount,
+        )
 
 
 draft_order = CRUDDraftOrder()
