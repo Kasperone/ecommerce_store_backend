@@ -20,7 +20,8 @@ from math import ceil
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import CUSTOMERS_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.crud import segment as crud_segment
 from app.crud import user as crud_user
 from app.models.segment import Segment
@@ -38,6 +39,9 @@ from app.schemas.tag import TagChip
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+# Capability gate for this router's write/DELETE routes.
+_require = Depends(require_capability(CUSTOMERS_WRITE))
 
 
 def _to_list_items(db: Session, users: list[User]) -> list[CustomerListItem]:
@@ -95,7 +99,12 @@ async def list_segments(
     }
 
 
-@router.post("/", response_model=SegmentResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    dependencies=[_require],
+    response_model=SegmentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_segment(
     payload: SegmentCreate,
     db: Session = Depends(get_db),
@@ -111,7 +120,7 @@ async def create_segment(
     return segment
 
 
-@router.post("/preview", response_model=SegmentPreview)
+@router.post("/preview", dependencies=[_require], response_model=SegmentPreview)
 async def preview_unsaved_segment(
     filters: SegmentFilters,
     db: Session = Depends(get_db),
@@ -136,7 +145,7 @@ async def get_segment(
     return segment
 
 
-@router.patch("/{segment_id}", response_model=SegmentResponse)
+@router.patch("/{segment_id}", dependencies=[_require], response_model=SegmentResponse)
 async def update_segment(
     segment_id: int,
     payload: SegmentUpdate,
@@ -170,7 +179,7 @@ async def preview_saved_segment(
     return _preview(db, filters, limit=limit)
 
 
-@router.delete("/{segment_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{segment_id}", dependencies=[_require], status_code=status.HTTP_204_NO_CONTENT)
 async def delete_segment(
     segment_id: int,
     db: Session = Depends(get_db),

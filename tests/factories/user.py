@@ -30,6 +30,11 @@ class UserFactory(SQLAlchemyModelFactory):
     is_active = True
     is_verified = True
     role = UserRole.CUSTOMER
+    # Mirror the A1 migration backfill: an ADMIN-role account is an owner
+    # (implicitly all capabilities) unless a test overrides is_owner explicitly
+    # to build a scoped staffer. Customers are never owners.
+    is_owner = factory.LazyAttribute(lambda o: o.role == UserRole.ADMIN)
+    capabilities = factory.LazyFunction(list)
 
 
 class UnverifiedUserFactory(UserFactory):

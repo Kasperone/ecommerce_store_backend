@@ -14,8 +14,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.core import email as email_service
+from app.core.capabilities import CUSTOMERS_WRITE, ORDERS_REFUND
 from app.core.config import settings
-from app.core.dependencies import get_current_admin, get_db
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.core.money import to_money
 from app.core.rate_limit import limiter
 from app.core.security import create_access_token
@@ -54,6 +55,11 @@ from app.services.audit import AuditWriter, get_audit_writer
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Customer-record mutations gate on customers:write; the store-credit adjustment
+# moves money, so it gates on the financial orders:refund capability.
+_customers_write = Depends(require_capability(CUSTOMERS_WRITE))
+_orders_refund = Depends(require_capability(ORDERS_REFUND))
 
 # Returned by the password-reset action regardless of the account's state, so
 # the response can never be used to probe accounts and never leaks the token.
@@ -152,7 +158,7 @@ async def get_customer(
     return _detail(db, user)
 
 
-@router.patch("/{customer_id}", response_model=CustomerDetail)
+@router.patch("/{customer_id}", response_model=CustomerDetail, dependencies=[_customers_write])
 async def update_customer(
     customer_id: int,
     payload: CustomerAdminUpdate,
@@ -183,7 +189,9 @@ async def update_customer(
     return _detail(db, user)
 
 
-@router.post("/{customer_id}/unlock", response_model=CustomerDetail)
+@router.post(
+    "/{customer_id}/unlock", response_model=CustomerDetail, dependencies=[_customers_write]
+)
 async def unlock_customer(
     customer_id: int,
     db: Session = Depends(get_db),
@@ -202,7 +210,11 @@ async def unlock_customer(
     return _detail(db, user)
 
 
-@router.post("/{customer_id}/password-reset", response_model=GenericMessage)
+@router.post(
+    "/{customer_id}/password-reset",
+    response_model=GenericMessage,
+    dependencies=[_customers_write],
+)
 async def send_customer_password_reset(
     customer_id: int,
     db: Session = Depends(get_db),
@@ -235,7 +247,11 @@ async def send_customer_password_reset(
     return {"message": PASSWORD_RESET_TRIGGERED_MESSAGE}
 
 
-@router.post("/{customer_id}/impersonate", response_model=ImpersonationResponse)
+@router.post(
+    "/{customer_id}/impersonate",
+    response_model=ImpersonationResponse,
+    dependencies=[_customers_write],
+)
 @limiter.limit("20/hour")
 async def impersonate_customer(
     request: Request,
@@ -341,6 +357,7 @@ async def list_customer_notes(
     "/{customer_id}/notes",
     response_model=CustomerNoteResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[_customers_write],
 )
 async def create_customer_note(
     customer_id: int,
@@ -360,7 +377,11 @@ async def create_customer_note(
     return note
 
 
-@router.patch("/{customer_id}/notes/{note_id}", response_model=CustomerNoteResponse)
+@router.patch(
+    "/{customer_id}/notes/{note_id}",
+    response_model=CustomerNoteResponse,
+    dependencies=[_customers_write],
+)
 async def update_customer_note(
     customer_id: int,
     note_id: int,
@@ -378,7 +399,11 @@ async def update_customer_note(
     return note
 
 
-@router.delete("/{customer_id}/notes/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{customer_id}/notes/{note_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[_customers_write],
+)
 async def delete_customer_note(
     customer_id: int,
     note_id: int,
@@ -401,7 +426,7 @@ async def delete_customer_note(
 # ---------------------------------------------------------------------------
 
 
-@router.post("/{customer_id}/tags", response_model=list[TagChip])
+@router.post("/{customer_id}/tags", response_model=list[TagChip], dependencies=[_customers_write])
 async def assign_customer_tag(
     customer_id: int,
     payload: CustomerTagAssign,
@@ -436,7 +461,9 @@ async def assign_customer_tag(
     return [TagChip.model_validate(t) for t in user.tags]
 
 
-@router.delete("/{customer_id}/tags/{tag_id}", response_model=list[TagChip])
+@router.delete(
+    "/{customer_id}/tags/{tag_id}", response_model=list[TagChip], dependencies=[_customers_write]
+)
 async def remove_customer_tag(
     customer_id: int,
     tag_id: int,
@@ -505,7 +532,11 @@ async def get_customer_store_credit(
     return _store_credit_summary(db, customer_id)
 
 
-@router.post("/{customer_id}/store-credit/adjust", response_model=StoreCreditSummaryResponse)
+@router.post(
+    "/{customer_id}/store-credit/adjust",
+    response_model=StoreCreditSummaryResponse,
+    dependencies=[_orders_refund],
+)
 async def adjust_customer_store_credit(
     customer_id: int,
     payload: StoreCreditAdjustRequest,

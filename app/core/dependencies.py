@@ -149,6 +149,28 @@ async def get_current_admin(
     return current_user
 
 
+def require_capability(cap: str):
+    """Build a dependency that requires staff to hold capability ``cap``.
+
+    Layered on ``get_current_admin`` (so a non-staff caller still 403s at the
+    role check, and FastAPI dedupes the shared ``get_current_admin`` when a route
+    also declares ``get_audit_writer``). An **owner** implicitly holds every
+    capability; a scoped staffer must have ``cap`` in ``users.capabilities``.
+    Gate every write/DELETE admin route with this; GET routes stay open to any
+    staff. See ``app/core/capabilities.py`` for the taxonomy.
+    """
+
+    async def _dep(current_user: User = Depends(get_current_admin)) -> User:
+        if current_user.is_owner or cap in (current_user.capabilities or []):
+            return current_user
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions",
+        )
+
+    return _dep
+
+
 async def get_current_company_member(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),

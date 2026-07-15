@@ -2,7 +2,7 @@ import enum
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Integer, String
+from sqlalchemy import ARRAY, Boolean, DateTime, Integer, String, text
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -90,6 +90,17 @@ class User(BaseModel):
 
     # Role
     role: Mapped[UserRole] = mapped_column(SQLEnum(UserRole), default=UserRole.CUSTOMER)
+
+    # Granular staff permissions (layered over the coarse role; only meaningful
+    # for ``role==ADMIN`` accounts). ``is_owner`` ⇒ every capability implicitly.
+    # A scoped staffer has ``is_owner=False`` and an explicit ``capabilities``
+    # subset (validated against ``app.core.capabilities.CAPABILITIES``). Existing
+    # admins are backfilled to ``is_owner=True`` in the migration so nobody loses
+    # access. See ``app/core/dependencies.py::require_capability``.
+    is_owner: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    capabilities: Mapped[list[str]] = mapped_column(
+        ARRAY(String), default=list, server_default=text("'{}'")
+    )
 
     # Relationships
     orders: Mapped[list["Order"]] = relationship(

@@ -13,7 +13,8 @@ from math import ceil
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import INVENTORY_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.crud import inventory as crud_inventory
 from app.crud import product as crud_product
 from app.crud import product_variant as crud_product_variant
@@ -40,6 +41,9 @@ from app.services import inventory_email, inventory_export, search_index
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+# Capability gate for this router's write/DELETE routes.
+_require = Depends(require_capability(INVENTORY_WRITE))
 
 
 def _export_filename(inventory_status: str | None, search: str | None) -> str:
@@ -228,7 +232,9 @@ async def low_stock_summary(
     return crud_inventory.low_stock_summary(db)
 
 
-@router.post("/low-stock-report/email", response_model=LowStockReportResult)
+@router.post(
+    "/low-stock-report/email", dependencies=[_require], response_model=LowStockReportResult
+)
 async def email_low_stock_report(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
@@ -310,7 +316,9 @@ async def list_product_levels(
     ]
 
 
-@router.patch("/products/{product_id}/stock", response_model=InventoryMovementItem)
+@router.patch(
+    "/products/{product_id}/stock", dependencies=[_require], response_model=InventoryMovementItem
+)
 async def adjust_stock(
     product_id: int,
     payload: StockAdjustRequest,
@@ -362,7 +370,9 @@ async def adjust_stock(
     return _movement_item(movement, product.name, warehouse.name)
 
 
-@router.post("/products/{product_id}/restock", response_model=InventoryMovementItem)
+@router.post(
+    "/products/{product_id}/restock", dependencies=[_require], response_model=InventoryMovementItem
+)
 async def restock_product(
     product_id: int,
     payload: RestockRequest,
@@ -402,7 +412,7 @@ async def restock_product(
     return _movement_item(movement, product.name, warehouse.name)
 
 
-@router.post("/transfer", response_model=TransferResponse)
+@router.post("/transfer", dependencies=[_require], response_model=TransferResponse)
 async def transfer_stock(
     payload: TransferRequest,
     db: Session = Depends(get_db),

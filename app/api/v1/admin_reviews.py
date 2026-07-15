@@ -11,7 +11,8 @@ from math import ceil
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import CATALOG_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.crud import review as crud_review
 from app.models.review import Review, ReviewStatus
 from app.models.user import User
@@ -23,6 +24,9 @@ from app.schemas.review import (
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+# Capability gate for this router's write/DELETE routes.
+_require = Depends(require_capability(CATALOG_WRITE))
 
 
 def _to_admin_item(review: Review) -> AdminReviewListItem:
@@ -101,7 +105,7 @@ async def get_review(
     return _to_admin_item(review)
 
 
-@router.patch("/{review_id}", response_model=AdminReviewListItem)
+@router.patch("/{review_id}", dependencies=[_require], response_model=AdminReviewListItem)
 async def moderate_review(
     review_id: int,
     payload: ReviewModerate,
@@ -138,7 +142,7 @@ async def moderate_review(
     return _to_admin_item(review)
 
 
-@router.delete("/{review_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{review_id}", dependencies=[_require], status_code=status.HTTP_204_NO_CONTENT)
 async def delete_review(
     review_id: int,
     db: Session = Depends(get_db),

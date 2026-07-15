@@ -21,7 +21,8 @@ from math import ceil
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import MARKETING_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.crud import coupon as crud_coupon
 from app.models.user import User
 from app.schemas.coupon import (
@@ -35,6 +36,9 @@ from app.schemas.coupon import (
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+# Capability gate for this router's write/DELETE routes.
+_require = Depends(require_capability(MARKETING_WRITE))
 
 
 @router.get("/", response_model=CouponListResponse)
@@ -62,7 +66,9 @@ async def list_coupons(
     }
 
 
-@router.post("/", response_model=CouponResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/", dependencies=[_require], response_model=CouponResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_coupon(
     payload: CouponCreate,
     db: Session = Depends(get_db),
@@ -95,7 +101,7 @@ async def get_coupon(
     return coupon
 
 
-@router.patch("/{coupon_id}", response_model=CouponResponse)
+@router.patch("/{coupon_id}", dependencies=[_require], response_model=CouponResponse)
 async def update_coupon(
     coupon_id: int,
     payload: CouponUpdate,
@@ -143,7 +149,7 @@ async def update_coupon(
     return coupon
 
 
-@router.delete("/{coupon_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{coupon_id}", dependencies=[_require], status_code=status.HTTP_204_NO_CONTENT)
 async def delete_coupon(
     coupon_id: int,
     db: Session = Depends(get_db),

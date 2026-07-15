@@ -17,7 +17,8 @@ from math import ceil
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import MARKETING_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.crud import banner as crud_banner
 from app.models.user import User
 from app.schemas.banner import (
@@ -31,6 +32,9 @@ from app.schemas.banner import (
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+# Capability gate for this router's write/DELETE routes.
+_require = Depends(require_capability(MARKETING_WRITE))
 
 
 @router.get("/", response_model=BannerListResponse)
@@ -58,7 +62,9 @@ async def list_banners(
     }
 
 
-@router.post("/", response_model=BannerResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/", dependencies=[_require], response_model=BannerResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_banner(
     payload: BannerCreate,
     db: Session = Depends(get_db),
@@ -86,7 +92,7 @@ async def get_banner(
     return banner
 
 
-@router.patch("/{banner_id}", response_model=BannerResponse)
+@router.patch("/{banner_id}", dependencies=[_require], response_model=BannerResponse)
 async def update_banner(
     banner_id: int,
     payload: BannerUpdate,
@@ -121,7 +127,7 @@ async def update_banner(
     return banner
 
 
-@router.delete("/{banner_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{banner_id}", dependencies=[_require], status_code=status.HTTP_204_NO_CONTENT)
 async def delete_banner(
     banner_id: int,
     db: Session = Depends(get_db),
