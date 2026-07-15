@@ -13,6 +13,8 @@ from sqlalchemy.orm import Session
 
 from app.core.capabilities import CATALOG_WRITE, ORDERS_WRITE
 from app.core.security import create_access_token
+from app.crud.inventory import inventory as crud_inventory
+from app.models.inventory_movement import InventoryMovementReason
 from app.models.order_event import OrderEvent
 from app.models.product import Product
 from app.models.user import UserRole
@@ -296,3 +298,44 @@ async def test_insufficient_stock_422(
         headers=_headers(admin),
     )
     assert resp.status_code == 422, resp.text
+
+
+async def test_edit_releases_line_of_oversold_product(
+    client, user_factory, product_factory, db_session: Session, test_shipping_method_id
+):
+    """S2 regression: editing a pending order whose product is already oversold
+    (warehouse level negative from a prior backorder) must not 500.
+
+    The release leg gives stock back (positive delta); with the level negative it
+    only *reduces* the deficit (still < 0). The apply_delta "cannot go negative"
+    guard used to fire on that pure give-back → ValueError → order un-editable.
+    """
+    customer = user_factory(email="oedit-c10@example.com")
+    admin = user_factory(email="oedit-a10@example.com", role=UserRole.ADMIN)
+    # allow_backorder so the post-release rebuild's availability check passes.
+    product = product_factory(stock=1, price_usd=10, allow_backorder=True)
+    order = await _place_order(
+        client, customer, product, shipping_method_id=test_shipping_method_id, quantity=1
+    )
+    # Drive the default-warehouse level deep negative (simulates prior backorders).
+    crud_inventory.apply_delta(
+        db_session,
+        product=product,
+        delta=-19,
+        reason=InventoryMovementReason.MANUAL_ADJUSTMENT,
+        allow_negative=True,
+        note="oversold seed",
+    )
+    db_session.commit()
+    assert _stock(db_session, product.id) == -19  # 0 (post-order) - 19
+
+    # Re-edit the order (bump qty to 2). Release leg (+1 → -18) must not raise.
+    resp = await client.patch(
+        f"/api/v1/orders/{order['id']}/items",
+        json={"lines": [{"product_id": product.id, "quantity": 2}]},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["items"][0]["quantity"] == 2
+    # Net: released +1 (→ -18), re-acquired -2 (→ -20).
+    assert _stock(db_session, product.id) == -20
