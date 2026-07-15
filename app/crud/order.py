@@ -29,6 +29,7 @@ from app.crud.gift_card import gift_card as crud_gift_card
 from app.crud.inventory import inventory as crud_inventory
 from app.crud.invoice import invoice as crud_invoice
 from app.crud.order_event import order_event as crud_order_event
+from app.crud.price_list import price_list as crud_price_list
 from app.crud.shipping import (
     ShippingRateUnavailableError,
 )
@@ -410,6 +411,18 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         if default_warehouse is None:
             raise RuntimeError("No default warehouse configured; run migrations")
 
+        # B2B price list (Shopify-gap P2 #14): if the buyer is an active member
+        # of a company with an active price list, each line for a product that
+        # has an entry is priced from the list (variant-grain wins over
+        # product-grain; no entry → catalog price). This reuses the existing
+        # pinned-``unit_price`` mechanism — a resolved list price pins the line,
+        # ``None`` leaves it to the catalog inside build_order_items. Guests
+        # (user_id None) and non-B2B buyers get an empty resolution → all catalog.
+        # Imported locally to avoid a crud↔services import cycle at package init.
+        from app.services.b2b_pricing import resolve_active_entry_map
+
+        entry_map = resolve_active_entry_map(db, user_id=user_id)
+
         # The stock-check + snapshot loop is shared with admin conversions
         # (quote → order today, draft orders next); duplicate-line remainder
         # semantics and the vat_rate snapshot live in build_order_items. The
@@ -422,6 +435,16 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
                     product_id=line.product_id,
                     variant_id=line.variant_id,
                     quantity=line.quantity,
+                    unit_price=(
+                        crud_price_list.price_for(
+                            entry_map,
+                            product_id=line.product_id,
+                            variant_id=line.variant_id,
+                            currency=currency,
+                        )
+                        if entry_map is not None
+                        else None
+                    ),
                 )
                 for line in obj_in.items
             ],

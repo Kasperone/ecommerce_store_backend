@@ -74,6 +74,11 @@ class CompanyBase(BaseSchema):
     billing_address_country: str | None = Field(default=None, max_length=128)
     billing_address_state: str | None = Field(default=None, max_length=128)
     default_currency: str | None = Field(default=None, max_length=3)
+    # Assigned B2B price list (admin-set). Null = catalog pricing. Surfaced on the
+    # response so the admin directory + company member can see the assignment;
+    # only an admin can change it (via ``CompanyUpdate`` — the customer self-edit
+    # schema ``CompanyProfileUpdate`` does not include it).
+    price_list_id: int | None = Field(default=None)
 
     @model_validator(mode="after")
     def _normalise_name(self) -> CompanyBase:
@@ -104,6 +109,10 @@ class CompanyUpdate(BaseSchema):
     # Set/clear the primary contact. Sending ``null`` explicitly clears it; omit to
     # leave untouched (the route validates a non-null value references a real user).
     primary_user_id: int | None = Field(default=None)
+    # Assign/clear the B2B price list. Sending ``null`` clears it (→ catalog
+    # pricing); omit to leave untouched. The route validates a non-null value
+    # references an existing price list (422 if not).
+    price_list_id: int | None = Field(default=None)
 
     @model_validator(mode="after")
     def _normalise_name(self) -> CompanyUpdate:

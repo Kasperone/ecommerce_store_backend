@@ -32,6 +32,7 @@ from app.models.base import BaseModel
 
 if TYPE_CHECKING:
     from app.models.company_user import CompanyUser
+    from app.models.price_list import PriceList
     from app.models.user import User
 
 
@@ -101,11 +102,24 @@ class Company(BaseModel):
     primary_user_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
+    # Assigned B2B price list (Program 1 / Shopify-gap P2 #14). Nullable — most
+    # companies have none and pay catalog prices. ON DELETE SET NULL so deleting
+    # a price list unassigns every company that used it rather than blocking the
+    # delete (mirrors the ``primary_user_id`` posture). When set to an *active*
+    # list, an active member's checkout lines are priced from the list.
+    price_list_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("price_lists.id", ondelete="SET NULL"), index=True
+    )
 
     # Loaded for the denormalised ``primary_user_email`` on the response (no N+1
     # in the per-row/detail admin views). Plain (non-back_populates) — the User
     # side has no inverse company collection in the MVP.
     primary_user: Mapped[User | None] = relationship("User", lazy="joined")
+
+    # Assigned price list (nullable). Plain (non-back_populates) — the PriceList
+    # side has no company collection in the MVP. Loaded on demand; the checkout
+    # resolver fetches the list's entries explicitly.
+    price_list: Mapped[PriceList | None] = relationship("PriceList", lazy="select")
 
     # B2B membership rows (Wave D). back_populates the ``CompanyUser.company`` side;
     # cascades on company delete so memberships don't outlive their company.

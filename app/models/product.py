@@ -1,6 +1,6 @@
 import logging
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from sqlalchemy import Boolean, CheckConstraint, Float, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -202,6 +202,17 @@ class Product(BaseModel):
         viewonly=True,
         order_by="Collection.sort_order",
     )
+
+    # Transient (NON-mapped) B2B negotiated prices. ``ClassVar`` so SQLAlchemy's
+    # declarative mapper disregards them (they are not columns); the class-level
+    # ``None`` default means an un-stamped instance reads ``None`` via getattr.
+    # Stamped per-request (instance-shadowed) by
+    # ``app.services.b2b_pricing.annotate_products_for_user`` when the caller is an
+    # active company member whose price list has a product-grain entry for this
+    # product. Surfaced by ``ProductResponse`` via ``from_attributes``.
+    b2b_price_usd: ClassVar[Decimal | None] = None
+    b2b_price_pln: ClassVar[Decimal | None] = None
+    b2b_price_eur: ClassVar[Decimal | None] = None
 
     def __repr__(self):
         return f"<Product {self.name}>"

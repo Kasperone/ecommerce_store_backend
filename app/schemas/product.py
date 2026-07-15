@@ -279,6 +279,15 @@ class ProductResponse(ProductBase, TimestampSchema):
     # today's shape with ``has_variants=False``. List endpoints eager-load
     # ``Product.variants`` so this doesn't N+1.
     has_variants: bool = False
+    # B2B negotiated price (Shopify-gap P2 #14), per currency. Populated
+    # per-request ONLY when the caller is an active company member whose active
+    # price list has a **product-grain** entry for this product; None for everyone
+    # else (anonymous, non-B2B, or a product with no entry). Additive — catalog
+    # reads for non-B2B callers are byte-for-byte unchanged. Variant-grain
+    # negotiated prices still apply at checkout but are not surfaced here (MVP).
+    b2b_price_usd: float | None = None
+    b2b_price_pln: float | None = None
+    b2b_price_eur: float | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property

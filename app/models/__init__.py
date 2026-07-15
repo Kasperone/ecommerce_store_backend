@@ -58,6 +58,7 @@ from app.models.page import (
     PageVersion,
 )
 from app.models.price_history import SUPPORTED_CURRENCIES, PriceHistory
+from app.models.price_list import PriceList, PriceListEntry
 from app.models.product import Product
 from app.models.product_image import ProductImage
 from app.models.product_tag import ProductTag, product_tag_links
@@ -150,6 +151,8 @@ __all__ = [
     "DraftOrderItem",
     "DraftOrderStatus",
     "DRAFT_ORDER_STATUS_VALUES",
+    "PriceList",
+    "PriceListEntry",
     "Product",
     "ProductImage",
     "ProductTag",
