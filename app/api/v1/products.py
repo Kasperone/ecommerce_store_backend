@@ -32,6 +32,7 @@ from app.schemas.product import (
 )
 from app.services import search_index
 from app.services.audit import AuditWriter, get_audit_writer
+from app.services.b2b_pricing import annotate_products_for_user
 
 router = APIRouter()
 
@@ -157,6 +158,12 @@ async def list_products(
 
     pages = ceil(total / page_size) if total > 0 else 1
 
+    # B2B: stamp negotiated (price-list) prices onto each product for an active
+    # company member — no-op for guests / non-B2B callers (fields stay None).
+    annotate_products_for_user(
+        db, products=products, user_id=current_user.id if current_user else None
+    )
+
     return {
         "items": products,
         "total": total,
@@ -184,6 +191,7 @@ async def get_featured_products(
 async def get_product(
     product_id: int,
     db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_user),
 ):
     """
     Get product by ID with category details
@@ -191,6 +199,9 @@ async def get_product(
     product = crud_product.get(db, id=product_id)
     if not product:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+    annotate_products_for_user(
+        db, products=[product], user_id=current_user.id if current_user else None
+    )
     return product
 
 
@@ -198,6 +209,7 @@ async def get_product(
 async def get_product_by_slug(
     slug: str,
     db: Session = Depends(get_db),
+    current_user: User | None = Depends(get_optional_user),
 ):
     """
     Get product by slug with category details.
@@ -212,6 +224,9 @@ async def get_product_by_slug(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
     if not product.is_active:
         raise HTTPException(status_code=status.HTTP_410_GONE, detail="Product no longer available")
+    annotate_products_for_user(
+        db, products=[product], user_id=current_user.id if current_user else None
+    )
     return product
 
 

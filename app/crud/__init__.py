@@ -20,6 +20,7 @@ from app.crud.order import order
 from app.crud.order_event import order_event
 from app.crud.page import page
 from app.crud.price_history import price_history
+from app.crud.price_list import price_list
 from app.crud.product import product
 from app.crud.product_image import product_image
 from app.crud.product_tag import product_tag
@@ -72,6 +73,7 @@ __all__ = [
     "invoice",
     "newsletter",
     "price_history",
+    "price_list",
     "audit_event",
     "refresh_token",
     "refund",

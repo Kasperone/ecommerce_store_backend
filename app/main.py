@@ -87,6 +87,7 @@ from app.api.v1 import (  # noqa: E402
     admin_inventory,
     admin_media,
     admin_pages,
+    admin_price_lists,
     admin_product_tags,
     admin_products,
     admin_quotes,
@@ -187,6 +188,9 @@ app.include_router(
     admin_collections.router, prefix="/api/v1/admin/collections", tags=["Admin Collections"]
 )
 app.include_router(admin_quotes.router, prefix="/api/v1/admin/quotes", tags=["Admin Quotes"])
+app.include_router(
+    admin_price_lists.router, prefix="/api/v1/admin/price-lists", tags=["Admin Price Lists"]
+)
 app.include_router(
     admin_draft_orders.router,
     prefix="/api/v1/admin/draft-orders",
