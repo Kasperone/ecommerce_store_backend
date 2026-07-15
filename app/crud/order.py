@@ -828,6 +828,14 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
                 variant=variant,
                 actor_user_id=actor_id,
                 order_id=order.id,
+                # A release is a pure give-back (positive delta) — it can only
+                # raise the level, never make it more negative. The apply_delta
+                # "cannot go negative" guard exists to stop over-decrementing, so
+                # it must not fire here: an already-oversold line (level < 0 from
+                # a prior backorder) would otherwise be un-releasable and the
+                # whole order un-editable. The reacquire leg below stays guarded
+                # (honours allow_backorder).
+                allow_negative=True,
                 note="order edit: released prior line",
             )
         db.flush()
