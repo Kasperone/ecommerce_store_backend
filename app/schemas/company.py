@@ -94,6 +94,11 @@ class CompanyBase(BaseSchema):
         default_factory=lambda: ["COMPANY_ADMIN", "APPROVER", "BUYER"]
     )
     credit_limit: float | None = Field(default=None, ge=0)
+    # Opt-in net-terms auto-charge (Program C). When on AND the company has vaulted
+    # a card via the portal SetupIntent flow, a cron off-session-charges the order
+    # at term end; otherwise manual bank transfer (the default). The vaulted Stripe
+    # handles are internal — never exposed on the response.
+    auto_charge_enabled: bool = False
 
     @model_validator(mode="after")
     def _normalise_name(self) -> CompanyBase:
@@ -137,6 +142,7 @@ class CompanyUpdate(BaseSchema):
     payment_term_id: int | None = Field(default=None)
     net_terms_allowed_roles: list[CompanyRoleLiteral] | None = Field(default=None, min_length=1)
     credit_limit: float | None = Field(default=None, ge=0)
+    auto_charge_enabled: bool | None = None
 
     @model_validator(mode="after")
     def _normalise_name(self) -> CompanyUpdate:
@@ -178,6 +184,29 @@ class CompanyCreditResponse(BaseSchema):
     credit_limit: float | None = None
     outstanding: float = 0.0
     available: float | None = None
+    # Auto-charge (Program C): whether the company opted in, and whether a card is
+    # vaulted. Drive the portal's "set up auto-pay" card without exposing the
+    # internal Stripe handles.
+    auto_charge_enabled: bool = False
+    auto_charge_card_set: bool = False
+
+
+class AutoChargeSetupIntentResponse(BaseSchema):
+    """The client secret for confirming a card-vaulting SetupIntent (portal)."""
+
+    client_secret: str
+
+
+class AutoChargeConfirmRequest(BaseSchema):
+    """Confirm a completed SetupIntent so its PaymentMethod is stored for auto-pay."""
+
+    setup_intent_id: str = Field(min_length=1, max_length=255)
+
+
+class AutoChargeStatusResponse(BaseSchema):
+    """Whether a card is currently vaulted for the company's auto-pay."""
+
+    auto_charge_card_set: bool
 
 
 class CompanyListResponse(BaseSchema):

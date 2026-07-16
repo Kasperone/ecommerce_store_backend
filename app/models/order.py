@@ -11,6 +11,7 @@ from app.core.money import quantize_money
 from app.models.base import BaseModel
 
 if TYPE_CHECKING:
+    from app.models.company import Company
     from app.models.order_event import OrderEvent
     from app.models.product import Product
     from app.models.refund import Refund
@@ -180,6 +181,9 @@ class Order(BaseModel):
         "OrderItem", back_populates="order", cascade="all, delete-orphan"
     )
     shipping_method: Mapped["ShippingMethod | None"] = relationship("ShippingMethod")
+    # Owning B2B company for a pay-on-account order (net terms). Plain, load-on-
+    # access; the auto-charge cron reads the company's vaulted card + auto-pay flag.
+    company: Mapped["Company | None"] = relationship("Company", lazy="select")
     # Refunds against this order. Cascade is deliberately NOT delete-orphan: a
     # refund is a legal/financial record and the ``ON DELETE RESTRICT`` on
     # ``refunds.order_id`` would block the order delete anyway (orders are never
