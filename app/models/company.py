@@ -21,6 +21,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     ForeignKey,
@@ -32,11 +33,23 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import BaseModel
+from app.models.company_user import CompanyRole
 
 if TYPE_CHECKING:
     from app.models.company_user import CompanyUser
+    from app.models.payment_term import PaymentTerm
     from app.models.price_list import PriceList
     from app.models.user import User
+
+
+# Default set of membership roles allowed to place a pay-on-account order when a
+# company enables net terms (net-terms tail Program A). VIEWER (read-only) is
+# excluded; an admin can narrow or widen this per company.
+DEFAULT_NET_TERMS_ROLES: list[str] = [
+    CompanyRole.COMPANY_ADMIN.value,
+    CompanyRole.APPROVER.value,
+    CompanyRole.BUYER.value,
+]
 
 
 class CompanyStatus(str, enum.Enum):
@@ -113,18 +126,29 @@ class Company(BaseModel):
     price_list_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("price_lists.id", ondelete="SET NULL"), index=True
     )
-    # B2B net terms (Program 2 / Shopify-gap P2 #14). ``net_terms_enabled`` +
-    # ``net_terms_days`` (Net N) let an active member choose "pay on account" at
-    # checkout: the order is placed unpaid with a printed due date, the faktura is
-    # issued at placement, and the merchant records the bank transfer later.
-    # ``credit_limit`` (in ``default_currency``; NULL = unlimited) hard-blocks the
-    # pay-on-account option once outstanding unpaid net-terms balance + the new
-    # order would exceed it (card/PayU/COD stay available). Dark by default — a
-    # company has no terms until an admin enables them.
+    # B2B net terms (Program 2, generalised by the tail's Program A).
+    # ``net_terms_enabled`` is the master toggle; ``payment_term_id`` points at a
+    # named ``PaymentTerm`` template (Net-N / due-on-receipt / fixed-date) that
+    # decides the printed due date — it replaces the old bare ``net_terms_days``
+    # int. An active member whose role is in ``net_terms_allowed_roles`` may choose
+    # "pay on account" at checkout: the order is placed unpaid with the term's due
+    # date, the faktura is issued at placement, the merchant records the transfer
+    # later. ``credit_limit`` (in ``default_currency``; NULL = unlimited) hard-blocks
+    # the option once outstanding unpaid balance + the new order would exceed it
+    # (card/PayU/COD stay available). Dark by default — no terms until an admin
+    # enables them AND assigns an active payment term.
     net_terms_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
-    net_terms_days: Mapped[int | None] = mapped_column(Integer)
+    payment_term_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("payment_terms.id", ondelete="SET NULL"), index=True
+    )
+    # Membership roles allowed to pay on account (per-company gate). Stored as a
+    # JSON list of ``CompanyRole`` values; defaults to admin+approver+buyer
+    # (VIEWER excluded). A member whose role is absent never sees the option.
+    net_terms_allowed_roles: Mapped[list[str]] = mapped_column(
+        JSON, default=lambda: list(DEFAULT_NET_TERMS_ROLES), nullable=False
+    )
     credit_limit: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
 
     # Loaded for the denormalised ``primary_user_email`` on the response (no N+1
@@ -136,6 +160,12 @@ class Company(BaseModel):
     # side has no company collection in the MVP. Loaded on demand; the checkout
     # resolver fetches the list's entries explicitly.
     price_list: Mapped[PriceList | None] = relationship("PriceList", lazy="select")
+
+    # Assigned payment term (nullable). Eager-joined — the net-terms resolver and
+    # credit summary both need the term's type/days/due_date, and the admin
+    # company response nests it. Plain (non-back_populates); the PaymentTerm side
+    # has no company collection.
+    payment_term: Mapped[PaymentTerm | None] = relationship("PaymentTerm", lazy="joined")
 
     # B2B membership rows (Wave D). back_populates the ``CompanyUser.company`` side;
     # cascades on company delete so memberships don't outlive their company.

@@ -559,7 +559,11 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         net_terms_company_id: int | None = None
         net_terms_due_at: datetime | None = None
         if obj_in.payment_method == "net_terms":  # app.services.b2b_net_terms.NET_TERMS_METHOD
-            from app.services.b2b_net_terms import outstanding_balance, resolve_net_terms
+            from app.services.b2b_net_terms import (
+                compute_due_date,
+                outstanding_balance,
+                resolve_net_terms,
+            )
 
             ctx = resolve_net_terms(db, user_id=user_id)
             if ctx is None:
@@ -574,7 +578,9 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
                 if outstanding + total > company.credit_limit:
                     raise CreditLimitExceededError()
             net_terms_company_id = company.id
-            net_terms_due_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=ctx.days)
+            # The assigned payment term decides the printed due date (net_days /
+            # due_on_receipt / fixed_date), not a bare Net-N offset any more.
+            net_terms_due_at = compute_due_date(ctx.term, datetime.now(UTC).replace(tzinfo=None))
 
         is_guest = user_id is None
         order = Order(

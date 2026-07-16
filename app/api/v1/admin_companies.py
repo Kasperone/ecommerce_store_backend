@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.core.capabilities import CUSTOMERS_WRITE
 from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.crud import company as crud_company
+from app.crud import payment_term as crud_payment_term
 from app.crud import price_list as crud_price_list
 from app.models.quote import Quote
 from app.models.user import User
@@ -97,6 +98,14 @@ async def create_company(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Price list not found",
         )
+    if (
+        payload.payment_term_id is not None
+        and crud_payment_term.get(db, payload.payment_term_id) is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Payment term not found",
+        )
     company = crud_company.create(db, obj_in=payload)
     audit.record_create(resource_type="company", obj=company)
     db.commit()
@@ -170,6 +179,18 @@ async def update_company(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Price list not found",
+        )
+
+    # Validate a newly-assigned payment term (explicit non-null). An explicit
+    # ``null`` unassigns (→ pay-on-account off); an omitted field leaves it.
+    if (
+        "payment_term_id" in payload.model_fields_set
+        and payload.payment_term_id is not None
+        and crud_payment_term.get(db, payload.payment_term_id) is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Payment term not found",
         )
 
     crud_company.update(db, company=company, obj_in=payload)
