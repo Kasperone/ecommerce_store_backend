@@ -93,10 +93,13 @@ class OrderCreate(OrderBase):
     # otherwise); ignored for courier-to-address methods.
     inpost_point_id: str | None = Field(default=None, max_length=32)
     inpost_point_name: str | None = Field(default=None, max_length=255)
-    # Cash-on-delivery (pobranie). Only ``"cod"`` is accepted at create — online
-    # methods (stripe/payu) are chosen AFTER create on the payment page, never
-    # here. ``None`` = a normal online order (pay on the success page).
-    payment_method: Literal["cod"] | None = None
+    # Payment methods chosen AT create. ``"cod"`` = cash-on-delivery (pobranie);
+    # ``"net_terms"`` = B2B pay-on-account (order placed unpaid with a printed due
+    # date; eligibility + credit limit enforced server-side — 409 machine codes
+    # ``net_terms_unavailable`` / ``net_terms_currency_mismatch`` /
+    # ``credit_limit_exceeded``). Online methods (stripe/payu) are chosen AFTER
+    # create on the payment page, never here. ``None`` = a normal online order.
+    payment_method: Literal["cod", "net_terms"] | None = None
     # Stored-value tenders (D2/D10, applied after the coupon). A typed gift-card
     # code is validated server-side and fails LOUD (400 machine code, like a bad
     # coupon); ``use_store_credit`` is opportunistic — it applies
@@ -206,6 +209,14 @@ class OrderResponse(OrderBase, TimestampSchema):
     payment_method: str | None
     payment_intent_id: str | None
 
+    # B2B net terms (Program 2). ``company_id`` attributes a pay-on-account order
+    # to its company; ``payment_due_at`` is the printed ``termin płatności``;
+    # ``net_terms_paid_at`` is set once the merchant records the bank transfer
+    # (null = still outstanding). All null on non-net-terms orders.
+    company_id: int | None = None
+    payment_due_at: datetime | None = None
+    net_terms_paid_at: datetime | None = None
+
     # Shipping method snapshot (null on pre-shipping legacy orders)
     shipping_method_id: int | None = None
     shipping_method_name: str | None = None
@@ -310,6 +321,14 @@ class OrderListItem(TimestampSchema):
     currency: str
     item_count: int
     customer_email: str | None = None
+    payment_method: str | None = None
+
+    # B2B net terms — surfaced on list rows so the admin AR/orders table can show
+    # a due-date / OVERDUE badge and the pay-on-account state without a detail
+    # fetch. Null on non-net-terms orders.
+    company_id: int | None = None
+    payment_due_at: datetime | None = None
+    net_terms_paid_at: datetime | None = None
 
     # Shipment tracking — surfaced on list rows so the customer order history /
     # admin orders table can show a tracking link without a detail fetch.
