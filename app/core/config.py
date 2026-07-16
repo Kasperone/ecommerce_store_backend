@@ -65,6 +65,16 @@ class Settings(BaseSettings):
     # disable rate limiting by accident. Off by default.
     E2E_DISABLE_RATE_LIMIT: bool = False
 
+    # B2B net-terms dunning (overdue pay-on-account reminders). Transactional
+    # (about an existing invoice debt, not marketing → no consent gate), but
+    # ships DARK behind an env kill-switch so a store opts in explicitly. The
+    # detection pass (``app.scripts.send_net_terms_reminders``, OS-cron driven)
+    # emails the buyer of each overdue, unpaid, non-cancelled net-terms order,
+    # re-sending at most once per ``NET_TERMS_DUNNING_INTERVAL_DAYS`` (deduped
+    # via a ``net_terms_reminder`` order_event — no schema change).
+    NET_TERMS_DUNNING_ENABLED: bool = False
+    NET_TERMS_DUNNING_INTERVAL_DAYS: int = 7
+
     # Cloudflare R2
     R2_ACCOUNT_ID: str = ""
     R2_ACCESS_KEY_ID: str = ""
