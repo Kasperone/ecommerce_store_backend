@@ -79,6 +79,14 @@ class CompanyBase(BaseSchema):
     # only an admin can change it (via ``CompanyUpdate`` — the customer self-edit
     # schema ``CompanyProfileUpdate`` does not include it).
     price_list_id: int | None = Field(default=None)
+    # B2B net terms (Program 2), admin-managed. ``net_terms_enabled`` +
+    # ``net_terms_days`` (Net N) turn on pay-on-account at checkout; ``credit_limit``
+    # (in ``default_currency``, wire ``float``; null = unlimited) hard-blocks the
+    # pay-on-account option once outstanding + a new order would exceed it. All
+    # default off — a company has no terms until an admin sets them.
+    net_terms_enabled: bool = False
+    net_terms_days: int | None = Field(default=None, ge=1, le=180)
+    credit_limit: float | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def _normalise_name(self) -> CompanyBase:
@@ -113,6 +121,11 @@ class CompanyUpdate(BaseSchema):
     # pricing); omit to leave untouched. The route validates a non-null value
     # references an existing price list (422 if not).
     price_list_id: int | None = Field(default=None)
+    # B2B net terms (Program 2). Omit to leave untouched; an explicit value edits.
+    # ``credit_limit`` null explicitly clears the limit (→ unlimited credit).
+    net_terms_enabled: bool | None = None
+    net_terms_days: int | None = Field(default=None, ge=1, le=180)
+    credit_limit: float | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def _normalise_name(self) -> CompanyUpdate:
@@ -133,6 +146,24 @@ class CompanyResponse(CompanyBase, TimestampSchema):
     """
 
     primary_user_email: str | None = None
+
+
+class CompanyCreditResponse(BaseSchema):
+    """B2B net-terms credit summary for a company (admin + buyer views).
+
+    ``credit_limit`` / ``available`` are ``null`` when the company has no limit
+    (unlimited credit). ``outstanding`` is the sum of the company's unpaid,
+    non-cancelled net-terms orders in ``currency`` (the company's billing
+    currency; ``null`` when unset). ``net_terms_enabled`` / ``net_terms_days``
+    echo the company config so a single fetch drives the checkout/portal display.
+    """
+
+    net_terms_enabled: bool
+    net_terms_days: int | None = None
+    currency: str | None = None
+    credit_limit: float | None = None
+    outstanding: float = 0.0
+    available: float | None = None
 
 
 class CompanyListResponse(BaseSchema):

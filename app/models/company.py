@@ -17,12 +17,15 @@ change with no migration. ``account_manager`` is a free-text label for now — a
 from __future__ import annotations
 
 import enum
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     Text,
 )
@@ -110,6 +113,19 @@ class Company(BaseModel):
     price_list_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("price_lists.id", ondelete="SET NULL"), index=True
     )
+    # B2B net terms (Program 2 / Shopify-gap P2 #14). ``net_terms_enabled`` +
+    # ``net_terms_days`` (Net N) let an active member choose "pay on account" at
+    # checkout: the order is placed unpaid with a printed due date, the faktura is
+    # issued at placement, and the merchant records the bank transfer later.
+    # ``credit_limit`` (in ``default_currency``; NULL = unlimited) hard-blocks the
+    # pay-on-account option once outstanding unpaid net-terms balance + the new
+    # order would exceed it (card/PayU/COD stay available). Dark by default — a
+    # company has no terms until an admin enables them.
+    net_terms_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    net_terms_days: Mapped[int | None] = mapped_column(Integer)
+    credit_limit: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
 
     # Loaded for the denormalised ``primary_user_email`` on the response (no N+1
     # in the per-row/detail admin views). Plain (non-back_populates) — the User

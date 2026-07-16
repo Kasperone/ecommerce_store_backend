@@ -11,9 +11,12 @@ scope and live elsewhere.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from app.core.money import quantize_money
 from app.models.company import Company
 from app.models.user import User
 from app.schemas.company import CompanyCreate, CompanyProfileUpdate, CompanyUpdate
@@ -79,6 +82,19 @@ class CRUDCompany:
             account_manager=obj_in.account_manager,
             notes=obj_in.notes,
             primary_user_id=obj_in.primary_user_id,
+            # The billing currency the credit limit is denominated in — must be
+            # persisted at create so a credit-limited net-terms company can be
+            # billed on account (else the currency-match check can never pass).
+            default_currency=obj_in.default_currency,
+            net_terms_enabled=obj_in.net_terms_enabled,
+            net_terms_days=obj_in.net_terms_days,
+            # Money exactness: the wire float is converted to Decimal (never
+            # bound straight into the Numeric column). None = unlimited.
+            credit_limit=(
+                quantize_money(Decimal(str(obj_in.credit_limit)))
+                if obj_in.credit_limit is not None
+                else None
+            ),
         )
         db.add(company)
         db.flush()
@@ -91,6 +107,10 @@ class CRUDCompany:
         touched."""
         data = obj_in.model_dump(exclude_unset=True)
         for field, value in data.items():
+            # Money exactness: convert the wire float to Decimal before it lands
+            # in the Numeric column (an explicit null clears the limit).
+            if field == "credit_limit" and value is not None:
+                value = quantize_money(Decimal(str(value)))
             setattr(company, field, value)
         db.add(company)
         return company

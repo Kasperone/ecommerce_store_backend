@@ -112,6 +112,39 @@ class InPostPointRequiredError(Exception):
         super().__init__("Select an InPost Paczkomat point for this shipping method")
 
 
+class NetTermsUnavailableError(Exception):
+    """Pay-on-account was requested by a caller with no active net-terms company.
+
+    The route maps this to 409 ``net_terms_unavailable``.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("Net terms (pay on account) is not available for this account")
+
+
+class NetTermsCurrencyMismatchError(Exception):
+    """A credit-limited company was billed in a currency other than its own.
+
+    Credit is tracked in ``company.default_currency``; a pay-on-account order in a
+    different currency can't be measured against the limit. Route → 409
+    ``net_terms_currency_mismatch``.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("Net terms orders must use the company's billing currency")
+
+
+class CreditLimitExceededError(Exception):
+    """Outstanding balance + this order would exceed the company's credit limit.
+
+    Route → 409 ``credit_limit_exceeded``. Card/PayU/COD remain available; only
+    the pay-on-account option is blocked.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("This order would exceed the company's credit limit")
+
+
 def is_inpost_locker_method(method: ShippingMethod) -> bool:
     """True when a shipping method is an InPost parcel-locker service.
 
@@ -517,6 +550,32 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
 
         total = quantize_money(subtotal - discount + shipping_amount)
 
+        # B2B net terms (Program 2): when the buyer chose "pay on account", resolve
+        # their net-terms company, enforce the credit limit (hard block on this
+        # option only — an over-limit buyer can still pay by card/PayU/COD), and
+        # stamp the company + due date. The faktura is issued at placement (below,
+        # after the flush) with the printed due date. Imported locally to avoid a
+        # crud↔services import cycle at package init (mirrors b2b_pricing).
+        net_terms_company_id: int | None = None
+        net_terms_due_at: datetime | None = None
+        if obj_in.payment_method == "net_terms":  # app.services.b2b_net_terms.NET_TERMS_METHOD
+            from app.services.b2b_net_terms import outstanding_balance, resolve_net_terms
+
+            ctx = resolve_net_terms(db, user_id=user_id)
+            if ctx is None:
+                raise NetTermsUnavailableError()
+            company = ctx.company
+            if company.credit_limit is not None:
+                # Credit is denominated in the company's billing currency; a
+                # differing order currency can't be measured against the limit.
+                if company.default_currency != currency:
+                    raise NetTermsCurrencyMismatchError()
+                outstanding = outstanding_balance(db, company_id=company.id, currency=currency)
+                if outstanding + total > company.credit_limit:
+                    raise CreditLimitExceededError()
+            net_terms_company_id = company.id
+            net_terms_due_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=ctx.days)
+
         is_guest = user_id is None
         order = Order(
             user_id=user_id,
@@ -545,9 +604,13 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             shipping_method_name=ship_method.name,
             inpost_point_id=(obj_in.inpost_point_id or None) if is_locker else None,
             inpost_point_name=(obj_in.inpost_point_name or None) if is_locker else None,
-            # Cash-on-delivery is the only method chosen at create; online
-            # methods are set later by the payment-start flow (NULL until then).
+            # Cash-on-delivery and net-terms (pay on account) are chosen at
+            # create; online methods (stripe/payu) are set later by the
+            # payment-start flow (NULL until then). Net-terms orders also carry
+            # the company attribution + printed due date (resolved above).
             payment_method=obj_in.payment_method,
+            company_id=net_terms_company_id,
+            payment_due_at=net_terms_due_at,
             # Tender snapshots start at 0 (not the column default) so
             # ``amount_due`` is correct pre-flush; overwritten below when a
             # gift card / store credit actually applies.
@@ -658,6 +721,24 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         # consistent before returning (the route owns the commit). Explicit
         # because the session may have autoflush disabled.
         db.flush()
+
+        # Net terms: the faktura IS the pay-by-invoice instrument, so it's issued
+        # at placement (with the printed due date) — not on a later paid
+        # transition (a net-terms order ships while unpaid and never enters PAID).
+        # Gap-free sequential numbering, same unit of work as the order. A
+        # tender-covered order (above) already issued via mark_paid; net-terms
+        # orders never carry tenders, so there is no double-issue.
+        if net_terms_company_id is not None:
+            crud_invoice.issue_for_order(db, order=order)
+            crud_order_event.record(
+                db,
+                order_id=order.id,
+                kind="net_terms_placed",
+                actor_id=user_id,
+                payload={"due_at": net_terms_due_at.isoformat() if net_terms_due_at else None},
+            )
+            db.flush()
+
         db.refresh(order)
         return order
 
@@ -982,6 +1063,34 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             order_id=order.id,
             kind="paid",
             payload={"payment_method": payment_method},
+        )
+        return order
+
+    def record_net_terms_payment(
+        self, db: Session, *, order: Order, actor_user_id: int | None
+    ) -> Order:
+        """Record the bank transfer that settles a net-terms (pay-on-account) order.
+
+        Stamps ``net_terms_paid_at`` (naive UTC) and appends a ``net_terms_paid``
+        timeline event. Payment is tracked ORTHOGONALLY to fulfilment: the order's
+        status is untouched (it may be anywhere from pending to delivered), and no
+        faktura is (re-)issued — it was already issued at placement. Idempotent:
+        a no-op if already paid. Caller owns the commit. Raises ``ValueError`` if
+        the order isn't a net-terms order (route → 400/409).
+        """
+        if order.payment_method != "net_terms":
+            raise ValueError("Order is not a net-terms (pay-on-account) order")
+        if order.net_terms_paid_at is not None:
+            return order
+        paid_at = datetime.now(UTC).replace(tzinfo=None)
+        order.net_terms_paid_at = paid_at
+        db.add(order)
+        crud_order_event.record(
+            db,
+            order_id=order.id,
+            kind="net_terms_paid",
+            actor_id=actor_user_id,
+            payload={"paid_at": paid_at.isoformat()},
         )
         return order
 

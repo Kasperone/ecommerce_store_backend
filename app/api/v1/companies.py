@@ -25,10 +25,12 @@ from app.crud import company_user as crud_company_user
 from app.crud.company_user import CompanyMembership
 from app.models.user import User
 from app.schemas.company import (
+    CompanyCreditResponse,
     CompanyMeResponse,
     CompanyProfileUpdate,
     CompanyResponse,
 )
+from app.services.b2b_net_terms import build_credit_summary
 
 router = APIRouter()
 
@@ -62,6 +64,27 @@ async def get_my_company(
     # at runtime (``membership.role`` is a plain ``str``).
     base = CompanyResponse.model_validate(membership.company)
     return CompanyMeResponse.model_validate({**base.model_dump(), "role": membership.role})
+
+
+@router.get("/me/credit", response_model=CompanyCreditResponse)
+async def get_my_company_credit(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """The caller's company net-terms credit summary (limit / outstanding / available).
+
+    Any active member may read it (net terms is a company-level relationship). A
+    non-B2B caller gets a ``net_terms_enabled: false`` body (200, not 404) so the
+    checkout probe stays quiet on non-B2B accounts — same posture as
+    ``GET /companies/me``. The buyer uses it to see the pay-on-account option, the
+    due term, and remaining credit at checkout.
+    """
+    membership = crud_company_user.get_active_membership(db, user_id=current_user.id)
+    if membership is None:
+        return CompanyCreditResponse(net_terms_enabled=False)
+    return CompanyCreditResponse.model_validate(
+        build_credit_summary(db, company=membership.company)
+    )
 
 
 @router.patch("/me", response_model=CompanyMeResponse)
