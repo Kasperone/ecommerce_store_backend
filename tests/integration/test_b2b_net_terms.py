@@ -23,10 +23,13 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
+from app.crud import store_config as crud_store_config
 from app.crud.invoice import invoice as crud_invoice
 from app.models.company_user import CompanyMemberStatus, CompanyRole
+from app.models.order import Order, OrderStatus
 from app.models.payment_term import PaymentTerm
 from app.models.user import UserRole
+from app.services.b2b_net_terms import outstanding_balance
 from tests.factories.company import CompanyFactory
 from tests.factories.company_user import CompanyUserFactory
 
@@ -505,3 +508,148 @@ async def test_role_gating_allows_buyer(
     )
     assert resp.status_code == 201, resp.text
     assert resp.json()["payment_method"] == "net_terms"
+
+
+# ---------------------------------------------------------------------------
+# Cross-currency credit (Program D) — FX conversion of orders into the limit currency
+# ---------------------------------------------------------------------------
+
+
+def _set_fx_rates(db_session, rates: dict) -> None:
+    config = crud_store_config.get_singleton(db_session)
+    config.fx_rates = rates
+    db_session.add(config)
+    db_session.commit()
+
+
+async def test_cross_currency_within_limit_places(
+    client,
+    user_factory,
+    product_factory,
+    company_factory,
+    payment_term_factory,
+    db_session,
+    test_shipping_method_id,
+):
+    """A PLN order against a USD-denominated limit is converted via FX rates and
+    placed when it fits (200 PLN x 0.25 = 50 USD ≤ 100 USD limit)."""
+    _set_fx_rates(db_session, {"USD": 1, "PLN": 0.25})
+    buyer = user_factory(email="fx-ok@example.com")
+    product = product_factory(stock=10, price_pln=200.00)
+    company_factory(
+        name="FxOkCo",
+        primary_user_id=buyer.id,
+        net_terms_enabled=True,
+        payment_term=payment_term_factory(net_days=30),
+        default_currency="USD",
+        credit_limit=Decimal("100.00"),
+    )
+    resp = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(product.id, currency="PLN", shipping_method_id=test_shipping_method_id),
+        headers=_headers(buyer),
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["payment_method"] == "net_terms"
+
+
+async def test_cross_currency_over_limit_blocks(
+    client,
+    user_factory,
+    product_factory,
+    company_factory,
+    payment_term_factory,
+    db_session,
+    test_shipping_method_id,
+):
+    """A PLN order whose converted value exceeds the USD limit is refused
+    (600 PLN x 0.25 = 150 USD > 100 USD)."""
+    _set_fx_rates(db_session, {"USD": 1, "PLN": 0.25})
+    buyer = user_factory(email="fx-over@example.com")
+    product = product_factory(stock=10, price_pln=200.00)
+    company_factory(
+        name="FxOverCo",
+        primary_user_id=buyer.id,
+        net_terms_enabled=True,
+        payment_term=payment_term_factory(net_days=30),
+        default_currency="USD",
+        credit_limit=Decimal("100.00"),
+    )
+    resp = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(
+            product.id, quantity=3, currency="PLN", shipping_method_id=test_shipping_method_id
+        ),
+        headers=_headers(buyer),
+    )
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "credit_limit_exceeded"
+
+
+async def test_cross_currency_no_rate_rejects(
+    client,
+    user_factory,
+    product_factory,
+    company_factory,
+    payment_term_factory,
+    db_session,
+    test_shipping_method_id,
+):
+    """Without an FX rate for the order currency, a mismatched-currency on-account
+    order still rejects (pre-Program-D fallback) — 409 net_terms_currency_mismatch."""
+    _set_fx_rates(db_session, {})  # no rates configured
+    buyer = user_factory(email="fx-none@example.com")
+    product = product_factory(stock=10, price_pln=50.00)
+    company_factory(
+        name="FxNoneCo",
+        primary_user_id=buyer.id,
+        net_terms_enabled=True,
+        payment_term=payment_term_factory(net_days=30),
+        default_currency="USD",
+        credit_limit=Decimal("1000.00"),
+    )
+    resp = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(product.id, currency="PLN", shipping_method_id=test_shipping_method_id),
+        headers=_headers(buyer),
+    )
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "net_terms_currency_mismatch"
+
+
+def _make_net_terms_order(db, company, *, order_number, currency, total):
+    order = Order(
+        order_number=order_number,
+        status=OrderStatus.PENDING,
+        subtotal=total,
+        total=total,
+        currency=currency,
+        shipping_address="1 Main St",
+        shipping_city="Warsaw",
+        shipping_postal_code="00-001",
+        shipping_country="PL",
+        guest_email="ar@example.com",
+        payment_method="net_terms",
+        company_id=company.id,
+    )
+    db.add(order)
+    db.commit()
+    return order
+
+
+def test_outstanding_balance_sums_across_currencies(db_session, company_factory):
+    """Outstanding AR converts each currency's sub-total into the billing currency."""
+    _set_fx_rates(db_session, {"USD": 1, "PLN": 0.25})
+    company = company_factory(name="FxArCo", default_currency="USD", net_terms_enabled=True)
+    _make_net_terms_order(db_session, company, order_number="AR-USD", currency="USD", total=40)
+    _make_net_terms_order(db_session, company, order_number="AR-PLN", currency="PLN", total=200)
+    # 40 USD + (200 PLN x 0.25 = 50 USD) = 90 USD
+    assert outstanding_balance(db_session, company=company) == Decimal("90.00")
+
+
+def test_outstanding_balance_none_when_rate_missing(db_session, company_factory):
+    """A currency in the AR with no FX rate makes the balance unmeasurable (None)."""
+    _set_fx_rates(db_session, {"USD": 1})  # no PLN rate
+    company = company_factory(name="FxArMissing", default_currency="USD", net_terms_enabled=True)
+    _make_net_terms_order(db_session, company, order_number="AR2-PLN", currency="PLN", total=200)
+    assert outstanding_balance(db_session, company=company) is None

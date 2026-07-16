@@ -31,6 +31,7 @@ from app.core.money import quantize_money
 from app.models.company import Company
 from app.models.order import Order, OrderStatus
 from app.models.payment_term import PaymentTerm, PaymentTermType
+from app.services.fx import Rates, convert_money
 
 # The payment_method value stored on a pay-on-account order.
 NET_TERMS_METHOD = "net_terms"
@@ -85,23 +86,58 @@ def resolve_net_terms(db: Session, *, user_id: int | None) -> NetTermsContext | 
     return NetTermsContext(company=company, term=term)
 
 
-def outstanding_balance(db: Session, *, company_id: int, currency: str) -> Decimal:
-    """Σ ``total`` of the company's unpaid, non-cancelled net-terms orders in ``currency``.
+def _fx_rates(db: Session) -> Rates:
+    """The admin-configured FX rate map (``store_config.fx_rates``; ``{}`` if unset)."""
+    return crud.store_config.get_singleton(db).fx_rates or {}
 
-    This is the accounts-receivable figure the credit limit is checked against.
+
+def convert_to_credit_currency(
+    db: Session, *, company: Company, amount: Decimal, currency: str
+) -> Decimal | None:
+    """Convert ``amount``/``currency`` into ``company.default_currency`` via admin FX rates.
+
+    ``None`` when the company has no billing currency, or an FX rate is missing
+    (the currencies are then incomparable — the caller rejects the pay-on-account
+    option, as before Program D). Same-currency is the identity (no rate needed).
     """
-    total = (
-        db.query(func.coalesce(func.sum(Order.total), 0))
+    default = company.default_currency
+    if default is None:
+        return None
+    return convert_money(amount, currency, default, _fx_rates(db))
+
+
+def outstanding_balance(db: Session, *, company: Company) -> Decimal | None:
+    """Σ the company's unpaid, non-cancelled net-terms orders, in its billing currency.
+
+    Cross-currency (Program D): each order's ``total`` is converted from its own
+    currency into ``company.default_currency`` via the admin FX rates. Returns
+    ``None`` when the balance can't be measured — no billing currency set, or an
+    order is in a currency with no configured FX rate (the caller then rejects
+    the option rather than under-count AR). Same-currency orders never need a rate.
+    """
+    default = company.default_currency
+    if default is None:
+        return None
+    rates = _fx_rates(db)
+    # Group by currency so a mixed-currency AR needs one convert per currency.
+    rows = (
+        db.query(Order.currency, func.coalesce(func.sum(Order.total), 0))
         .filter(
-            Order.company_id == company_id,
+            Order.company_id == company.id,
             Order.payment_method == NET_TERMS_METHOD,
             Order.net_terms_paid_at.is_(None),
-            Order.currency == currency,
             Order.status != OrderStatus.CANCELLED,
         )
-        .scalar()
+        .group_by(Order.currency)
+        .all()
     )
-    return quantize_money(Decimal(total or 0))
+    total = Decimal(0)
+    for ccy, subtotal in rows:
+        converted = convert_money(quantize_money(Decimal(subtotal or 0)), ccy, default, rates)
+        if converted is None:
+            return None  # a currency lacks an FX rate — AR can't be measured
+        total += converted
+    return quantize_money(total)
 
 
 def credit_available(db: Session, *, company: Company) -> Decimal | None:
@@ -109,16 +145,14 @@ def credit_available(db: Session, *, company: Company) -> Decimal | None:
 
     ``None`` when the company has no ``credit_limit`` (unlimited) — the caller
     then treats every pay-on-account order as within budget. Never negative
-    (clamped at 0 so an over-limit company reads "0 available", not a negative).
+    (clamped at 0). An unmeasurable balance (missing FX rate) reads as 0 available
+    (conservative) for the display path; the checkout re-checks and rejects.
     """
     if company.credit_limit is None:
         return None
-    currency = company.default_currency
-    outstanding = (
-        outstanding_balance(db, company_id=company.id, currency=currency)
-        if currency is not None
-        else Decimal(0)
-    )
+    outstanding = outstanding_balance(db, company=company)
+    if outstanding is None:
+        return Decimal("0.00")
     remaining = quantize_money(company.credit_limit - outstanding)
     return remaining if remaining > 0 else Decimal("0.00")
 
@@ -127,22 +161,18 @@ def build_credit_summary(db: Session, *, company: Company) -> dict[str, object]:
     """The net-terms credit summary for ``company`` (drives ``CompanyCreditResponse``).
 
     Shared by the admin (``GET /admin/companies/{id}/credit``) and buyer
-    (``GET /companies/me/credit``) routes so the two can't diverge. Money is
-    surfaced as wire ``float`` (the schema's field type); ``credit_limit`` /
+    (``GET /companies/me/credit``) routes so the two can't diverge. Outstanding is
+    reported in the company's billing currency (cross-currency AR converted via
+    admin FX rates). Money is surfaced as wire ``float``; ``credit_limit`` /
     ``available`` are ``None`` for an unlimited company.
     """
-    currency = company.default_currency
-    outstanding = (
-        outstanding_balance(db, company_id=company.id, currency=currency)
-        if currency is not None
-        else Decimal("0.00")
-    )
+    outstanding = outstanding_balance(db, company=company)
     available = credit_available(db, company=company)
     return {
         "net_terms_enabled": company.net_terms_enabled,
         "payment_term": company.payment_term,
-        "currency": currency,
+        "currency": company.default_currency,
         "credit_limit": float(company.credit_limit) if company.credit_limit is not None else None,
-        "outstanding": float(outstanding),
+        "outstanding": float(outstanding) if outstanding is not None else 0.0,
         "available": float(available) if available is not None else None,
     }

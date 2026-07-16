@@ -21,6 +21,25 @@ from app.schemas.base import BaseSchema, TimestampSchema
 
 _HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
+# Currencies the store supports (matches the per-currency price columns).
+_FX_CURRENCIES = {"USD", "PLN", "EUR"}
+
+
+def _validate_fx_rates(value: dict[str, float] | None) -> dict[str, float] | None:
+    """Keys must be supported ISO-4217 codes; values must be positive numbers.
+
+    Empty ``{}`` is valid (no cross-currency support). Used for B2B net-terms
+    cross-currency credit only — never for catalog/display pricing.
+    """
+    if value is None:
+        return value
+    for code, rate in value.items():
+        if code not in _FX_CURRENCIES:
+            raise ValueError(f"fx_rates key '{code}' is not a supported currency (USD/PLN/EUR)")
+        if not isinstance(rate, int | float) or rate <= 0:
+            raise ValueError(f"fx_rates['{code}'] must be a positive number")
+    return value
+
 
 def _validate_primary_color(value: str | None) -> str | None:
     """Blank stays blank (default theme); otherwise require '#rrggbb', lowercased."""
@@ -74,6 +93,11 @@ class StoreConfigBase(BaseSchema):
     # reads: the account store-credit page stays available regardless.
     gift_cards_enabled: bool = False
     store_credit_enabled: bool = False
+    # B2B cross-currency net-terms credit FX rates (Program D). Maps each
+    # supported currency to the value of 1 unit in a common pivot (e.g.
+    # USD-relative). Empty {} = no cross-currency support. Used ONLY to convert
+    # net-terms orders into a company's credit-limit currency.
+    fx_rates: dict[str, float] = Field(default_factory=dict)
 
 
 class StoreConfigUpdate(BaseSchema):
@@ -112,8 +136,10 @@ class StoreConfigUpdate(BaseSchema):
     abandoned_cart_threshold_hours: Annotated[int | None, Field(ge=1, le=720)] = None
     gift_cards_enabled: bool | None = None
     store_credit_enabled: bool | None = None
+    fx_rates: dict[str, float] | None = None
 
     _validate_primary_color = field_validator("primary_color")(_validate_primary_color)
+    _validate_fx_rates = field_validator("fx_rates")(_validate_fx_rates)
 
 
 class StoreConfigResponse(StoreConfigBase, TimestampSchema):
