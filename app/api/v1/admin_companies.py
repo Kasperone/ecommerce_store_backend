@@ -26,12 +26,14 @@ from app.models.quote import Quote
 from app.models.user import User
 from app.schemas.company import (
     CompanyCreate,
+    CompanyCreditResponse,
     CompanyListResponse,
     CompanyResponse,
     CompanyStatusLiteral,
     CompanyUpdate,
 )
 from app.services.audit import AuditWriter, get_audit_writer
+from app.services.b2b_net_terms import build_credit_summary
 
 router = APIRouter()
 
@@ -113,6 +115,23 @@ async def get_company(
     if company is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
     return company
+
+
+@router.get("/{company_id}/credit", response_model=CompanyCreditResponse)
+async def get_company_credit(
+    company_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+):
+    """The company's net-terms credit summary (limit / outstanding AR / available).
+
+    Outstanding is the sum of the company's unpaid, non-cancelled net-terms orders
+    in its billing currency. Read-only; drives the admin company edit view's
+    credit readout."""
+    company = crud_company.get(db, company_id)
+    if company is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+    return CompanyCreditResponse.model_validate(build_credit_summary(db, company=company))
 
 
 @router.patch("/{company_id}", dependencies=[_require], response_model=CompanyResponse)

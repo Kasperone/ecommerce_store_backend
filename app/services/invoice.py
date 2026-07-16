@@ -314,6 +314,8 @@ _LABELS: dict[str, dict[str, str]] = {
         "vat": "VAT",
         "total_due": "Total",
         "payment_method": "Payment method",
+        "payment_transfer": "Bank transfer",
+        "due_date": "Payment due",
         "status": "Status",
         "thank_you": "Thank you for your order.",
         # Corrective-invoice (faktura korygująca) labels.
@@ -359,6 +361,8 @@ _LABELS: dict[str, dict[str, str]] = {
         "vat": "VAT",
         "total_due": "Razem do zapłaty",
         "payment_method": "Metoda płatności",
+        "payment_transfer": "Przelew",
+        "due_date": "Termin płatności",
         "status": "Status",
         "thank_you": "Dziękujemy za zamówienie.",
         # Corrective-invoice (faktura korygująca) labels.
@@ -579,7 +583,16 @@ def build_invoice_pdf(
     # Payment + status.
     status_str = order.status.value if hasattr(order.status, "value") else str(order.status)
     pay_bits = []
-    if order.payment_method:
+    # Net terms (pay on account): the faktura is the pay-by-invoice instrument —
+    # render "bank transfer" + the printed ``termin płatności`` (due date) so it's
+    # a compliant Polish VAT faktura with payment terms, not a raw method code.
+    if order.payment_method == "net_terms":
+        pay_bits.append(f"<b>{labels['payment_method']}:</b> {_esc(labels['payment_transfer'])}")
+        if order.payment_due_at:
+            pay_bits.append(
+                f"<b>{labels['due_date']}:</b> {order.payment_due_at.date().isoformat()}"
+            )
+    elif order.payment_method:
         pay_bits.append(f"<b>{labels['payment_method']}:</b> {_esc(order.payment_method)}")
     pay_bits.append(f"<b>{labels['status']}:</b> {_esc(status_str)}")
     pay_para = Paragraph("<br/>".join(pay_bits), base)

@@ -128,6 +128,19 @@ class Order(BaseModel):
     payment_method: Mapped[str | None] = mapped_column(String(50))  # stripe, payu, etc
     payment_intent_id: Mapped[str | None] = mapped_column(String(255))  # From payment provider
 
+    # B2B net terms (Program 2). ``company_id`` attributes a pay-on-account order
+    # to its company (SET NULL so deleting a company doesn't block/erase the
+    # order — only for AR attribution). ``payment_due_at`` is the printed
+    # ``termin płatności`` (placement + net_terms_days). ``net_terms_paid_at`` is
+    # stamped when the merchant records the bank transfer — payment tracked
+    # ORTHOGONALLY to fulfilment status (a net-terms order ships while unpaid and
+    # never enters the PAID status). All NULL for non-net-terms orders.
+    company_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("companies.id", ondelete="SET NULL"), index=True
+    )
+    payment_due_at: Mapped[datetime | None] = mapped_column(DateTime)
+    net_terms_paid_at: Mapped[datetime | None] = mapped_column(DateTime)
+
     # Shipping method (nullable so pre-shipping orders survive, SET NULL so deleting
     # a deprecated method preserves the order; shipping_method_name keeps the
     # snapshot of what the customer actually paid for).

@@ -35,8 +35,11 @@ from app.crud import store_config as crud_store_config
 from app.crud.coupon import CouponRedemptionError
 from app.crud.gift_card import GiftCardError
 from app.crud.order import (
+    CreditLimitExceededError,
     InPostPointRequiredError,
     InsufficientStockError,
+    NetTermsCurrencyMismatchError,
+    NetTermsUnavailableError,
     OrderLineSpec,
     OrderNotEditableError,
     ProductUnavailableError,
@@ -212,6 +215,23 @@ async def create_order(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
+        ) from exc
+    except NetTermsUnavailableError as exc:
+        # Pay-on-account not available for this account (guest / non-B2B /
+        # company without net terms). Machine code — the FE matches on it.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="net_terms_unavailable",
+        ) from exc
+    except NetTermsCurrencyMismatchError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="net_terms_currency_mismatch",
+        ) from exc
+    except CreditLimitExceededError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="credit_limit_exceeded",
         ) from exc
     except CouponRedemptionError as exc:
         raise HTTPException(
@@ -471,6 +491,41 @@ async def update_order(
         event = order_email.event_for_status(new_status)
         if event is not None:
             background_tasks.add_task(order_email.send_order_event_in_background, order.id, event)
+    return order
+
+
+@router.post(
+    "/{order_id}/record-net-terms-payment",
+    response_model=OrderWithUser,
+    dependencies=[Depends(require_capability(ORDERS_WRITE))],
+)
+async def record_net_terms_payment(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
+):
+    """Record the bank transfer that settles a net-terms (pay-on-account) order (admin).
+
+    Stamps ``net_terms_paid_at`` and appends a ``net_terms_paid`` timeline event;
+    the order's fulfilment status is untouched (payment is tracked orthogonally —
+    a net-terms order ships while unpaid) and no faktura is re-issued (it was
+    issued at placement). Frees the amount against the company's credit limit.
+    409 if the order isn't a net-terms order; idempotent if already paid. Gated on
+    ``orders:write``.
+    """
+    order = crud_order.get(db, id=order_id)
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+    try:
+        crud_order.record_net_terms_payment(db, order=order, actor_user_id=current_admin.id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="not_a_net_terms_order"
+        ) from exc
+    audit.record_update(resource_type="order", obj=order)
+    db.commit()
+    db.refresh(order)
     return order
 
 
