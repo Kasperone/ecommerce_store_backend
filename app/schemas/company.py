@@ -24,6 +24,7 @@ from pydantic import Field, model_validator
 from app.models.company import COMPANY_STATUS_VALUES
 from app.models.company_user import COMPANY_MEMBER_STATUS_VALUES, COMPANY_ROLE_VALUES
 from app.schemas.base import BaseSchema, TimestampSchema
+from app.schemas.payment_term import PaymentTermResponse
 
 # Hardcoded for pyright; the cross-check below catches drift from the model.
 CompanyStatusLiteral = Literal["pending", "approved", "rejected"]
@@ -79,13 +80,19 @@ class CompanyBase(BaseSchema):
     # only an admin can change it (via ``CompanyUpdate`` — the customer self-edit
     # schema ``CompanyProfileUpdate`` does not include it).
     price_list_id: int | None = Field(default=None)
-    # B2B net terms (Program 2), admin-managed. ``net_terms_enabled`` +
-    # ``net_terms_days`` (Net N) turn on pay-on-account at checkout; ``credit_limit``
-    # (in ``default_currency``, wire ``float``; null = unlimited) hard-blocks the
-    # pay-on-account option once outstanding + a new order would exceed it. All
-    # default off — a company has no terms until an admin sets them.
+    # B2B net terms (Program 2, generalised by the tail's Program A). The master
+    # ``net_terms_enabled`` toggle plus an assigned ``payment_term_id`` (a named
+    # PaymentTerm template deciding the due date) turn on pay-on-account at
+    # checkout. ``net_terms_allowed_roles`` gates which member roles may use it
+    # (default admin+approver+buyer; VIEWER excluded). ``credit_limit`` (in
+    # ``default_currency``, wire ``float``; null = unlimited) hard-blocks the
+    # option once outstanding + a new order would exceed it. All default off/empty
+    # — a company has no terms until an admin enables + assigns a term.
     net_terms_enabled: bool = False
-    net_terms_days: int | None = Field(default=None, ge=1, le=180)
+    payment_term_id: int | None = Field(default=None)
+    net_terms_allowed_roles: list[CompanyRoleLiteral] = Field(
+        default_factory=lambda: ["COMPANY_ADMIN", "APPROVER", "BUYER"]
+    )
     credit_limit: float | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
@@ -121,10 +128,14 @@ class CompanyUpdate(BaseSchema):
     # pricing); omit to leave untouched. The route validates a non-null value
     # references an existing price list (422 if not).
     price_list_id: int | None = Field(default=None)
-    # B2B net terms (Program 2). Omit to leave untouched; an explicit value edits.
+    # B2B net terms (Program 2 + tail Program A). Omit to leave untouched.
+    # ``payment_term_id`` null clears the assignment (→ pay-on-account off);
+    # the route validates a non-null value references an existing term.
+    # ``net_terms_allowed_roles`` (when sent) replaces the whole set.
     # ``credit_limit`` null explicitly clears the limit (→ unlimited credit).
     net_terms_enabled: bool | None = None
-    net_terms_days: int | None = Field(default=None, ge=1, le=180)
+    payment_term_id: int | None = Field(default=None)
+    net_terms_allowed_roles: list[CompanyRoleLiteral] | None = Field(default=None, min_length=1)
     credit_limit: float | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
@@ -142,10 +153,13 @@ class CompanyResponse(CompanyBase, TimestampSchema):
     Includes at least ``{ id, name, status }`` (id + timestamps come from
     ``TimestampSchema``) — the stable contract the quotes vertical FKs against.
     ``primary_user_email`` is a read-only denormalised display value (the
-    designated contact's email, or ``null`` when none is set).
+    designated contact's email, or ``null`` when none is set). ``payment_term``
+    is the resolved assigned net-terms template (``null`` when none), so the
+    admin directory can show the term without a second fetch.
     """
 
     primary_user_email: str | None = None
+    payment_term: PaymentTermResponse | None = None
 
 
 class CompanyCreditResponse(BaseSchema):
@@ -154,12 +168,12 @@ class CompanyCreditResponse(BaseSchema):
     ``credit_limit`` / ``available`` are ``null`` when the company has no limit
     (unlimited credit). ``outstanding`` is the sum of the company's unpaid,
     non-cancelled net-terms orders in ``currency`` (the company's billing
-    currency; ``null`` when unset). ``net_terms_enabled`` / ``net_terms_days``
+    currency; ``null`` when unset). ``net_terms_enabled`` / ``payment_term``
     echo the company config so a single fetch drives the checkout/portal display.
     """
 
     net_terms_enabled: bool
-    net_terms_days: int | None = None
+    payment_term: PaymentTermResponse | None = None
     currency: str | None = None
     credit_limit: float | None = None
     outstanding: float = 0.0

@@ -57,6 +57,11 @@ from app.models.page import (
     PageType,
     PageVersion,
 )
+from app.models.payment_term import (
+    PAYMENT_TERM_TYPE_VALUES,
+    PaymentTerm,
+    PaymentTermType,
+)
 from app.models.price_history import SUPPORTED_CURRENCIES, PriceHistory
 from app.models.price_list import PriceList, PriceListEntry
 from app.models.product import Product
@@ -151,6 +156,9 @@ __all__ = [
     "DraftOrderItem",
     "DraftOrderStatus",
     "DRAFT_ORDER_STATUS_VALUES",
+    "PaymentTerm",
+    "PaymentTermType",
+    "PAYMENT_TERM_TYPE_VALUES",
     "PriceList",
     "PriceListEntry",
     "Product",

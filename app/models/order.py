@@ -131,7 +131,8 @@ class Order(BaseModel):
     # B2B net terms (Program 2). ``company_id`` attributes a pay-on-account order
     # to its company (SET NULL so deleting a company doesn't block/erase the
     # order — only for AR attribution). ``payment_due_at`` is the printed
-    # ``termin płatności`` (placement + net_terms_days). ``net_terms_paid_at`` is
+    # ``termin płatności``, derived from the company's assigned PaymentTerm
+    # (net_days / due_on_receipt / fixed_date). ``net_terms_paid_at`` is
     # stamped when the merchant records the bank transfer — payment tracked
     # ORTHOGONALLY to fulfilment status (a net-terms order ships while unpaid and
     # never enters the PAID status). All NULL for non-net-terms orders.
