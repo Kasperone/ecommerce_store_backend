@@ -82,6 +82,10 @@ class CRUDCompany:
             account_manager=obj_in.account_manager,
             notes=obj_in.notes,
             primary_user_id=obj_in.primary_user_id,
+            # The billing currency the credit limit is denominated in — must be
+            # persisted at create so a credit-limited net-terms company can be
+            # billed on account (else the currency-match check can never pass).
+            default_currency=obj_in.default_currency,
             net_terms_enabled=obj_in.net_terms_enabled,
             net_terms_days=obj_in.net_terms_days,
             # Money exactness: the wire float is converted to Decimal (never

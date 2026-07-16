@@ -269,3 +269,28 @@ async def test_credit_endpoint_null_for_non_b2b(client, user_factory):
     resp = await client.get("/api/v1/companies/me/credit", headers=_headers(user))
     assert resp.status_code == 200, resp.text
     assert resp.json()["net_terms_enabled"] is False
+
+
+async def test_admin_create_persists_net_terms_and_currency(client, user_factory):
+    """A company created through the admin endpoint with net terms + a billing
+    currency persists all of it (regression: ``default_currency`` was previously
+    dropped at create, leaving a credit-limited company unable to bill on account)."""
+    admin = user_factory(email="nt-create-admin@example.com", role=UserRole.ADMIN)
+    resp = await client.post(
+        "/api/v1/admin/companies/",
+        json={
+            "name": "Create NT Co",
+            "status": "approved",
+            "net_terms_enabled": True,
+            "net_terms_days": 45,
+            "credit_limit": 500.0,
+            "default_currency": "PLN",
+        },
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["net_terms_enabled"] is True
+    assert body["net_terms_days"] == 45
+    assert body["credit_limit"] == 500.0
+    assert body["default_currency"] == "PLN"
