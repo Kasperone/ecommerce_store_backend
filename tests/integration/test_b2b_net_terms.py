@@ -24,8 +24,11 @@ from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
 from app.crud.invoice import invoice as crud_invoice
+from app.models.company_user import CompanyMemberStatus, CompanyRole
+from app.models.payment_term import PaymentTerm
 from app.models.user import UserRole
 from tests.factories.company import CompanyFactory
+from tests.factories.company_user import CompanyUserFactory
 
 pytestmark = pytest.mark.integration
 
@@ -61,13 +64,52 @@ def company_factory(db_session: Session):
     return _make
 
 
+@pytest.fixture
+def payment_term_factory(db_session: Session):
+    """Create + commit a PaymentTerm (defaults to a Net 30 net_days term)."""
+
+    def _make(
+        term_type: str = "net_days", *, net_days=30, due_date=None, is_active=True, name=None
+    ):
+        term = PaymentTerm(
+            name=name or f"Term {term_type}",
+            term_type=term_type,
+            net_days=net_days if term_type == "net_days" else None,
+            due_date=due_date if term_type == "fixed_date" else None,
+            is_active=is_active,
+        )
+        db_session.add(term)
+        db_session.commit()
+        return term
+
+    return _make
+
+
+@pytest.fixture
+def company_user_factory(db_session: Session):
+    """Create + commit a CompanyUser membership (defaults to active COMPANY_ADMIN)."""
+    CompanyUserFactory._meta.sqlalchemy_session = db_session  # pyright: ignore[reportAttributeAccessIssue]
+    CompanyUserFactory._meta.sqlalchemy_session_persistence = "commit"  # pyright: ignore[reportAttributeAccessIssue]
+
+    def _make(**kwargs):
+        return CompanyUserFactory(**kwargs)
+
+    return _make
+
+
 # ---------------------------------------------------------------------------
 # Happy path + placement effects
 # ---------------------------------------------------------------------------
 
 
 async def test_net_terms_checkout_places_on_account(
-    client, user_factory, product_factory, company_factory, db_session, test_shipping_method_id
+    client,
+    user_factory,
+    product_factory,
+    company_factory,
+    payment_term_factory,
+    db_session,
+    test_shipping_method_id,
 ):
     buyer = user_factory(email="nt-buyer@example.com")
     product = product_factory(stock=10, price_usd=19.99)
@@ -75,7 +117,7 @@ async def test_net_terms_checkout_places_on_account(
         name="TermsCo",
         primary_user_id=buyer.id,
         net_terms_enabled=True,
-        net_terms_days=30,
+        payment_term=payment_term_factory(net_days=30),
         default_currency="USD",
     )
 
@@ -135,7 +177,12 @@ async def test_net_terms_unavailable_when_disabled(
 
 
 async def test_net_terms_credit_limit_blocks(
-    client, user_factory, product_factory, company_factory, test_shipping_method_id
+    client,
+    user_factory,
+    product_factory,
+    company_factory,
+    payment_term_factory,
+    test_shipping_method_id,
 ):
     buyer = user_factory(email="nt-overlimit@example.com")
     product = product_factory(stock=10, price_usd=100.00)
@@ -143,7 +190,7 @@ async def test_net_terms_credit_limit_blocks(
         name="TightCo",
         primary_user_id=buyer.id,
         net_terms_enabled=True,
-        net_terms_days=30,
+        payment_term=payment_term_factory(net_days=30),
         default_currency="USD",
         credit_limit=Decimal("50.00"),
     )
@@ -157,7 +204,12 @@ async def test_net_terms_credit_limit_blocks(
 
 
 async def test_net_terms_currency_mismatch_blocks(
-    client, user_factory, product_factory, company_factory, test_shipping_method_id
+    client,
+    user_factory,
+    product_factory,
+    company_factory,
+    payment_term_factory,
+    test_shipping_method_id,
 ):
     buyer = user_factory(email="nt-currency@example.com")
     product = product_factory(stock=10, price_usd=10.00)
@@ -166,7 +218,7 @@ async def test_net_terms_currency_mismatch_blocks(
         name="PlnCo",
         primary_user_id=buyer.id,
         net_terms_enabled=True,
-        net_terms_days=30,
+        payment_term=payment_term_factory(net_days=30),
         default_currency="PLN",
         credit_limit=Decimal("1000.00"),
     )
@@ -185,7 +237,13 @@ async def test_net_terms_currency_mismatch_blocks(
 
 
 async def test_record_payment_and_credit_summary(
-    client, user_factory, product_factory, company_factory, db_session, test_shipping_method_id
+    client,
+    user_factory,
+    product_factory,
+    company_factory,
+    payment_term_factory,
+    db_session,
+    test_shipping_method_id,
 ):
     buyer = user_factory(email="nt-record@example.com")
     admin = user_factory(email="nt-admin@example.com", role=UserRole.ADMIN)
@@ -194,7 +252,7 @@ async def test_record_payment_and_credit_summary(
         name="LedgerCo",
         primary_user_id=buyer.id,
         net_terms_enabled=True,
-        net_terms_days=30,
+        payment_term=payment_term_factory(net_days=30),
         default_currency="USD",
         credit_limit=Decimal("1000.00"),
     )
@@ -271,18 +329,22 @@ async def test_credit_endpoint_null_for_non_b2b(client, user_factory):
     assert resp.json()["net_terms_enabled"] is False
 
 
-async def test_admin_create_persists_net_terms_and_currency(client, user_factory):
+async def test_admin_create_persists_net_terms_and_currency(
+    client, user_factory, payment_term_factory
+):
     """A company created through the admin endpoint with net terms + a billing
     currency persists all of it (regression: ``default_currency`` was previously
     dropped at create, leaving a credit-limited company unable to bill on account)."""
     admin = user_factory(email="nt-create-admin@example.com", role=UserRole.ADMIN)
+    term = payment_term_factory(net_days=45, name="Net 45")
     resp = await client.post(
         "/api/v1/admin/companies/",
         json={
             "name": "Create NT Co",
             "status": "approved",
             "net_terms_enabled": True,
-            "net_terms_days": 45,
+            "payment_term_id": term.id,
+            "net_terms_allowed_roles": ["COMPANY_ADMIN", "BUYER"],
             "credit_limit": 500.0,
             "default_currency": "PLN",
         },
@@ -291,6 +353,155 @@ async def test_admin_create_persists_net_terms_and_currency(client, user_factory
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["net_terms_enabled"] is True
-    assert body["net_terms_days"] == 45
+    assert body["payment_term"]["id"] == term.id
+    assert body["payment_term"]["net_days"] == 45
+    assert body["net_terms_allowed_roles"] == ["COMPANY_ADMIN", "BUYER"]
     assert body["credit_limit"] == 500.0
     assert body["default_currency"] == "PLN"
+
+
+async def test_admin_create_rejects_unknown_payment_term(client, user_factory):
+    """Assigning a non-existent payment term at create is a 422."""
+    admin = user_factory(email="nt-badterm@example.com", role=UserRole.ADMIN)
+    resp = await client.post(
+        "/api/v1/admin/companies/",
+        json={"name": "Bad Term Co", "status": "approved", "payment_term_id": 999999},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "Payment term not found"
+
+
+# ---------------------------------------------------------------------------
+# Term types (due-date semantics) + role gating (Program A)
+# ---------------------------------------------------------------------------
+
+
+async def test_due_on_receipt_term_due_today(
+    client,
+    user_factory,
+    product_factory,
+    company_factory,
+    payment_term_factory,
+    test_shipping_method_id,
+):
+    """A due_on_receipt term places the order due the same day it's placed."""
+    from datetime import UTC, datetime
+
+    buyer = user_factory(email="nt-receipt@example.com")
+    product = product_factory(stock=10, price_usd=10.00)
+    company_factory(
+        name="ReceiptCo",
+        primary_user_id=buyer.id,
+        net_terms_enabled=True,
+        payment_term=payment_term_factory("due_on_receipt"),
+        default_currency="USD",
+    )
+    resp = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(product.id, shipping_method_id=test_shipping_method_id),
+        headers=_headers(buyer),
+    )
+    assert resp.status_code == 201, resp.text
+    due = datetime.fromisoformat(resp.json()["payment_due_at"])
+    assert due.date() == datetime.now(UTC).date()
+
+
+async def test_fixed_date_term_uses_the_date(
+    client,
+    user_factory,
+    product_factory,
+    company_factory,
+    payment_term_factory,
+    test_shipping_method_id,
+):
+    """A fixed_date term places the order due on the term's calendar date."""
+    from datetime import date, datetime
+
+    buyer = user_factory(email="nt-fixed@example.com")
+    product = product_factory(stock=10, price_usd=10.00)
+    deadline = date(2099, 12, 31)
+    company_factory(
+        name="FixedCo",
+        primary_user_id=buyer.id,
+        net_terms_enabled=True,
+        payment_term=payment_term_factory("fixed_date", due_date=deadline),
+        default_currency="USD",
+    )
+    resp = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(product.id, shipping_method_id=test_shipping_method_id),
+        headers=_headers(buyer),
+    )
+    assert resp.status_code == 201, resp.text
+    due = datetime.fromisoformat(resp.json()["payment_due_at"])
+    assert due.date() == deadline
+
+
+async def test_role_gating_blocks_viewer(
+    client,
+    user_factory,
+    product_factory,
+    company_factory,
+    company_user_factory,
+    payment_term_factory,
+    test_shipping_method_id,
+):
+    """A VIEWER member of a net-terms company cannot pay on account (option hidden
+    → 409 net_terms_unavailable), while the default roles can."""
+    viewer = user_factory(email="nt-viewer@example.com")
+    product = product_factory(stock=10, price_usd=10.00)
+    # No primary_user_id (that fallback would synthesize COMPANY_ADMIN) — the
+    # viewer's eligibility must come purely from their VIEWER membership row.
+    company = company_factory(
+        name="GatedCo",
+        net_terms_enabled=True,
+        payment_term=payment_term_factory(net_days=30),
+        default_currency="USD",
+    )
+    company_user_factory(
+        company=company,
+        user=viewer,
+        role=CompanyRole.VIEWER.value,
+        status=CompanyMemberStatus.ACTIVE.value,
+    )
+    resp = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(product.id, shipping_method_id=test_shipping_method_id),
+        headers=_headers(viewer),
+    )
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "net_terms_unavailable"
+
+
+async def test_role_gating_allows_buyer(
+    client,
+    user_factory,
+    product_factory,
+    company_factory,
+    company_user_factory,
+    payment_term_factory,
+    test_shipping_method_id,
+):
+    """A BUYER member (in the default allowed set) can pay on account."""
+    b2b_buyer = user_factory(email="nt-gatedbuyer@example.com")
+    product = product_factory(stock=10, price_usd=10.00)
+    company = company_factory(
+        name="BuyerOkCo",
+        net_terms_enabled=True,
+        payment_term=payment_term_factory(net_days=30),
+        default_currency="USD",
+    )
+    company_user_factory(
+        company=company,
+        user=b2b_buyer,
+        role=CompanyRole.BUYER.value,
+        status=CompanyMemberStatus.ACTIVE.value,
+    )
+    resp = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(product.id, shipping_method_id=test_shipping_method_id),
+        headers=_headers(b2b_buyer),
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["payment_method"] == "net_terms"

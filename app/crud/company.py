@@ -87,7 +87,8 @@ class CRUDCompany:
             # billed on account (else the currency-match check can never pass).
             default_currency=obj_in.default_currency,
             net_terms_enabled=obj_in.net_terms_enabled,
-            net_terms_days=obj_in.net_terms_days,
+            payment_term_id=obj_in.payment_term_id,
+            net_terms_allowed_roles=list(obj_in.net_terms_allowed_roles),
             # Money exactness: the wire float is converted to Decimal (never
             # bound straight into the Numeric column). None = unlimited.
             credit_limit=(

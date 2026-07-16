@@ -19,6 +19,7 @@ from app.crud.newsletter import newsletter
 from app.crud.order import order
 from app.crud.order_event import order_event
 from app.crud.page import page
+from app.crud.payment_term import payment_term
 from app.crud.price_history import price_history
 from app.crud.price_list import price_list
 from app.crud.product import product
@@ -73,6 +74,7 @@ __all__ = [
     "invoice",
     "newsletter",
     "price_history",
+    "payment_term",
     "price_list",
     "audit_event",
     "refresh_token",
