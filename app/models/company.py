@@ -151,6 +151,18 @@ class Company(BaseModel):
     )
     credit_limit: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
 
+    # B2B net-terms auto-charge (tail Program C). Opt-in per company: when
+    # ``auto_charge_enabled`` AND a card is vaulted, a cron off-session-charges the
+    # net-terms order at term end instead of waiting for a manual bank transfer
+    # (which stays the default for every other net-terms company).
+    # ``stripe_customer_id`` + ``auto_charge_payment_method_id`` are the vaulted
+    # Stripe handles, set via the company portal's SetupIntent flow.
+    auto_charge_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(255))
+    auto_charge_payment_method_id: Mapped[str | None] = mapped_column(String(255))
+
     # Loaded for the denormalised ``primary_user_email`` on the response (no N+1
     # in the per-row/detail admin views). Plain (non-back_populates) — the User
     # side has no inverse company collection in the MVP.
