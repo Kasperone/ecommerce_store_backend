@@ -175,4 +175,6 @@ def build_credit_summary(db: Session, *, company: Company) -> dict[str, object]:
         "credit_limit": float(company.credit_limit) if company.credit_limit is not None else None,
         "outstanding": float(outstanding) if outstanding is not None else 0.0,
         "available": float(available) if available is not None else None,
+        "auto_charge_enabled": company.auto_charge_enabled,
+        "auto_charge_card_set": company.auto_charge_payment_method_id is not None,
     }

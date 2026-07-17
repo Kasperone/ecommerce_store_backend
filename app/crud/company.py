@@ -89,6 +89,7 @@ class CRUDCompany:
             net_terms_enabled=obj_in.net_terms_enabled,
             payment_term_id=obj_in.payment_term_id,
             net_terms_allowed_roles=list(obj_in.net_terms_allowed_roles),
+            auto_charge_enabled=obj_in.auto_charge_enabled,
             # Money exactness: the wire float is converted to Decimal (never
             # bound straight into the Numeric column). None = unlimited.
             credit_limit=(

@@ -16,7 +16,7 @@ identically as a ``COMPANY_ADMIN`` (see ``crud_company_user.get_active_membershi
 quote-request flow is unaffected.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_active_user, get_db, require_company_admin
@@ -25,12 +25,16 @@ from app.crud import company_user as crud_company_user
 from app.crud.company_user import CompanyMembership
 from app.models.user import User
 from app.schemas.company import (
+    AutoChargeConfirmRequest,
+    AutoChargeSetupIntentResponse,
+    AutoChargeStatusResponse,
     CompanyCreditResponse,
     CompanyMeResponse,
     CompanyProfileUpdate,
     CompanyResponse,
 )
 from app.services.b2b_net_terms import build_credit_summary
+from app.services.stripe import get_stripe_service
 
 router = APIRouter()
 
@@ -85,6 +89,77 @@ async def get_my_company_credit(
     return CompanyCreditResponse.model_validate(
         build_credit_summary(db, company=membership.company)
     )
+
+
+@router.post("/me/auto-charge/setup-intent", response_model=AutoChargeSetupIntentResponse)
+async def create_auto_charge_setup_intent(
+    membership: CompanyMembership = Depends(require_company_admin),
+    db: Session = Depends(get_db),
+):
+    """Start vaulting a card for net-terms auto-pay — **COMPANY_ADMIN only**.
+
+    Ensures a Stripe Customer for the company, then returns a SetupIntent client
+    secret the portal confirms with the Payment Element (setup mode). 503 when
+    Stripe is unconfigured. The card is stored only after ``/confirm``.
+    """
+    service = get_stripe_service()
+    company = membership.company
+    if not company.stripe_customer_id:
+        company.stripe_customer_id = service.create_customer(
+            email=company.email, name=company.name, ext_ref=f"company:{company.id}"
+        )
+        db.add(company)
+        db.commit()
+    intent = service.create_setup_intent(customer_id=company.stripe_customer_id)
+    return AutoChargeSetupIntentResponse(client_secret=intent["client_secret"])
+
+
+@router.post("/me/auto-charge/confirm", response_model=AutoChargeStatusResponse)
+async def confirm_auto_charge_card(
+    payload: AutoChargeConfirmRequest,
+    membership: CompanyMembership = Depends(require_company_admin),
+    db: Session = Depends(get_db),
+):
+    """Store the vaulted PaymentMethod from a confirmed SetupIntent — COMPANY_ADMIN.
+
+    Only a ``succeeded`` SetupIntent whose customer matches the company's is
+    accepted (400 otherwise), so a client can't point us at an unrelated card.
+    """
+    service = get_stripe_service()
+    company = membership.company
+    info = service.retrieve_setup_intent(setup_intent_id=payload.setup_intent_id)
+    if info["status"] != "succeeded" or not info["payment_method"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="SetupIntent not completed"
+        )
+    if (
+        company.stripe_customer_id
+        and info["customer"]
+        and info["customer"] != company.stripe_customer_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="SetupIntent customer mismatch"
+        )
+    company.auto_charge_payment_method_id = info["payment_method"]
+    if info["customer"]:
+        company.stripe_customer_id = info["customer"]
+    db.add(company)
+    db.commit()
+    return AutoChargeStatusResponse(auto_charge_card_set=True)
+
+
+@router.delete("/me/auto-charge", response_model=AutoChargeStatusResponse)
+async def remove_auto_charge_card(
+    membership: CompanyMembership = Depends(require_company_admin),
+    db: Session = Depends(get_db),
+):
+    """Remove the vaulted card — COMPANY_ADMIN. Auto-pay stops; net terms falls
+    back to manual bank transfer. Idempotent (no card set → still ``false``)."""
+    company = membership.company
+    company.auto_charge_payment_method_id = None
+    db.add(company)
+    db.commit()
+    return AutoChargeStatusResponse(auto_charge_card_set=False)
 
 
 @router.patch("/me", response_model=CompanyMeResponse)
