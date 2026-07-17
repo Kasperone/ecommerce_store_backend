@@ -20,7 +20,7 @@ admin's edits flow through to invoices/emails without a redeploy. See
 
 from __future__ import annotations
 
-from sqlalchemy import Boolean, CheckConstraint, Integer, String
+from sqlalchemy import JSON, Boolean, CheckConstraint, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import BaseModel
@@ -108,6 +108,15 @@ class StoreConfig(BaseModel):
     # Reads (account store-credit page) stay available regardless.
     gift_cards_enabled: Mapped[bool] = mapped_column(Boolean, server_default="false")
     store_credit_enabled: Mapped[bool] = mapped_column(Boolean, server_default="false")
+
+    # B2B cross-currency net-terms credit (tail Program D). Admin-set FX rates
+    # mapping each ISO-4217 code to the value of 1 unit in a common pivot
+    # (e.g. USD-relative: {"USD": 1, "EUR": 1.08, "PLN": 0.25}). Used ONLY to
+    # convert a net-terms order into a company's credit-limit currency — the
+    # single deliberate exception to the no-runtime-conversion rule. Empty {} =
+    # no cross-currency support (mismatched-currency on-account orders reject as
+    # before). Never touches catalog/display pricing.
+    fx_rates: Mapped[dict] = mapped_column(JSON, server_default="{}", default=dict, nullable=False)
 
     def __repr__(self) -> str:
         return f"<StoreConfig id={self.id} {self.store_name!r} vat={self.invoice_vat_rate}>"
