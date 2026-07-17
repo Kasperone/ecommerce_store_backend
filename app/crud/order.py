@@ -561,6 +561,7 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         if obj_in.payment_method == "net_terms":  # app.services.b2b_net_terms.NET_TERMS_METHOD
             from app.services.b2b_net_terms import (
                 compute_due_date,
+                convert_to_credit_currency,
                 outstanding_balance,
                 resolve_net_terms,
             )
@@ -570,12 +571,20 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
                 raise NetTermsUnavailableError()
             company = ctx.company
             if company.credit_limit is not None:
-                # Credit is denominated in the company's billing currency; a
-                # differing order currency can't be measured against the limit.
-                if company.default_currency != currency:
+                # Credit is denominated in the company's billing currency. Convert
+                # this order into that currency via admin FX rates (Program D
+                # cross-currency credit); a missing rate → incomparable → reject.
+                converted = convert_to_credit_currency(
+                    db, company=company, amount=total, currency=currency
+                )
+                if converted is None:
                     raise NetTermsCurrencyMismatchError()
-                outstanding = outstanding_balance(db, company_id=company.id, currency=currency)
-                if outstanding + total > company.credit_limit:
+                outstanding = outstanding_balance(db, company=company)
+                if outstanding is None:
+                    # A currency in the company's AR lacks an FX rate — can't
+                    # safely measure the limit, so reject rather than under-count.
+                    raise NetTermsCurrencyMismatchError()
+                if outstanding + converted > company.credit_limit:
                     raise CreditLimitExceededError()
             net_terms_company_id = company.id
             # The assigned payment term decides the printed due date (net_days /
