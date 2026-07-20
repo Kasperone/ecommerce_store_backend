@@ -1,7 +1,7 @@
 # DEV ONLY. Production uses managed Postgres + Redis with rotated
 # credentials per `backend-rules/security.md` rotation runbook.
 # Ports bind to all interfaces because the dev workstation reaches this
-# stack at the hive-server IP (192.168.1.14:5433); switch to 127.0.0.1
+# stack at the hive-server IP (10.0.0.1:5433 over WireGuard); switch to 127.0.0.1
 # bindings on a single-machine setup if you want to keep them off the LAN.
 version: '3.8'
 

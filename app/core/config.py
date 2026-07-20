@@ -106,7 +106,7 @@ class Settings(BaseSettings):
 
     # Meilisearch (storefront search). Both default to "" so dev/CI/tests boot
     # without a running engine — search endpoints 503 and index sync no-ops until
-    # configured. Set MEILISEARCH_URL to e.g. http://192.168.1.14:7700 in .env.
+    # configured. Set MEILISEARCH_URL to e.g. http://10.0.0.1:7700 in .env.
     MEILISEARCH_URL: str = ""
     MEILISEARCH_MASTER_KEY: str = ""
 
