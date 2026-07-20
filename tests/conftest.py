@@ -8,8 +8,10 @@ once at import time and reads from environment.
 from __future__ import annotations
 
 import os
+import socket
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 
@@ -17,9 +19,13 @@ BACKEND_ROOT = Path(__file__).resolve().parent.parent
 
 # Load .env.test if present (local dev). In CI, env vars are pre-set by the
 # workflow and the file does not exist.
+#
+# override=False so an explicit `DATABASE_URL=... pytest` wins over the file
+# and works as an escape hatch. The hard guard below still refuses any URL
+# without "test" in it, so this cannot point the suite at dev/prod.
 _env_test = BACKEND_ROOT / ".env.test"
 if _env_test.exists():
-    load_dotenv(_env_test, override=True)
+    load_dotenv(_env_test, override=False)
 
 # Hard guard: refuse to run if DATABASE_URL still points at a non-test name.
 # Catches the case of a developer running pytest without .env.test in place.
@@ -30,6 +36,36 @@ if "test" not in _db_url.lower():
         f"DATABASE_URL={_db_url!r} must contain 'test' (e.g. ecommerce_test). "
         "Copy .env.test.example to .env.test and adjust."
     )
+
+
+def _preflight_db_reachable(db_url: str) -> None:
+    """TCP-probe the database host before the suite imports app code.
+
+    Without this, an unreachable host (laptop on a different network, tunnel
+    down) surfaces as ~25 fixture errors with tracebacks that look like a DB
+    or code fault. Fail once, fast, with the actual remedy instead.
+    """
+    parsed = urlsplit(db_url)
+    host, port = parsed.hostname, parsed.port or 5432
+    if host is None or host in ("localhost", "127.0.0.1", "::1"):
+        return  # local: connection refused is already an unambiguous error
+
+    try:
+        with socket.create_connection((host, port), timeout=5):
+            return
+    except OSError as exc:
+        raise RuntimeError(
+            f"hive unreachable at {host}:{port} ({exc}).\n"
+            "On a different network, or is the tunnel down?\n"
+            "  Check:   ip -br addr | grep wg-hive\n"
+            "  Bring up: nmcli con up wg-hive\n"
+            "hive is addressed at its WireGuard IP (10.0.0.1) from every "
+            "network; the LAN IP 192.168.1.14 only resolves at home and is no "
+            "longer used in config. See .claude/notes/plans/infra/."
+        ) from exc
+
+
+_preflight_db_reachable(_db_url)
 
 # Now safe to import app code.
 import pytest  # noqa: E402
