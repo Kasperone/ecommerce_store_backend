@@ -103,6 +103,7 @@ from app.models.store_credit import (
     StoreCreditEntryKind,
 )
 from app.models.tag import Tag, customer_tags
+from app.models.tax import TaxCategory, TaxRate
 from app.models.translation_meta import TranslationMeta
 from app.models.user import User
 from app.models.user_consent import UserConsent
@@ -212,6 +213,8 @@ __all__ = [
     "ShippingZoneCountry",
     "StoreConfig",
     "Tag",
+    "TaxCategory",
+    "TaxRate",
     "customer_tags",
     "TranslationMeta",
     "UserConsent",

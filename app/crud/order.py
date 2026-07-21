@@ -20,6 +20,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Query, Session, selectinload
 
+from app.core.config import settings
 from app.core.money import ZERO_MONEY, quantize_money
 from app.crud import coupon as crud_coupon
 from app.crud.base import CRUDBase
@@ -45,6 +46,7 @@ from app.models.product_variant import ProductVariant
 from app.models.shipping import ShippingMethod
 from app.models.user import User, UserRole
 from app.schemas.order import OrderCreate, OrderUpdate
+from app.services import tax as tax_service
 from app.services.dimensional_weight import billable_weight_kg, line_volume_cm3
 from app.services.order_math import recompute_totals
 
@@ -279,6 +281,11 @@ def build_order_items(
     subtotal = ZERO_MONEY
     resolved: dict[int | None, ProductVariant | None] = {}
     remaining: dict[tuple[int, int | None], int] = {}
+    # Rates are resolved per (category, country, date). Today every sale is taxed
+    # in the store's home country regardless of destination — the single
+    # jurisdiction model — so this is one lookup for the whole order.
+    tax_country = settings.TAX_HOME_COUNTRY
+    rate_cache: dict[int, int] = {}
     for spec in line_specs:
         product = products.get(spec.product_id)
         if product is None or not product.is_active:
@@ -303,6 +310,12 @@ def build_order_items(
             )
         line_total = quantize_money(unit_price * spec.quantity)
         subtotal += line_total
+        category = tax_service.category_for_product(db, product, country_code=tax_country)
+        if category.id not in rate_cache:
+            rate_cache[category.id] = tax_service.resolve_rate_int(
+                db, category=category, country_code=tax_country
+            )
+        vat_rate = rate_cache[category.id]
         items.append(
             OrderItem(
                 product_id=product.id,
@@ -313,7 +326,7 @@ def build_order_items(
                 quantity=spec.quantity,
                 unit_price=unit_price,
                 total_price=line_total,
-                vat_rate=product.vat_rate,
+                vat_rate=vat_rate,
             )
         )
     return items, quantize_money(subtotal), resolved
