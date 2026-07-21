@@ -169,6 +169,22 @@ class OrderNotEditableError(Exception):
         super().__init__(f"Order is not editable in status '{self.status.value}'")
 
 
+class OrderShippingCountryMissingError(Exception):
+    """Shipping had to be re-resolved on an order that has no destination country.
+
+    Only reachable for quote-converted orders, whose address is set by an admin
+    at fulfilment. Shipping rates are country-keyed, so there is nothing honest
+    to resolve against — the admin must set the address first.
+    """
+
+    def __init__(self, order_id: int) -> None:
+        self.order_id = order_id
+        super().__init__(
+            f"Order #{order_id} has no shipping country — set the shipping address "
+            "before changing items or the shipping method."
+        )
+
+
 class InsufficientStockError(Exception):
     """A line requests more units than the product has in stock."""
 
@@ -1011,6 +1027,11 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             shipping_method_id if shipping_method_id is not None else order.shipping_method_id
         )
         if method_id is not None:
+            if order.shipping_country is None:
+                # A quote-converted order carries no address until fulfilment.
+                # Rates are country-keyed, so re-resolving here would have to
+                # invent a destination — refuse instead.
+                raise OrderShippingCountryMissingError(order.id)
             shipping_amount, ship_method = resolve_order_shipping(
                 db,
                 product_lines=[(products[line.product_id], line.quantity) for line in lines],

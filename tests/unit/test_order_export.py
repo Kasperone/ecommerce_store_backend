@@ -46,7 +46,7 @@ def _order(
         shipping_address="ul. Łąkowa 1",
         shipping_city="Kraków",
         shipping_postal_code="30-001",
-        shipping_country="Poland",
+        shipping_country="PL",
         payment_method="stripe",
         notes=None,
     )

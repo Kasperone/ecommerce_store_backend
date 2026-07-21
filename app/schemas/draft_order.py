@@ -21,6 +21,7 @@ from typing import Annotated, Literal
 
 from pydantic import EmailStr, Field
 
+from app.core.countries import CountryCode
 from app.models.draft_order import DRAFT_ORDER_STATUS_VALUES
 from app.schemas.base import BaseSchema, TimestampSchema
 
@@ -68,7 +69,7 @@ class DraftOrderUpdate(BaseSchema):
     shipping_address: Annotated[str | None, Field(max_length=500)] = None
     shipping_city: Annotated[str | None, Field(max_length=255)] = None
     shipping_postal_code: Annotated[str | None, Field(max_length=20)] = None
-    shipping_country: Annotated[str | None, Field(max_length=100)] = None
+    shipping_country: CountryCode | None = None
     shipping_method_id: int | None = None
     discount: Annotated[float | None, Field(ge=0)] = None
     notes: str | None = Field(default=None, max_length=5000)

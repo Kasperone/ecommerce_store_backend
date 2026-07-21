@@ -42,6 +42,7 @@ from app.crud.order import (
     NetTermsUnavailableError,
     OrderLineSpec,
     OrderNotEditableError,
+    OrderShippingCountryMissingError,
     ProductUnavailableError,
     VariantRequiredError,
     VariantUnavailableError,
@@ -573,6 +574,8 @@ async def edit_order_items(
             actor_id=current_admin.id,
         )
     except OrderNotEditableError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except OrderShippingCountryMissingError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ProductUnavailableError as exc:
         raise HTTPException(

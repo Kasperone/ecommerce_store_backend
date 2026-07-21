@@ -34,7 +34,7 @@ def _make_order(locale: str | None = None) -> Order:
         shipping_address="1 Test St",
         shipping_city="Town",
         shipping_postal_code="00-001",
-        shipping_country="USA",
+        shipping_country="US",
         created_at=dt.datetime(2026, 5, 27, 12, 0),
     )
     order.id = 42
