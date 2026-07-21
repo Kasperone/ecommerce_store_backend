@@ -118,6 +118,11 @@ class Settings(BaseSettings):
     STORE_POSTAL_CITY: str = ""  # e.g. "00-001 Warszawa"
     STORE_COUNTRY: str = ""
     STORE_TAX_ID: str = ""  # NIP / VAT identifier
+    # The country whose VAT the store charges. Distinct from the free-text
+    # ``STORE_COUNTRY`` above (a display string on the faktura) — this is an
+    # ISO-2 code used to resolve rates, and today every sale is taxed here
+    # regardless of destination (single-jurisdiction model).
+    TAX_HOME_COUNTRY: str = "PL"
     STORE_EMAIL: str = ""
     # Gross-inclusive VAT rate (%) used to decompose net/VAT on invoices.
     # 0 → no VAT block (plain receipt). Applied uniformly across currencies in
