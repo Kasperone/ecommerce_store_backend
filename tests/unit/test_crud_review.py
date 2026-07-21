@@ -44,7 +44,7 @@ def _place_order(db, *, user_id: int, product_id: int, status: OrderStatus) -> N
         shipping_address="1 Test St",
         shipping_city="Testville",
         shipping_postal_code="00-001",
-        shipping_country="Poland",
+        shipping_country="PL",
     )
     db.add(order)
     db.flush()

@@ -42,7 +42,7 @@ def _order(user: User, *, currency: str = "PLN") -> Order:
         shipping_address="ul. Polna 7/3",
         shipping_city="Kraków",
         shipping_postal_code="30-001",
-        shipping_country="Polska",
+        shipping_country="PL",
         payment_method="stripe",
         created_at=dt.datetime(2026, 5, 27, 10, 30),
     )
@@ -99,7 +99,7 @@ def _vat_order(items, *, discount=0.0, shipping=0.0, total) -> Order:
         shipping_address="ul. Polna 7/3",
         shipping_city="Kraków",
         shipping_postal_code="30-001",
-        shipping_country="Polska",
+        shipping_country="PL",
     )
     order.items = [
         OrderItem(product_name=name, quantity=1, unit_price=tp, total_price=tp, vat_rate=rate)

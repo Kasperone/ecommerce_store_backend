@@ -454,13 +454,14 @@ class CRUDQuote:
             total=quote.total,
             currency=quote.currency,
             # No shipping context on a quote — the admin sets the address + method
-            # at fulfilment. The shipping_address columns are NOT NULL and the
-            # OrderResponse requires non-empty values, so seed a clear "to be set"
-            # placeholder rather than an empty string.
+            # at fulfilment. The remaining address columns are NOT NULL, so they
+            # seed a clear "to be set" placeholder rather than an empty string;
+            # ``shipping_country`` is ISO-2-constrained and cannot hold a
+            # placeholder, so it stays NULL — which is the honest value here.
             shipping_address="TBD — set at fulfilment",
             shipping_city="TBD",
             shipping_postal_code="TBD",
-            shipping_country="TBD",
+            shipping_country=None,
             shipping_method_id=None,
             notes=f"Converted from quote #{quote.id} — {company_name}",
             items=order_items,
