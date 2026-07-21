@@ -51,6 +51,10 @@ class Order(BaseModel):
             "user_id IS NOT NULL OR guest_email IS NOT NULL",
             name="ck_orders_user_or_guest_email",
         ),
+        CheckConstraint(
+            "shipping_country IS NULL OR shipping_country ~ '^[A-Z]{2}$'",
+            name="ck_orders_shipping_country_iso2",
+        ),
     )
 
     # User — nullable for guest checkout (a guest order has no user row;
@@ -123,7 +127,12 @@ class Order(BaseModel):
     shipping_address: Mapped[str] = mapped_column(Text)
     shipping_city: Mapped[str] = mapped_column(String(100))
     shipping_postal_code: Mapped[str] = mapped_column(String(20))
-    shipping_country: Mapped[str] = mapped_column(String(100))
+    # ISO 3166-1 alpha-2, matching ``shipping_zone_countries.country_code`` —
+    # this value is passed straight into the shipping-rate resolver, and will key
+    # destination VAT resolution. NULL means "not known yet", which is the real
+    # state of a quote-converted order (no address until the admin sets one at
+    # fulfilment); every consumer already guards for a missing country.
+    shipping_country: Mapped[str | None] = mapped_column(String(2))
 
     # Payment
     payment_method: Mapped[str | None] = mapped_column(String(50))  # stripe, payu, etc

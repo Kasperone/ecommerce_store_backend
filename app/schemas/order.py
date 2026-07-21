@@ -3,6 +3,7 @@ from typing import Literal
 
 from pydantic import EmailStr, Field, field_validator
 
+from app.core.countries import CountryCode
 from app.core.validators import is_valid_nip, normalize_nip
 from app.models.order import OrderStatus
 from app.schemas.base import BaseSchema, TimestampSchema
@@ -50,13 +51,19 @@ class OrderItemResponse(OrderItemBase, TimestampSchema):
 
 
 class OrderBase(BaseSchema):
-    """Base order schema"""
+    """Base order schema.
+
+    ``shipping_country`` is deliberately **not** here: placing an order requires
+    a destination (``OrderCreate``), but reading one back may find none — a
+    quote-converted order has no address until an admin sets it at fulfilment
+    (``OrderResponse``). The two sides genuinely disagree, so each declares its
+    own rather than one widening the other.
+    """
 
     # Shipping address
     shipping_address: str = Field(..., min_length=1)
     shipping_city: str = Field(..., min_length=1, max_length=100)
     shipping_postal_code: str = Field(..., min_length=1, max_length=20)
-    shipping_country: str = Field(..., min_length=1, max_length=100)
 
     # Optional fields
     notes: str | None = None
@@ -65,6 +72,7 @@ class OrderBase(BaseSchema):
 class OrderCreate(OrderBase):
     """Schema for creating an order"""
 
+    shipping_country: CountryCode
     items: list[OrderItemCreate] = Field(..., min_length=1)
     currency: str = Field(default="USD", pattern="^(USD|PLN|EUR)$")
     # The shipping method the customer picked from the storefront selector.
@@ -170,6 +178,10 @@ class OrderEditRequest(BaseSchema):
 
 class OrderResponse(OrderBase, TimestampSchema):
     """Schema for order response"""
+
+    # Optional on the read side: a quote-converted order has no address yet and
+    # carries NULL until an admin sets one at fulfilment (see ``OrderBase``).
+    shipping_country: str | None = None
 
     # NULL on guest orders; ``guest_email``/``guest_token`` are then set instead.
     # The token rides the create response so the guest can be handed their
@@ -307,7 +319,7 @@ class GuestOrderResponse(BaseSchema):
     tracking_number: str | None = None
     tracking_url: str | None = None
     shipping_city: str
-    shipping_country: str
+    shipping_country: str | None
 
 
 class OrderListItem(TimestampSchema):

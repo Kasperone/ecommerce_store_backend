@@ -99,6 +99,10 @@ class DraftOrder(BaseModel):
             "status IN ('" + "', '".join(DRAFT_ORDER_STATUS_VALUES) + "')",
             name="ck_draft_orders_status_enum",
         ),
+        CheckConstraint(
+            "shipping_country IS NULL OR shipping_country ~ '^[A-Z]{2}$'",
+            name="ck_draft_orders_shipping_country_iso2",
+        ),
         CheckConstraint("discount >= 0", name="ck_draft_orders_discount_non_negative"),
         CheckConstraint("subtotal >= 0", name="ck_draft_orders_subtotal_non_negative"),
         CheckConstraint("total >= 0", name="ck_draft_orders_total_non_negative"),
@@ -118,7 +122,10 @@ class DraftOrder(BaseModel):
     shipping_address: Mapped[str | None] = mapped_column(String(500))
     shipping_city: Mapped[str | None] = mapped_column(String(255))
     shipping_postal_code: Mapped[str | None] = mapped_column(String(20))
-    shipping_country: Mapped[str | None] = mapped_column(String(100))
+    # ISO 3166-1 alpha-2 (see ``Order.shipping_country``) — a draft converts
+    # straight into an order, so it must not be able to hold a value the order
+    # can't accept.
+    shipping_country: Mapped[str | None] = mapped_column(String(2))
     shipping_method_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("shipping_methods.id", ondelete="SET NULL")
     )
