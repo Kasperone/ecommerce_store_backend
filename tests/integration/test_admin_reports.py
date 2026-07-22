@@ -74,6 +74,7 @@ ENDPOINTS = [
     "/api/v1/admin/reports/top-products",
     "/api/v1/admin/reports/by-category",
     "/api/v1/admin/reports/refund-summary",
+    "/api/v1/admin/reports/eu-distance-selling",
     "/api/v1/admin/reports/sales.csv?start=2025-01-01&end=2025-01-31",
 ]
 
@@ -364,3 +365,38 @@ async def test_reports_write_no_audit_rows(
         assert resp.status_code == 200
     after = db_session.query(AdminAuditEvent).count()
     assert after == before
+
+
+# ---------------------------------------------------------------------------
+# EU distance-selling threshold
+# ---------------------------------------------------------------------------
+
+
+async def test_eu_distance_selling_shape(client, user_factory):
+    """Shape + defaults on an empty store: current + prior year, not approaching."""
+    admin = user_factory(email="eu-thr-admin@example.com", role=UserRole.ADMIN)
+    resp = await client.get("/api/v1/admin/reports/eu-distance-selling", headers=_headers(admin))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["threshold_eur"] == 10000.0
+    assert body["liable"] is False
+    assert body["effective_status"] == "not_approaching"
+    this_year = _naive_utcnow().year
+    assert body["current"]["year"] == this_year
+    assert body["prior"]["year"] == this_year - 1
+    for key in ("total_eur", "pct", "remaining_eur", "status", "unconvertible_count"):
+        assert key in body["current"]
+    # Empty store: nothing counted, full headroom.
+    assert body["current"]["total_eur"] == 0.0
+    assert body["current"]["remaining_eur"] == 10000.0
+
+
+async def test_eu_distance_selling_year_param(client, user_factory):
+    admin = user_factory(email="eu-thr-year@example.com", role=UserRole.ADMIN)
+    resp = await client.get(
+        "/api/v1/admin/reports/eu-distance-selling?year=2024", headers=_headers(admin)
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["current"]["year"] == 2024
+    assert body["prior"]["year"] == 2023

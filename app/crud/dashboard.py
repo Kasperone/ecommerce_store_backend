@@ -279,6 +279,18 @@ class CRUDDashboard:
             max(revenue_total, key=lambda c: revenue_total[c]) if revenue_total else "USD"
         )
 
+        # Imported here (not at module scope) to avoid a crud↔services import cycle
+        # (``tax_threshold`` imports ``crud.report`` / ``crud.store_config``).
+        from app.services import tax_threshold
+
+        liability = tax_threshold.eu_distance_selling_status(db)
+        eu_tax_liability = {
+            "status": liability.effective_status,
+            "pct": float(liability.current.pct),
+            "year": liability.current.year,
+            "liable": liability.liable,
+        }
+
         low_stock_count, low_stock_products = self.low_stock(db)
         low_stock = [
             {
@@ -308,6 +320,7 @@ class CRUDDashboard:
             "top_products": self.top_products(db),
             "low_stock_count": low_stock_count,
             "low_stock": low_stock,
+            "eu_tax_liability": eu_tax_liability,
         }
 
 
