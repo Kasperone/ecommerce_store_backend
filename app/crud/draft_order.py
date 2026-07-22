@@ -56,6 +56,7 @@ from app.schemas.draft_order import (
     DraftOrderItemUpdate,
     DraftOrderUpdate,
 )
+from app.services import tax as tax_service
 from app.services.order_math import recompute_totals
 
 
@@ -423,6 +424,12 @@ class CRUDDraftOrder:
                     line_key=item.id,
                 )
             )
+        # Reverse charge (Phase-0 tax U4): resolved from the draft's owner +
+        # destination, same rule as checkout. A guest draft or a domestic/non-EU
+        # destination stays domestic.
+        tax_ctx = tax_service.resolve_tax_context(
+            db, user_id=draft.user_id, shipping_country=draft.shipping_country
+        )
         try:
             order_items, subtotal, line_variants = build_order_items(
                 db,
@@ -431,6 +438,7 @@ class CRUDDraftOrder:
                 variants=variants,
                 default_warehouse_id=default_warehouse.id,
                 currency=draft.currency,
+                tax_ctx=tax_ctx,
             )
         except (VariantRequiredError, VariantUnavailableError) as exc:
             raise DraftOrderNotConvertibleError(
@@ -498,6 +506,9 @@ class CRUDDraftOrder:
             shipping_method_id=ship_method.id,
             shipping_method_name=ship_method.name,
             payment_method=payment_method,
+            tax_treatment=tax_ctx.treatment,
+            buyer_vat_id=tax_ctx.buyer_vat_id,
+            buyer_vies_confirmed_at=tax_ctx.buyer_vies_confirmed_at,
             notes=f"Converted from draft order #{draft.id}",
             items=order_items,
         )

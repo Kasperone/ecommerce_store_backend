@@ -39,6 +39,7 @@ from app.models.order import Order, OrderStatus
 from app.models.product import Product
 from app.models.quote import Quote, QuoteItem, QuoteStatus
 from app.schemas.quote import QuoteCreate, QuoteItemCreate, QuoteRequestCreate, QuoteUpdate
+from app.services import tax as tax_service
 
 
 class QuoteRequestError(Exception):
@@ -426,6 +427,17 @@ class CRUDQuote:
                     line_key=line.id,
                 )
             )
+        # Reverse charge (Phase-0 tax U4): resolved from the order owner + the
+        # destination. A quote defers its address to fulfilment, so
+        # ``shipping_country`` is None here and this always resolves DOMESTIC today
+        # — wired for consistency with the other build paths (and so it applies
+        # automatically if quotes ever carry a destination at conversion). NOTE:
+        # an EU B2B quote whose address is set at fulfilment stays domestic (the
+        # treatment is snapshotted at conversion); re-resolving on address-set is a
+        # deferred follow-up.
+        tax_ctx = tax_service.resolve_tax_context(
+            db, user_id=quote.company.primary_user_id, shipping_country=None
+        )
         try:
             order_items, _, line_variants = build_order_items(
                 db,
@@ -434,6 +446,7 @@ class CRUDQuote:
                 variants=variants,
                 default_warehouse_id=default_warehouse.id,
                 currency=quote.currency,
+                tax_ctx=tax_ctx,
             )
         except (VariantRequiredError, VariantUnavailableError) as exc:
             raise QuoteNotConvertibleError(
@@ -463,6 +476,9 @@ class CRUDQuote:
             shipping_postal_code="TBD",
             shipping_country=None,
             shipping_method_id=None,
+            tax_treatment=tax_ctx.treatment,
+            buyer_vat_id=tax_ctx.buyer_vat_id,
+            buyer_vies_confirmed_at=tax_ctx.buyer_vies_confirmed_at,
             notes=f"Converted from quote #{quote.id} — {company_name}",
             items=order_items,
         )
