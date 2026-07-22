@@ -21,10 +21,27 @@ from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 
+from app.core.vat_id import is_vat_id, normalize_vat_id
 from app.models.company import COMPANY_STATUS_VALUES
 from app.models.company_user import COMPANY_MEMBER_STATUS_VALUES, COMPANY_ROLE_VALUES
 from app.schemas.base import BaseSchema, TimestampSchema
 from app.schemas.payment_term import PaymentTermResponse
+
+
+def _normalise_vat_id(value: str | None) -> str | None:
+    """Canonicalise a written EU VAT-ID: upper-case + no spaces; blank → ``None``
+    (an explicit clear). A non-blank value must be well-formed — VIES is the real
+    validator, but an obviously malformed id is rejected here rather than after a
+    round-trip."""
+    if value is None:
+        return None
+    normalized = normalize_vat_id(value)
+    if not normalized:
+        return None
+    if not is_vat_id(normalized):
+        raise ValueError("vat_id must be a country-prefixed EU VAT number, e.g. 'PL5252445724'")
+    return normalized
+
 
 # Hardcoded for pyright; the cross-check below catches drift from the model.
 CompanyStatusLiteral = Literal["pending", "approved", "rejected"]
@@ -56,6 +73,11 @@ class CompanyBase(BaseSchema):
 
     name: Annotated[str, Field(min_length=1, max_length=255)]
     tax_id: str | None = Field(default=None, max_length=64)
+    # Country-prefixed EU VAT-ID (e.g. ``PL5252445724``), distinct from ``tax_id``
+    # (the bare NIP). Lenient here so the response tolerates whatever is stored;
+    # the write schemas (``CompanyUpdate`` / ``CompanyProfileUpdate``) normalise +
+    # format-check it. VIES confirmation is the ``vies_*`` fields on the response.
+    vat_id: str | None = Field(default=None, max_length=20)
     email: str | None = Field(default=None, max_length=255)
     phone: str | None = Field(default=None, max_length=32)
     status: CompanyStatusLiteral = "pending"
@@ -121,6 +143,9 @@ class CompanyUpdate(BaseSchema):
 
     name: Annotated[str | None, Field(min_length=1, max_length=255)] = None
     tax_id: str | None = Field(default=None, max_length=64)
+    # Set/clear the EU VAT-ID. Normalised + format-checked below; null/blank
+    # clears it (which the route also uses to reset the VIES confirmation).
+    vat_id: str | None = Field(default=None, max_length=20)
     email: str | None = Field(default=None, max_length=255)
     phone: str | None = Field(default=None, max_length=32)
     status: CompanyStatusLiteral | None = None
@@ -150,6 +175,8 @@ class CompanyUpdate(BaseSchema):
             self.name = self.name.strip()
             if not self.name:
                 raise ValueError("name must not be blank")
+        if "vat_id" in self.model_fields_set:
+            self.vat_id = _normalise_vat_id(self.vat_id)
         return self
 
 
@@ -166,6 +193,15 @@ class CompanyResponse(CompanyBase, TimestampSchema):
 
     primary_user_email: str | None = None
     payment_term: PaymentTermResponse | None = None
+    # VIES confirmation status (Phase-0 tax U3), read-only. ``vies_valid`` +
+    # a fresh ``vies_confirmed_at`` are what the reverse-charge chain (U4) reads;
+    # ``vies_last_checked_at`` records the last attempt (incl. failed ones).
+    # ``vies_request_id`` (the proof-of-check consultation number) is deliberately
+    # NOT exposed — it lives on the row as evidence, not on the wire.
+    vies_valid: bool = False
+    vies_confirmed_at: datetime | None = None
+    vies_confirmed_name: str | None = None
+    vies_last_checked_at: datetime | None = None
 
 
 class CompanyCreditResponse(BaseSchema):
@@ -250,6 +286,7 @@ class CompanyProfileUpdate(BaseSchema):
     upper-case; an empty/blank string for any field clears it to ``None``."""
 
     tax_id: str | None = Field(default=None, max_length=64)
+    vat_id: str | None = Field(default=None, max_length=20)
     regon: str | None = Field(default=None, max_length=32)
     email: str | None = Field(default=None, max_length=255)
     phone: str | None = Field(default=None, max_length=32)
@@ -282,6 +319,8 @@ class CompanyProfileUpdate(BaseSchema):
                 setattr(self, field, trimmed or None)
         if self.default_currency:
             self.default_currency = self.default_currency.upper()
+        if "vat_id" in self.model_fields_set:
+            self.vat_id = _normalise_vat_id(self.vat_id)
         return self
 
 

@@ -75,6 +75,22 @@ class Settings(BaseSettings):
     NET_TERMS_DUNNING_ENABLED: bool = False
     NET_TERMS_DUNNING_INTERVAL_DAYS: int = 7
 
+    # EU VIES VAT-ID validation (Phase-0 tax U3 — the reverse-charge chain).
+    # Ships DARK: with ``VIES_ENABLED`` false the admin/portal check endpoints
+    # 503 and the re-check cron is a healthy no-op, so no external call is made
+    # until a store opts in (U4 is what consumes the confirmation). Validation is
+    # NEVER on the checkout path — an explicit admin/portal action + this cron.
+    # ``VIES_REQUESTER_VAT_ID`` (our own EU VAT-ID, e.g. ``PL5252445724``) is
+    # optional; when set, VIES returns a consultation ``requestIdentifier`` we
+    # store as legal proof-of-check. ``VIES_CONFIRMATION_TTL_DAYS`` is the
+    # freshness window: a confirmation older than this is stale (U4 re-charges
+    # domestic VAT; the cron re-checks before it lapses).
+    VIES_ENABLED: bool = False
+    VIES_REST_URL: str = "https://ec.europa.eu/taxation_customs/vies/rest-api"
+    VIES_REQUESTER_VAT_ID: str = ""
+    VIES_TIMEOUT_SECONDS: float = 10.0
+    VIES_CONFIRMATION_TTL_DAYS: int = 90
+
     # Cloudflare R2
     R2_ACCOUNT_ID: str = ""
     R2_ACCESS_KEY_ID: str = ""

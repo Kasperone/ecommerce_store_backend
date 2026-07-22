@@ -19,6 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.capabilities import CUSTOMERS_WRITE
+from app.core.config import settings
 from app.core.dependencies import get_current_admin, get_db, require_capability
 from app.crud import company as crud_company
 from app.crud import payment_term as crud_payment_term
@@ -33,6 +34,7 @@ from app.schemas.company import (
     CompanyStatusLiteral,
     CompanyUpdate,
 )
+from app.services import vies
 from app.services.audit import AuditWriter, get_audit_writer
 from app.services.b2b_net_terms import build_credit_summary
 
@@ -194,6 +196,46 @@ async def update_company(
         )
 
     crud_company.update(db, company=company, obj_in=payload)
+    audit.record_update(resource_type="company", obj=company)
+    db.commit()
+    db.refresh(company)
+    return company
+
+
+@router.post("/{company_id}/vies-check", dependencies=[_require], response_model=CompanyResponse)
+async def check_company_vies(
+    company_id: int,
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    audit: AuditWriter = Depends(get_audit_writer),
+):
+    """Validate the company's EU VAT-ID against VIES and cache the result on the row.
+
+    An explicit admin action — never the checkout path (Phase-0 tax U3). 503 when
+    VIES is disabled (``VIES_ENABLED`` off); 422 when the company has no VAT-ID;
+    502 when VIES is temporarily unreachable (the attempt timestamp is still
+    recorded so the admin sees it was tried). Otherwise returns the company with
+    the refreshed ``vies_*`` status."""
+    if not settings.VIES_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="VIES validation is disabled",
+        )
+    company = crud_company.get(db, company_id)
+    if company is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Company not found")
+    try:
+        vies.validate_company_vat_id(db, company)
+    except vies.VIESValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    except vies.VIESUnavailableError as exc:
+        db.commit()  # persist the recorded attempt (vies_last_checked_at)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="VIES is temporarily unavailable; please try again later",
+        ) from exc
     audit.record_update(resource_type="company", obj=company)
     db.commit()
     db.refresh(company)

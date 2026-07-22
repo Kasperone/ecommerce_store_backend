@@ -19,6 +19,7 @@ quote-request flow is unaffected.
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.dependencies import get_current_active_user, get_db, require_company_admin
 from app.crud import company as crud_company
 from app.crud import company_user as crud_company_user
@@ -33,6 +34,7 @@ from app.schemas.company import (
     CompanyProfileUpdate,
     CompanyResponse,
 )
+from app.services import vies
 from app.services.b2b_net_terms import build_credit_summary
 from app.services.stripe import get_stripe_service
 
@@ -177,6 +179,41 @@ async def update_my_company(
     are not exposed here. Returns the updated company with the caller's ``role``
     (same shape as ``GET /companies/me``)."""
     company = crud_company.update_profile(db, company=membership.company, obj_in=payload)
+    db.commit()
+    db.refresh(company)
+    base = CompanyResponse.model_validate(company)
+    return CompanyMeResponse.model_validate({**base.model_dump(), "role": membership.role})
+
+
+@router.post("/me/vies-check", response_model=CompanyMeResponse)
+async def check_my_company_vies(
+    membership: CompanyMembership = Depends(require_company_admin),
+    db: Session = Depends(get_db),
+):
+    """Validate the caller's company VAT-ID against VIES — **COMPANY_ADMIN only**.
+
+    The self-service counterpart to the admin ``/admin/companies/{id}/vies-check``
+    (Phase-0 tax U3): a company validates its own EU VAT-ID during onboarding, off
+    the checkout path. 503 when VIES is disabled; 422 when no VAT-ID is set; 502
+    when VIES is temporarily unreachable (the attempt is still recorded)."""
+    if not settings.VIES_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="VIES validation is disabled",
+        )
+    company = membership.company
+    try:
+        vies.validate_company_vat_id(db, company)
+    except vies.VIESValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    except vies.VIESUnavailableError as exc:
+        db.commit()  # persist the recorded attempt (vies_last_checked_at)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="VIES is temporarily unavailable; please try again later",
+        ) from exc
     db.commit()
     db.refresh(company)
     base = CompanyResponse.model_validate(company)

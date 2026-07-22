@@ -17,6 +17,7 @@ change with no migration. ``account_manager`` is a free-text label for now — a
 from __future__ import annotations
 
 import enum
+from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
@@ -24,6 +25,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     CheckConstraint,
+    DateTime,
     ForeignKey,
     Integer,
     Numeric,
@@ -162,6 +164,24 @@ class Company(BaseModel):
     )
     stripe_customer_id: Mapped[str | None] = mapped_column(String(255))
     auto_charge_payment_method_id: Mapped[str | None] = mapped_column(String(255))
+
+    # EU VAT-ID + VIES confirmation (Phase-0 tax U3 — the reverse-charge chain).
+    # ``vat_id`` is the country-prefixed EU form (e.g. ``PL5252445724``), DISTINCT
+    # from ``tax_id`` (the bare Polish NIP). The ``vies_*`` fields cache the result
+    # of an explicit admin/portal validation (NEVER the checkout path): ``vies_valid``
+    # + a fresh ``vies_confirmed_at`` are what U4 reads to decide reverse charge;
+    # ``vies_confirmed_name`` is the trader name VIES returned; ``vies_last_checked_at``
+    # records every attempt (incl. failed/unavailable ones); ``vies_request_id`` is
+    # the VIES consultation number kept as legal proof-of-check. All default
+    # unconfirmed — a company is domestic-taxed until a check succeeds.
+    vat_id: Mapped[str | None] = mapped_column(String(20))
+    vies_valid: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    vies_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    vies_confirmed_name: Mapped[str | None] = mapped_column(String(255))
+    vies_last_checked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    vies_request_id: Mapped[str | None] = mapped_column(String(64))
 
     # Loaded for the denormalised ``primary_user_email`` on the response (no N+1
     # in the per-row/detail admin views). Plain (non-back_populates) — the User
