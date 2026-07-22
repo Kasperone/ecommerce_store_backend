@@ -152,6 +152,18 @@ class Order(BaseModel):
     payment_due_at: Mapped[datetime | None] = mapped_column(DateTime)
     net_terms_paid_at: Mapped[datetime | None] = mapped_column(DateTime)
 
+    # Tax treatment (Phase-0 tax U4). ``domestic`` = taxed at the home rate (every
+    # sale today); ``reverse_charge`` = an intra-community B2B supply, modelled as a
+    # 0%-rate sale priced at net (the buyer self-accounts). Resolved once at
+    # placement (``tax_service.resolve_tax_context``) and never re-derived — the
+    # ``buyer_vat_id`` + ``buyer_vies_confirmed_at`` snapshot the confirmation the
+    # decision rested on, as audit evidence independent of the mutable company row.
+    tax_treatment: Mapped[str] = mapped_column(
+        String(16), default="domestic", server_default="domestic", nullable=False
+    )
+    buyer_vat_id: Mapped[str | None] = mapped_column(String(20))
+    buyer_vies_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime)
+
     # Shipping method (nullable so pre-shipping orders survive, SET NULL so deleting
     # a deprecated method preserves the order; shipping_method_name keeps the
     # snapshot of what the customer actually paid for).

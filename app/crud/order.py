@@ -21,7 +21,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Query, Session, selectinload
 
 from app.core.config import settings
-from app.core.money import ZERO_MONEY, quantize_money
+from app.core.money import ZERO_MONEY, net_of_gross, quantize_money
 from app.crud import coupon as crud_coupon
 from app.crud.base import CRUDBase
 from app.crud.coupon import AppliedDiscount, CouponRedemptionError
@@ -261,6 +261,7 @@ def build_order_items(
     variants: dict[int, ProductVariant],
     default_warehouse_id: int,
     currency: str,
+    tax_ctx: tax_service.TaxContext | None = None,
 ) -> tuple[list[OrderItem], Decimal, dict[int | None, ProductVariant | None]]:
     """The stock-check + snapshot loop shared by checkout and admin conversions.
 
@@ -273,17 +274,24 @@ def build_order_items(
     snapshots the ``OrderItem`` — including ``vat_rate`` from the product, so
     per-line VAT is always faktura-correct regardless of the calling path.
 
+    ``tax_ctx`` decides the treatment (default DOMESTIC = today's behaviour). Under
+    **reverse charge** each unit's gross price is decomposed to net at the
+    product's home-country rate (the VAT baked into the catalog/pinned price is
+    stripped), the line snapshots ``vat_rate=0``, and ``unit_price x quantity ==
+    total_price`` still holds exactly. The buyer pays net; the store charges no VAT.
+
     Returns ``(items, subtotal, resolved_variants_by_line_key)``. The caller
     owns the later stock decrement (``apply_delta`` needs ``order.id``, which
     only exists post-flush).
     """
+    ctx = tax_ctx or tax_service.TaxContext.domestic()
     items: list[OrderItem] = []
     subtotal = ZERO_MONEY
     resolved: dict[int | None, ProductVariant | None] = {}
     remaining: dict[tuple[int, int | None], int] = {}
-    # Rates are resolved per (category, country, date). Today every sale is taxed
-    # in the store's home country regardless of destination — the single
-    # jurisdiction model — so this is one lookup for the whole order.
+    # The catalog gross prices carry the store's home-country VAT, so the rate is
+    # always resolved at the home country (single-jurisdiction / fixed-gross model).
+    # Reverse charge doesn't change *which* rate — it strips that rate out to net.
     tax_country = settings.TAX_HOME_COUNTRY
     rate_cache: dict[int, int] = {}
     for spec in line_specs:
@@ -303,19 +311,27 @@ def build_order_items(
             name = product.name if variant is None else f"{product.name} — {variant.title}"
             raise InsufficientStockError(product.id, name, spec.quantity, available)
         remaining[key] = available - spec.quantity
-        unit_price = spec.unit_price
-        if unit_price is None:
-            unit_price = (
+        gross_unit = spec.unit_price
+        if gross_unit is None:
+            gross_unit = (
                 variant.get_price(currency) if variant is not None else product.get_price(currency)
             )
-        line_total = quantize_money(unit_price * spec.quantity)
-        subtotal += line_total
         category = product.tax_category
         if category.id not in rate_cache:
             rate_cache[category.id] = tax_service.resolve_rate_int(
                 db, category=category, country_code=tax_country
             )
-        vat_rate = rate_cache[category.id]
+        domestic_rate = rate_cache[category.id]
+        if ctx.is_reverse_charge:
+            # Strip the home VAT: the buyer pays net, the line snapshots 0% so the
+            # faktura shows a single 0% group (compute_vat_breakdown is unchanged).
+            unit_price = net_of_gross(gross_unit, domestic_rate)
+            vat_rate = 0
+        else:
+            unit_price = gross_unit
+            vat_rate = domestic_rate
+        line_total = quantize_money(unit_price * spec.quantity)
+        subtotal += line_total
         items.append(
             OrderItem(
                 product_id=product.id,
@@ -485,6 +501,15 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
 
         entry_map = resolve_active_entry_map(db, user_id=user_id)
 
+        # Reverse charge (Phase-0 tax U4): resolved once for the whole order from
+        # the buyer's confirmed company VAT-ID + the EU destination. Domestic (=
+        # today's behaviour) for guests, non-B2B buyers, non-EU/home destinations,
+        # or a lapsed/absent VIES confirmation. Threaded into build_order_items so
+        # RC lines are priced at net with a 0% snapshot.
+        tax_ctx = tax_service.resolve_tax_context(
+            db, user_id=user_id, shipping_country=obj_in.shipping_country
+        )
+
         # The stock-check + snapshot loop is shared with admin conversions
         # (quote → order today, draft orders next); duplicate-line remainder
         # semantics and the vat_rate snapshot live in build_order_items. The
@@ -514,6 +539,7 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             variants=variants,
             default_warehouse_id=default_warehouse.id,
             currency=currency,
+            tax_ctx=tax_ctx,
         )
 
         # Shipping resolution lives in the shared resolve_order_shipping helper
@@ -655,6 +681,10 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             payment_method=obj_in.payment_method,
             company_id=net_terms_company_id,
             payment_due_at=net_terms_due_at,
+            # Reverse-charge treatment + the audit snapshot it rested on.
+            tax_treatment=tax_ctx.treatment,
+            buyer_vat_id=tax_ctx.buyer_vat_id,
+            buyer_vies_confirmed_at=tax_ctx.buyer_vies_confirmed_at,
             # Tender snapshots start at 0 (not the column default) so
             # ``amount_due`` is correct pre-flush; overwritten below when a
             # gift card / store credit actually applies.
@@ -1007,6 +1037,9 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             variants=variants,
             default_warehouse_id=default_warehouse.id,
             currency=currency,
+            # Keep the treatment the order was placed under — re-resolving could
+            # flip it if the company's VIES confirmation has since lapsed.
+            tax_ctx=tax_service.TaxContext.from_order(order),
         )
 
         # 3. Swap the order's items (delete-orphan removes the old rows on flush).
