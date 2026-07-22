@@ -28,11 +28,13 @@ from app.crud import report as crud_report
 from app.models.user import User
 from app.schemas.report import (
     CategoryRevenueReport,
+    EuDistanceSellingStatus,
     RefundSummary,
     SalesGranularity,
     SalesReport,
     TopProductsReport,
 )
+from app.services import tax_threshold
 
 router = APIRouter()
 
@@ -123,6 +125,24 @@ async def get_refund_summary_report(
     """Per-currency refunded total + count + rate (refunded / revenue) over the range."""
     summary = crud_report.refund_summary(db, start=start, end=end)
     return {"start": start, "end": end, **summary}
+
+
+@router.get("/eu-distance-selling", response_model=EuDistanceSellingStatus)
+async def get_eu_distance_selling_status(
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+    year: int | None = Query(
+        None, ge=2000, le=2100, description="Calendar year (defaults to the current year)"
+    ),
+):
+    """EU distance-selling €10 000 threshold status for the year + preceding year.
+
+    Sums cross-border B2C net-of-VAT sales (EU destinations ≠ the home country) in
+    EUR and returns a Shopify-style tiered status so the OSS crossing is detected
+    on data, not discovered on an audit. Reverse-charge (B2B) and domestic sales
+    are excluded; see ``app/services/tax_threshold.py``.
+    """
+    return tax_threshold.eu_distance_selling_status(db, year=year)
 
 
 @router.get(

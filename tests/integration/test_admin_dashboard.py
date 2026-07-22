@@ -32,6 +32,7 @@ EXPECTED_KEYS = {
     "top_products",
     "low_stock_count",
     "low_stock",
+    "eu_tax_liability",
 }
 
 
@@ -91,6 +92,11 @@ async def test_kpis_admin_returns_full_shape(
     # Each trend point carries the expected shape.
     point = body["sales_trend"][-1]
     assert {"date", "order_count", "revenue"} == set(point.keys())
+    # EU distance-selling nudge is present and well-formed (empty store ⇒ green).
+    liability = body["eu_tax_liability"]
+    assert {"status", "pct", "year", "liable"} == set(liability.keys())
+    assert liability["status"] == "not_approaching"
+    assert liability["liable"] is False
 
 
 async def test_kpis_window_days_param(client, user_factory):
