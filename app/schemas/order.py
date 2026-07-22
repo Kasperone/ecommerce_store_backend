@@ -221,6 +221,13 @@ class OrderResponse(OrderBase, TimestampSchema):
     payment_method: str | None
     payment_intent_id: str | None
 
+    # Tax treatment (Phase-0 tax U4/U5). ``domestic`` on every ordinary order;
+    # ``reverse_charge`` when an intra-community B2B supply was priced at net (0%
+    # VAT, the buyer self-accounts). ``buyer_vat_id`` is the snapshot the faktura
+    # printed. The storefront reads these to show "reverse charge applied".
+    tax_treatment: str = "domestic"
+    buyer_vat_id: str | None = None
+
     # B2B net terms (Program 2). ``company_id`` attributes a pay-on-account order
     # to its company; ``payment_due_at`` is the printed ``termin płatności``;
     # ``net_terms_paid_at`` is set once the merchant records the bank transfer
