@@ -17,6 +17,7 @@ from app.models.product import Product
 from app.models.product_variant import ProductOption, ProductVariant
 from app.scripts.audit_translations import run_audit
 from app.scripts.seed_demo import CATEGORIES, PRODUCTS, VARIANT_PRODUCT_SLUG, seed_demo
+from app.services.tax import resolve_rate_int
 
 pytestmark = pytest.mark.integration
 
@@ -52,8 +53,11 @@ def test_seed_creates_expected_objects(db_session):
         assert product.price_eur is not None
         assert product.is_active is True
 
-    # VAT variety: exactly one reduced-rate (8%) item, the rest standard 23%.
-    assert sorted(p.vat_rate for p in products) == [8, 23, 23, 23, 23, 23]
+    # Tax-category variety: exactly one reduced-rate (REDUCED_8) item, the rest
+    # standard. Assert on the resolved PL rate so the intent (8% vs 23%) is pinned.
+    assert sorted(
+        resolve_rate_int(db_session, category=p.tax_category, country_code="PL") for p in products
+    ) == [8, 23, 23, 23, 23, 23]
     # Exactly one featured product.
     assert sum(1 for p in products if p.is_featured) == 1
 

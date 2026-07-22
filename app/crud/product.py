@@ -10,6 +10,7 @@ from app.models.product import Product
 from app.models.product_tag import ProductTag, product_tag_links
 from app.models.product_variant import ProductOption, ProductVariant
 from app.schemas.product import ProductCreate, ProductUpdate
+from app.services.tax import get_default_category
 
 # Whitelisted sort columns for the public product list. Keys are the API-facing
 # ``sort_by`` values; resolving through this map (never interpolating the column
@@ -42,6 +43,10 @@ class CRUDProduct(CRUDBase[Product, ProductCreate, ProductUpdate]):
         trying to assign strings to the relationship.
         """
         data = obj_in.model_dump(exclude={"tags"})
+        # ``tax_category_id`` is NOT NULL; an admin who doesn't pick one gets the
+        # store's default category (resolved through the one authority for it).
+        if data.get("tax_category_id") is None:
+            data["tax_category_id"] = get_default_category(db).id
         db_obj = Product(**data)
         db.add(db_obj)
         db.flush()

@@ -310,7 +310,7 @@ def build_order_items(
             )
         line_total = quantize_money(unit_price * spec.quantity)
         subtotal += line_total
-        category = tax_service.category_for_product(db, product, country_code=tax_country)
+        category = product.tax_category
         if category.id not in rate_cache:
             rate_cache[category.id] = tax_service.resolve_rate_int(
                 db, category=category, country_code=tax_country

@@ -10,7 +10,7 @@ entirely, never updated):
 - 6 products across those categories, each with prices in all three
   currencies (USD/PLN/EUR), full PL translations (``name_pl`` /
   ``description_pl`` — the ``audit_translations --all`` gate stays green),
-  stock, and varied ``vat_rate`` (one reduced-rate 8% item to demo the
+  stock, and varied tax categories (one ``REDUCED_8`` item to demo the
   per-rate faktura decomposition). One product is ``is_featured``.
 - One product ("Demo Classic T-Shirt") gets a 2-option variant matrix
   (Size S/M/L x Color Black/White = 6 variants) with per-variant SKU,
@@ -51,6 +51,7 @@ from app.models.collection import Collection
 from app.models.coupon import Coupon, CouponDiscountType
 from app.models.price_history import SUPPORTED_CURRENCIES
 from app.models.product import Product
+from app.models.tax import TaxCategory
 from app.schemas.product_variant import (
     ProductOptionInput,
     ProductOptionsMatrixUpdate,
@@ -116,7 +117,7 @@ PRODUCTS: list[dict[str, Any]] = [
         "price_usd": Decimal("19.99"),
         "price_pln": Decimal("79.99"),
         "price_eur": Decimal("18.99"),
-        "vat_rate": 23,
+        "tax_category": "STANDARD",
         "stock": 0,
         "is_featured": True,
         "has_variants": True,
@@ -132,7 +133,7 @@ PRODUCTS: list[dict[str, Any]] = [
         "price_usd": Decimal("24.99"),
         "price_pln": Decimal("99.99"),
         "price_eur": Decimal("22.99"),
-        "vat_rate": 23,
+        "tax_category": "STANDARD",
         "stock": 40,
     },
     {
@@ -146,7 +147,7 @@ PRODUCTS: list[dict[str, Any]] = [
         "price_usd": Decimal("29.99"),
         "price_pln": Decimal("119.99"),
         "price_eur": Decimal("27.99"),
-        "vat_rate": 23,
+        "tax_category": "STANDARD",
         "stock": 30,
     },
     {
@@ -161,7 +162,7 @@ PRODUCTS: list[dict[str, Any]] = [
         "price_usd": Decimal("12.99"),
         "price_pln": Decimal("49.99"),
         "price_eur": Decimal("11.99"),
-        "vat_rate": 8,
+        "tax_category": "REDUCED_8",
         "stock": 80,
     },
     {
@@ -175,7 +176,7 @@ PRODUCTS: list[dict[str, Any]] = [
         "price_usd": Decimal("22.99"),
         "price_pln": Decimal("89.99"),
         "price_eur": Decimal("20.99"),
-        "vat_rate": 23,
+        "tax_category": "STANDARD",
         "stock": 60,
     },
     {
@@ -189,7 +190,7 @@ PRODUCTS: list[dict[str, Any]] = [
         "price_usd": Decimal("14.99"),
         "price_pln": Decimal("59.99"),
         "price_eur": Decimal("13.99"),
-        "vat_rate": 23,
+        "tax_category": "STANDARD",
         "stock": 100,
     },
 ]
@@ -334,7 +335,8 @@ def _get_or_create_product(
         price_usd=spec["price_usd"],
         price_pln=spec["price_pln"],
         price_eur=spec["price_eur"],
-        vat_rate=spec["vat_rate"],
+        # Categories are seeded by the tax-categories migration; resolve by code.
+        tax_category_id=db.query(TaxCategory).filter_by(code=spec["tax_category"]).one().id,
         stock=spec["stock"],
         is_active=True,
         is_featured=spec.get("is_featured", False),
@@ -342,7 +344,7 @@ def _get_or_create_product(
     db.add(product)
     db.flush()
     _record_product_prices(db, product)
-    logger.info("product created: %s (vat=%s%%)", spec["slug"], spec["vat_rate"])
+    logger.info("product created: %s (tax=%s)", spec["slug"], spec["tax_category"])
     return product, True
 
 
