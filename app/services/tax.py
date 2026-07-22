@@ -6,13 +6,21 @@ under-collected VAT is the seller's own liability — it cannot be billed back t
 the customer afterwards. So resolution fails loudly and the caller decides.
 """
 
-from datetime import date
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+from app.core.countries import EU_MEMBER_STATES
 from app.models.tax import TaxCategory, TaxRate
+
+# ``order.tax_treatment`` values. Domestic = today's behaviour (taxed at the home
+# rate). Reverse charge = a 0%-rate sale priced at net (intra-community B2B).
+TREATMENT_DOMESTIC = "domestic"
+TREATMENT_REVERSE_CHARGE = "reverse_charge"
 
 
 class TaxRateNotFoundError(Exception):
@@ -100,3 +108,86 @@ def resolve_rate_int(
             "faktura VAT-group rendering) before configuring fractional rates."
         )
     return int(rate)
+
+
+def _utcnow() -> datetime:
+    """Naive UTC, matching the datetime columns VIES confirmation is stored in."""
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+@dataclass(frozen=True)
+class TaxContext:
+    """The tax treatment of one order, resolved once at build time.
+
+    Reverse charge is modelled as *a 0%-rate sale priced at net* — the buyer pays
+    the net (VAT-stripped) price and the store charges no VAT (the buyer
+    self-accounts in their own member state). ``buyer_vat_id`` /
+    ``buyer_vies_confirmed_at`` are the audit evidence that gets snapshotted onto
+    the order, so it can never be re-derived from a mutable company row.
+    """
+
+    treatment: str = TREATMENT_DOMESTIC
+    buyer_vat_id: str | None = None
+    buyer_vies_confirmed_at: datetime | None = None
+
+    @property
+    def is_reverse_charge(self) -> bool:
+        return self.treatment == TREATMENT_REVERSE_CHARGE
+
+    @classmethod
+    def domestic(cls) -> "TaxContext":
+        return cls(treatment=TREATMENT_DOMESTIC)
+
+    @classmethod
+    def from_order(cls, order) -> "TaxContext":
+        """Rebuild the context an order was placed under, from its snapshot.
+
+        Used by the order-edit recompute path so re-pricing a placed order keeps
+        its original treatment rather than re-resolving (which could flip it if
+        the company's confirmation has since lapsed)."""
+        return cls(
+            treatment=order.tax_treatment,
+            buyer_vat_id=order.buyer_vat_id,
+            buyer_vies_confirmed_at=order.buyer_vies_confirmed_at,
+        )
+
+
+def resolve_tax_context(
+    db: Session, *, user_id: int | None, shipping_country: str | None
+) -> TaxContext:
+    """Decide DOMESTIC vs REVERSE_CHARGE for an order being placed.
+
+    Reverse charge applies iff **all** hold (anything else ⇒ domestic, i.e. today's
+    behaviour — the fail-closed default):
+
+    1. the destination is another EU member state (``shipping_country`` ∈ EU,
+       ``≠`` the home country — intra-community supply needs transport out), and
+    2. the buyer is an active member of a company, and
+    3. that company has a VIES-**confirmed** VAT-ID whose confirmation is still
+       within the freshness window (``VIES_CONFIRMATION_TTL_DAYS``).
+
+    A stale or missing confirmation charges home VAT — under-charging VAT is the
+    seller's liability, so the safe default is to charge it.
+    """
+    if user_id is None or shipping_country is None:
+        return TaxContext.domestic()
+    if shipping_country == settings.TAX_HOME_COUNTRY or shipping_country not in EU_MEMBER_STATES:
+        return TaxContext.domestic()
+
+    # Imported here (not at module scope) to avoid a services↔crud import cycle.
+    from app.crud import company_user as crud_company_user
+
+    membership = crud_company_user.get_active_membership(db, user_id=user_id)
+    if membership is None:
+        return TaxContext.domestic()
+    company = membership.company
+    if not company.vies_valid or company.vat_id is None or company.vies_confirmed_at is None:
+        return TaxContext.domestic()
+    ttl = timedelta(days=settings.VIES_CONFIRMATION_TTL_DAYS)
+    if _utcnow() - company.vies_confirmed_at > ttl:
+        return TaxContext.domestic()  # confirmation lapsed → fail closed
+    return TaxContext(
+        treatment=TREATMENT_REVERSE_CHARGE,
+        buyer_vat_id=company.vat_id,
+        buyer_vies_confirmed_at=company.vies_confirmed_at,
+    )

@@ -40,6 +40,7 @@ from sqlalchemy.orm import Session
 from app.core.money import ZERO_MONEY, quantize_money
 from app.crud import corrective_invoice as crud_corrective
 from app.crud import invoice as crud_invoice
+from app.services.tax import TREATMENT_REVERSE_CHARGE
 
 if TYPE_CHECKING:
     from app.core.config import Settings
@@ -150,6 +151,9 @@ class StoreIdentity:
     tax_id: str = ""
     email: str = ""
     vat_rate: int = 23
+    # Country-prefixed EU VAT-ID, printed on a reverse-charge faktura beside the
+    # buyer's. From env only (``store_config`` has no VAT-ID column yet).
+    vat_id: str = ""
 
     @classmethod
     def from_settings(cls, settings: Settings) -> StoreIdentity:
@@ -161,6 +165,7 @@ class StoreIdentity:
             tax_id=settings.STORE_TAX_ID,
             email=settings.STORE_EMAIL,
             vat_rate=settings.INVOICE_VAT_RATE,
+            vat_id=settings.STORE_VAT_ID,
         )
 
     @classmethod
@@ -193,6 +198,7 @@ class StoreIdentity:
             tax_id=pick(config.tax_id, settings.STORE_TAX_ID),
             email=pick(config.email, settings.STORE_EMAIL),
             vat_rate=config.invoice_vat_rate,
+            vat_id=settings.STORE_VAT_ID,
         )
 
 
@@ -302,6 +308,9 @@ _LABELS: dict[str, dict[str, str]] = {
         "bill_to": "Bill to",
         "ship_to": "Ship to",
         "tax_id": "Tax ID",
+        "vat_id": "EU VAT ID",
+        "reverse_charge": "Reverse charge — VAT to be accounted for by the customer "
+        "(Art. 196 of Directive 2006/112/EC).",
         "item": "Item",
         "sku": "SKU",
         "qty": "Qty",
@@ -349,6 +358,9 @@ _LABELS: dict[str, dict[str, str]] = {
         "bill_to": "Nabywca",
         "ship_to": "Adres dostawy",
         "tax_id": "NIP",
+        "vat_id": "VAT UE",
+        "reverse_charge": "Odwrotne obciążenie — podatek VAT rozlicza nabywca "
+        "(art. 196 dyrektywy 2006/112/WE).",
         "item": "Pozycja",
         "sku": "SKU",
         "qty": "Ilość",
@@ -469,12 +481,17 @@ def build_invoice_pdf(
     seller += [_esc(v) for v in (store.address_line, store.postal_city, store.country) if v]
     if store.tax_id:
         seller.append(f"{labels['tax_id']}: {_esc(store.tax_id)}")
+    # Reverse charge requires both parties' EU VAT-IDs on the faktura.
+    if order.tax_treatment == TREATMENT_REVERSE_CHARGE and (store.vat_id or store.tax_id):
+        seller.append(f"{labels['vat_id']}: {_esc(store.vat_id or store.tax_id)}")
     if store.email:
         seller.append(_esc(store.email))
 
     # Buyer block — company details when present, else the person (guest
     # orders bill to the guest email).
     buyer = _buyer_lines(order, labels)
+    if order.tax_treatment == TREATMENT_REVERSE_CHARGE and order.buyer_vat_id:
+        buyer.append(f"{labels['vat_id']}: {_esc(order.buyer_vat_id)}")
 
     parties = Table(
         [[Paragraph("<br/>".join(seller), base), Paragraph("<br/>".join(buyer), base)]],
@@ -595,6 +612,9 @@ def build_invoice_pdf(
     elif order.payment_method:
         pay_bits.append(f"<b>{labels['payment_method']}:</b> {_esc(order.payment_method)}")
     pay_bits.append(f"<b>{labels['status']}:</b> {_esc(status_str)}")
+    # Mandatory reverse-charge annotation (odwrotne obciążenie).
+    if order.tax_treatment == TREATMENT_REVERSE_CHARGE:
+        pay_bits.append(f"<b>{labels['reverse_charge']}</b>")
     pay_para = Paragraph("<br/>".join(pay_bits), base)
 
     doc.build(

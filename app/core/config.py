@@ -134,6 +134,10 @@ class Settings(BaseSettings):
     STORE_POSTAL_CITY: str = ""  # e.g. "00-001 Warszawa"
     STORE_COUNTRY: str = ""
     STORE_TAX_ID: str = ""  # NIP / VAT identifier
+    # The store's country-prefixed EU VAT-ID (e.g. ``PL5252445724``), printed on a
+    # reverse-charge faktura beside the buyer's. Distinct from ``STORE_TAX_ID`` (the
+    # bare NIP); when blank the faktura falls back to the NIP for the seller line.
+    STORE_VAT_ID: str = ""
     # The country whose VAT the store charges. Distinct from the free-text
     # ``STORE_COUNTRY`` above (a display string on the faktura) — this is an
     # ISO-2 code used to resolve rates, and today every sale is taxed here
