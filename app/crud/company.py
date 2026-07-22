@@ -103,11 +103,25 @@ class CRUDCompany:
         db.refresh(company)
         return company
 
+    @staticmethod
+    def _reset_vies_if_vat_id_changed(company: Company, data: dict) -> None:
+        """A changed (or cleared) VAT-ID invalidates any prior VIES confirmation —
+        the stored ``vies_*`` fields pertain to the *old* id. Reset them so the new
+        id is fully unconfirmed until an explicit re-check succeeds (Phase-0 tax
+        U3). Must run while ``company.vat_id`` still holds the old value."""
+        if "vat_id" in data and data["vat_id"] != company.vat_id:
+            company.vies_valid = False
+            company.vies_confirmed_at = None
+            company.vies_confirmed_name = None
+            company.vies_last_checked_at = None
+            company.vies_request_id = None
+
     def update(self, db: Session, *, company: Company, obj_in: CompanyUpdate) -> Company:
         """Apply a partial update (no flush — the audit writer reads ``get_history``
         between this and the caller's commit). Only fields explicitly sent are
         touched."""
         data = obj_in.model_dump(exclude_unset=True)
+        self._reset_vies_if_vat_id_changed(company, data)
         for field, value in data.items():
             # Money exactness: convert the wire float to Decimal before it lands
             # in the Numeric column (an explicit null clears the limit).
@@ -130,6 +144,7 @@ class CRUDCompany:
         schema (no ``name`` / ``status`` / ``primary_user_id`` here). No commit —
         the route owns the transaction (mirrors ``update``)."""
         data = obj_in.model_dump(exclude_unset=True)
+        self._reset_vies_if_vat_id_changed(company, data)
         for field, value in data.items():
             setattr(company, field, value)
         db.add(company)
