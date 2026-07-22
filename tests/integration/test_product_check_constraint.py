@@ -12,17 +12,21 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from app.models.product import Product
+from app.services.tax import get_default_category
 
 pytestmark = pytest.mark.integration
 
 
 def test_all_null_prices_violates_check_constraint(db_session):
+    # A valid tax category isolates the price CHECK from the tax_category_id
+    # NOT NULL — otherwise the insert would fail on the wrong constraint.
     product = Product(
         name="No Prices",
         slug="no-prices-violation",
         price_usd=None,
         price_pln=None,
         price_eur=None,
+        tax_category_id=get_default_category(db_session).id,
     )
     db_session.add(product)
     with pytest.raises(IntegrityError) as exc_info:
@@ -38,6 +42,7 @@ def test_single_currency_set_satisfies_check_constraint(db_session):
         price_usd=None,
         price_pln=42.0,
         price_eur=None,
+        tax_category_id=get_default_category(db_session).id,
     )
     db_session.add(product)
     db_session.flush()

@@ -41,6 +41,7 @@ from app.crud.shipping import zone as shipping_zone
 from app.crud.store_config import store_config
 from app.crud.store_credit import store_credit
 from app.crud.tag import tag
+from app.crud.tax import tax_category, tax_rate
 from app.crud.user import user
 from app.crud.user_consent import user_consent
 from app.crud.warehouse import warehouse
@@ -90,6 +91,8 @@ __all__ = [
     "store_config",
     "saved_cart",
     "tag",
+    "tax_category",
+    "tax_rate",
     "user_consent",
     "warehouse",
 ]

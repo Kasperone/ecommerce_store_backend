@@ -8,15 +8,11 @@ the customer afterwards. So resolution fails loudly and the caller decides.
 
 from datetime import date
 from decimal import Decimal
-from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.tax import TaxCategory, TaxRate
-
-if TYPE_CHECKING:
-    from app.models.product import Product
 
 
 class TaxRateNotFoundError(Exception):
@@ -46,37 +42,6 @@ def get_default_category(db: Session) -> TaxCategory:
             "row must have is_default = true."
         )
     return category
-
-
-def category_for_product(db: Session, product: "Product", *, country_code: str) -> TaxCategory:
-    """The tax category a product should be taxed under.
-
-    Transitional, and deliberately not a plain "category or default": products
-    created *after* the categories migration but *before* the admin UI switches
-    to a category picker still carry only ``vat_rate``. Falling straight back to
-    the default would tax an 8%-rate product at 23% — silently, and only visible
-    on the faktura. So an unclassified product is matched to the category whose
-    home-country rate equals its legacy ``vat_rate``, and only a product that
-    matches nothing lands on the default.
-
-    Removed once ``product.vat_rate`` is dropped and every product carries a
-    category outright.
-    """
-    if product.tax_category is not None:
-        return product.tax_category
-
-    legacy_rate = Decimal(product.vat_rate)
-    matched = db.scalars(
-        select(TaxCategory)
-        .join(TaxRate, TaxRate.tax_category_id == TaxCategory.id)
-        .where(
-            TaxRate.country_code == country_code,
-            TaxRate.rate_pct == legacy_rate,
-            TaxRate.valid_to.is_(None),
-        )
-        .order_by(TaxCategory.id)
-    ).first()
-    return matched if matched is not None else get_default_category(db)
 
 
 def resolve_rate(

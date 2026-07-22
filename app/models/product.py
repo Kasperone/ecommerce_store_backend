@@ -111,16 +111,11 @@ class Product(BaseModel):
     price_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     price_pln: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     price_eur: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
-    # DEPRECATED mirror of the resolved Polish rate. Superseded by
-    # ``tax_category_id`` — a literal rate records the answer for Poland having
-    # discarded the question ("this is a book"), so it cannot be reprojected onto
-    # another country. Still written and read so this change is shape-only;
-    # removed once the admin UI edits categories instead of rates.
-    vat_rate: Mapped[int] = mapped_column(Integer, default=23, server_default="23")
     # The tax *kind* of these goods; the rate is resolved from it per destination
-    # country and date (``app/services/tax.py``). Nullable → the default category
-    # applies, so products predating this column keep working.
-    tax_category_id: Mapped[int | None] = mapped_column(
+    # country and date (``app/services/tax.py``). Required — every product is
+    # classified (the admin form defaults it to the store's default category);
+    # the legacy per-product ``vat_rate`` mirror it superseded is gone.
+    tax_category_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("tax_categories.id", ondelete="RESTRICT"), index=True
     )
 
@@ -159,7 +154,7 @@ class Product(BaseModel):
 
     # Relationships
     category: Mapped["Category | None"] = relationship("Category", back_populates="products")
-    tax_category: Mapped["TaxCategory | None"] = relationship("TaxCategory")
+    tax_category: Mapped["TaxCategory"] = relationship("TaxCategory")
     order_items: Mapped[list["OrderItem"]] = relationship("OrderItem", back_populates="product")
     images: Mapped[list["ProductImage"]] = relationship(
         "ProductImage",
