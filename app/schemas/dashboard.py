@@ -7,6 +7,7 @@ sells in USD/PLN/EUR and totals are never summed across currencies (same shape a
 """
 
 from datetime import date, datetime
+from typing import Literal
 
 from app.schemas.base import BaseSchema
 from app.schemas.inventory import InventoryStatus
@@ -50,6 +51,21 @@ class LowStockItem(BaseSchema):
     status: InventoryStatus
 
 
+class EuTaxLiability(BaseSchema):
+    """Compact EU distance-selling threshold status for the dashboard nudge.
+
+    ``status`` is the worse of the current + preceding year (so a prior-year
+    crossing still shows); ``pct`` + ``year`` are the current year's. The frontend
+    surfaces the badge only when ``status`` is not ``not_approaching``. Full detail
+    lives at ``GET /api/v1/admin/reports/eu-distance-selling``.
+    """
+
+    status: Literal["not_approaching", "approaching", "threshold_met"]
+    pct: float
+    year: int
+    liable: bool
+
+
 class DashboardKpis(BaseSchema):
     """The full admin-dashboard payload (read-only aggregate)."""
 
@@ -76,3 +92,6 @@ class DashboardKpis(BaseSchema):
     top_products: list[TopProductItem]
     low_stock_count: int
     low_stock: list[LowStockItem]
+
+    # EU distance-selling €10 000 threshold nudge (Shopify-style tax-liability).
+    eu_tax_liability: EuTaxLiability
