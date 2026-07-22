@@ -21,6 +21,42 @@ ISO2_PATTERN = r"^[A-Z]{2}$"
 
 _ISO2_RE = re.compile(ISO2_PATTERN)
 
+# The 27 EU member states as ISO 3166-1 alpha-2 codes — Greece is ``GR`` here
+# (its VAT *prefix* ``EL`` lives in ``vat_id.py``, a different alphabet). Used to
+# decide intra-community reverse charge: a supply to another member state is the
+# precondition, so this is the destination-country test, not a VAT-prefix test.
+EU_MEMBER_STATES = frozenset(
+    {
+        "AT",
+        "BE",
+        "BG",
+        "CY",
+        "CZ",
+        "DE",
+        "DK",
+        "EE",
+        "ES",
+        "FI",
+        "FR",
+        "GR",
+        "HR",
+        "HU",
+        "IE",
+        "IT",
+        "LT",
+        "LU",
+        "LV",
+        "MT",
+        "NL",
+        "PL",
+        "PT",
+        "RO",
+        "SE",
+        "SI",
+        "SK",
+    }
+)
+
 
 def normalize_country_code(value: str) -> str:
     """Strip and upper-case a country code so ``" pl "`` is accepted as ``"PL"``.

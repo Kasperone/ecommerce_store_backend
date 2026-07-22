@@ -35,6 +35,21 @@ def quantize_money(value: Decimal | float | int) -> Decimal:
     return value.quantize(CENTS, rounding=ROUND_HALF_UP)
 
 
+def net_of_gross(gross: Decimal | float | int, vat_rate_pct: int) -> Decimal:
+    """The net (VAT-exclusive) component of a VAT-inclusive ``gross`` at ``vat_rate_pct``.
+
+    ``quantize_money(gross)`` when the rate is <= 0. Same rounding rule as the
+    faktura's ``decompose_gross`` (ROUND_HALF_UP), so a reverse-charge line priced
+    at this net reconciles exactly with the invoice's 0%-VAT presentation. Used to
+    strip domestic VAT from a gross catalog/pinned price when reverse charge
+    applies (the buyer pays net; the store charges no VAT).
+    """
+    g = quantize_money(gross)
+    if vat_rate_pct <= 0:
+        return g
+    return quantize_money(g / (1 + Decimal(vat_rate_pct) / 100))
+
+
 def as_float(value: Decimal | float | None) -> float | None:
     """Coerce a money ``Decimal`` to ``float`` for the JSON wire (None passes through).
 
