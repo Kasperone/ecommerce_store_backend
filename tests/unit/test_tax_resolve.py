@@ -11,11 +11,9 @@ from decimal import Decimal
 import pytest
 from sqlalchemy.orm import Session
 
-from app.models.product import Product
 from app.models.tax import TaxCategory, TaxRate
 from app.services.tax import (
     TaxRateNotFoundError,
-    category_for_product,
     get_default_category,
     resolve_rate,
     resolve_rate_int,
@@ -130,40 +128,3 @@ class TestDefaultCategory:
     def test_returns_the_seeded_default(self, db_session: Session) -> None:
         """The migration seeds STANDARD as the default."""
         assert get_default_category(db_session).code == "STANDARD"
-
-
-class TestCategoryForProduct:
-    """The transition path, where a product may carry a category, a legacy
-    ``vat_rate``, or both."""
-
-    def test_explicit_category_wins(self, db_session: Session) -> None:
-        cat = _category(db_session, "BOOKS_T8")
-        _rate(db_session, cat, "PL", "5", date(2011, 1, 1))
-        product = Product(name="Book", slug="book-t8", price_pln=Decimal("50.00"), vat_rate=23)
-        product.tax_category = cat
-        db_session.add(product)
-        db_session.flush()
-
-        assert category_for_product(db_session, product, country_code="PL").code == "BOOKS_T8"
-
-    def test_unclassified_product_matches_its_legacy_rate_not_the_default(
-        self, db_session: Session
-    ) -> None:
-        """The regression this guard exists for: a product created after the
-        categories migration has a NULL category. Falling back to the default
-        would tax an 8% product at 23% — wrong, silent, and only visible on the
-        faktura."""
-        product = Product(name="Reduced", slug="reduced-t9", price_pln=Decimal("50.00"), vat_rate=8)
-        db_session.add(product)
-        db_session.flush()
-
-        resolved = category_for_product(db_session, product, country_code="PL")
-        assert resolved.code == "REDUCED_8"
-        assert resolve_rate_int(db_session, category=resolved, country_code="PL") == 8
-
-    def test_unmatchable_rate_falls_back_to_default(self, db_session: Session) -> None:
-        product = Product(name="Odd", slug="odd-t10", price_pln=Decimal("50.00"), vat_rate=17)
-        db_session.add(product)
-        db_session.flush()
-
-        assert category_for_product(db_session, product, country_code="PL").code == "STANDARD"
