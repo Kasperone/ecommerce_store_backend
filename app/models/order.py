@@ -3,7 +3,16 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+)
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -275,6 +284,15 @@ class OrderItem(BaseModel):
     # VAT rate (%) snapshotted from the product at purchase time, so a faktura
     # reissued after the product's rate changes still shows what was sold.
     vat_rate: Mapped[int] = mapped_column(Integer, default=23, server_default="23")
+    # Snapshot of product.is_gift_card at purchase time (v2). mark_paid reads
+    # this — not live product data — to decide which lines issue a GiftCard,
+    # mirroring the "never join live product into a historical order" rule.
+    is_gift_card: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Optional gift-card delivery details captured at checkout (only meaningful
+    # on gift-card lines): where to email the issued card + a short message.
+    # NULL recipient → the card is emailed to the buyer/guest email.
+    gift_card_recipient_email: Mapped[str | None] = mapped_column(String(255))
+    gift_card_message: Mapped[str | None] = mapped_column(Text)
 
     # Relationships
     order: Mapped["Order"] = relationship("Order", back_populates="items")

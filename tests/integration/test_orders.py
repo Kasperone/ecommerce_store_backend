@@ -120,6 +120,57 @@ async def test_create_order_anonymous_without_guest_email_422(
 
 
 # ---------------------------------------------------------------------------
+# POST /  (create — purchasable gift-card products, gift cards v2)
+# ---------------------------------------------------------------------------
+
+
+async def test_create_all_gift_card_order_skips_shipping(
+    client, user_factory, product_factory, test_shipping_method_id
+):
+    """An all-gift-card cart is placeable with NO shipping method/country/address."""
+    user = user_factory()
+    card_product = product_factory(is_gift_card=True, stock=100, price_usd=50.0)
+    resp = await client.post(
+        "/api/v1/orders/",
+        json={
+            "items": [
+                {
+                    "product_id": card_product.id,
+                    "quantity": 1,
+                    "gift_card_recipient_email": "friend@example.com",
+                    "gift_card_message": "Enjoy!",
+                }
+            ],
+            "currency": "USD",
+        },
+        headers=_headers(user),
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["total"] == 50.0
+    assert body["shipping"] == 0.0
+    assert body["shipping_method_id"] is None
+    line = body["items"][0]
+    assert line["is_gift_card"] is True
+    assert line["gift_card_recipient_email"] == "friend@example.com"
+
+
+async def test_create_physical_order_without_shipping_422(client, user_factory, product_factory):
+    """A physical line with no shipping details is rejected (ShippingRequiredError)."""
+    user = user_factory()
+    product = product_factory(is_gift_card=False, stock=10, price_usd=25.0)
+    resp = await client.post(
+        "/api/v1/orders/",
+        json={
+            "items": [{"product_id": product.id, "quantity": 1}],
+            "currency": "USD",
+        },
+        headers=_headers(user),
+    )
+    assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
 # POST /  (create — weight-tier resolution via crud_order.create_with_items)
 # ---------------------------------------------------------------------------
 

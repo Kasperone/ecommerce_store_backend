@@ -121,6 +121,13 @@ class GiftCard(BaseModel):
     issued_by_user_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("users.id", ondelete="SET NULL")
     )
+    # Provenance for a card issued by a *purchase* (v2): the order whose payment
+    # minted it. NULL for admin-issued cards (v1). SET NULL keeps the card if
+    # the order row is ever removed — the card is bearer money, independent of
+    # its origin.
+    order_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("orders.id", ondelete="SET NULL"), index=True
+    )
 
     # Ledger, oldest-first by default; routes re-order newest-first for display.
     entries: Mapped[list[GiftCardEntry]] = relationship(
