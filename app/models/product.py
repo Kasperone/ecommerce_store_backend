@@ -148,6 +148,12 @@ class Product(BaseModel):
     allow_backorder: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_featured: Mapped[bool] = mapped_column(Boolean, default=False)
+    # When True, this product is a purchasable gift card (v2): buying it issues
+    # a stored-value GiftCard on payment (mark_paid), the sale is non-taxable
+    # (MPV voucher — vat_rate=0 on the line), discounts don't apply, and an
+    # all-gift-card cart skips shipping. Denominations are modelled as variants
+    # (card value = the line's unit price). See gift-cards-v2 plan.
+    is_gift_card: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     # Category
     category_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("categories.id"))

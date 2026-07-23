@@ -34,7 +34,11 @@ class OrderItemBase(BaseSchema):
 class OrderItemCreate(OrderItemBase):
     """Schema for creating an order item"""
 
-    pass
+    # Gift-card delivery (v2), only meaningful on a gift-card product line: where
+    # to email the issued card + a short message. A blank/absent recipient means
+    # "email the buyer". Ignored on non-gift-card lines.
+    gift_card_recipient_email: EmailStr | None = None
+    gift_card_message: str | None = Field(default=None, max_length=500)
 
 
 class OrderItemResponse(OrderItemBase, TimestampSchema):
@@ -48,6 +52,11 @@ class OrderItemResponse(OrderItemBase, TimestampSchema):
     product_sku: str | None
     unit_price: float
     total_price: float
+    # Gift-card line snapshot (v2): flags the line + echoes the delivery details
+    # so the buyer's order view can show "card emailed to …".
+    is_gift_card: bool = False
+    gift_card_recipient_email: str | None = None
+    gift_card_message: str | None = None
 
 
 class OrderBase(BaseSchema):
@@ -58,12 +67,17 @@ class OrderBase(BaseSchema):
     quote-converted order has no address until an admin sets it at fulfilment
     (``OrderResponse``). The two sides genuinely disagree, so each declares its
     own rather than one widening the other.
+
+    The address fields are **optional** because an all-gift-card order (v2) ships
+    nothing and needs no address. The CRUD layer enforces that a physical
+    (non-gift-card) line makes them mandatory (``ShippingRequiredError`` → 422).
     """
 
-    # Shipping address
-    shipping_address: str = Field(..., min_length=1)
-    shipping_city: str = Field(..., min_length=1, max_length=100)
-    shipping_postal_code: str = Field(..., min_length=1, max_length=20)
+    # Shipping address (optional — required by the CRUD when the cart has a
+    # physical line; blank for an all-gift-card order).
+    shipping_address: str | None = Field(default=None, max_length=500)
+    shipping_city: str | None = Field(default=None, max_length=100)
+    shipping_postal_code: str | None = Field(default=None, max_length=20)
 
     # Optional fields
     notes: str | None = None
@@ -72,13 +86,19 @@ class OrderBase(BaseSchema):
 class OrderCreate(OrderBase):
     """Schema for creating an order"""
 
-    shipping_country: CountryCode
+    # Destination country. Optional at the schema level so an all-gift-card
+    # order can omit it; the CRUD requires it (with a method + address) whenever
+    # a physical line is present (ShippingRequiredError → 422).
+    shipping_country: CountryCode | None = None
     items: list[OrderItemCreate] = Field(..., min_length=1)
     currency: str = Field(default="USD", pattern="^(USD|PLN|EUR)$")
     # The shipping method the customer picked from the storefront selector.
-    # Required — the order route 422s when no rate exists for the chosen
-    # method / country / currency triple (ShippingRateUnavailableError).
-    shipping_method_id: int
+    # Optional at the schema level (an all-gift-card cart skips shipping);
+    # required by the CRUD for any cart with a physical line — the order route
+    # 422s when no rate exists for the chosen method / country / currency triple
+    # (ShippingRateUnavailableError) or when a physical line lacks shipping
+    # entirely (ShippingRequiredError).
+    shipping_method_id: int | None = None
     # Optional discount code. Re-validated server-side against the computed
     # subtotal at create time (the storefront preview is advisory only); an
     # invalid/expired/exhausted code 400s the create with the reason message.

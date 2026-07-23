@@ -57,11 +57,14 @@ class TestOrderCreateCountry:
         with pytest.raises(ValidationError):
             OrderCreate(**_order_payload(raw))
 
-    def test_country_is_required(self) -> None:
+    def test_country_optional_at_schema_level(self) -> None:
+        # Gift cards v2: ``shipping_country`` is optional at the schema level so an
+        # all-gift-card order can omit it. A missing country is accepted here
+        # (→ None); ``create_with_items`` enforces it for carts with a physical
+        # line (``ShippingRequiredError`` → 422), covered in the order CRUD tests.
         payload = _order_payload("PL")
         del payload["shipping_country"]
-        with pytest.raises(ValidationError):
-            OrderCreate(**payload)
+        assert OrderCreate(**payload).shipping_country is None
 
 
 class TestDraftOrderCountry:
