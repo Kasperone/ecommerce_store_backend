@@ -161,6 +161,7 @@ class CRUDGiftCard:
         user_id: int | None = None,
         note: str | None = None,
         issued_by_user_id: int | None = None,
+        order_id: int | None = None,
     ) -> tuple[GiftCard, str]:
         """Create a card and its opening ``issue`` ledger entry.
 
@@ -168,6 +169,10 @@ class CRUDGiftCard:
         exists server-side (the route hands it to the 201 response + the issue
         email and forgets it). Regenerates on a hash collision (astronomically
         unlikely; the unique index is the backstop). Caller commits.
+
+        ``order_id`` links a card minted by a *purchase* (v2) to the order whose
+        payment issued it (provenance + double-issue guard); NULL for admin-issued
+        cards (v1). It is stamped on both the card and its opening ledger entry.
         """
         value = quantize_money(initial_value)
         code = generate_code()
@@ -185,6 +190,7 @@ class CRUDGiftCard:
             user_id=user_id,
             note=note,
             issued_by_user_id=issued_by_user_id,
+            order_id=order_id,
         )
         db.add(card)
         db.flush()
@@ -194,6 +200,7 @@ class CRUDGiftCard:
                 amount=value,
                 kind=GiftCardEntryKind.ISSUE.value,
                 balance_after=value,
+                order_id=order_id,
                 actor_user_id=issued_by_user_id,
             )
         )

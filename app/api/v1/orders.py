@@ -44,6 +44,7 @@ from app.crud.order import (
     OrderNotEditableError,
     OrderShippingCountryMissingError,
     ProductUnavailableError,
+    ShippingRequiredError,
     VariantRequiredError,
     VariantUnavailableError,
     status_transition_error,
@@ -208,6 +209,11 @@ async def create_order(
             detail=str(exc),
         ) from exc
     except ShippingRateUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    except ShippingRequiredError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
@@ -588,7 +594,7 @@ async def edit_order_items(
         ) from exc
     except InPostPointRequiredError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except ShippingRateUnavailableError as exc:
+    except (ShippingRateUnavailableError, ShippingRequiredError) as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc

@@ -123,6 +123,10 @@ class ProductBase(BaseSchema):
     height_cm: Annotated[float | None, Field(ge=0)] = None
     is_active: bool = True
     is_featured: bool = False
+    # Purchasable gift-card product (v2): buying it issues a stored-value card on
+    # payment. Sale is non-taxable, discounts don't apply, an all-gift-card cart
+    # skips shipping. Denominations are modelled as variants. Admin-only.
+    is_gift_card: bool = False
 
     category_id: int | None = None
 
@@ -190,6 +194,7 @@ class ProductUpdate(BaseSchema):
     height_cm: Annotated[float | None, Field(ge=0)] = None
     is_active: bool | None = None
     is_featured: bool | None = None
+    is_gift_card: bool | None = None
 
     category_id: int | None = None
 

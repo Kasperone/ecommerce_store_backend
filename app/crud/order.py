@@ -12,6 +12,7 @@ Tax and shipping are 0.0 for now — there is no tax/shipping engine yet, so
 
 from __future__ import annotations
 
+import logging
 import secrets
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -39,6 +40,7 @@ from app.crud.shipping import (
 )
 from app.crud.store_credit import store_credit as crud_store_credit
 from app.crud.warehouse import warehouse as crud_warehouse
+from app.models.gift_card import GiftCard
 from app.models.inventory_movement import InventoryMovementReason
 from app.models.order import Order, OrderItem, OrderStatus
 from app.models.product import Product
@@ -49,6 +51,8 @@ from app.schemas.order import OrderCreate, OrderUpdate
 from app.services import tax as tax_service
 from app.services.dimensional_weight import billable_weight_kg, line_volume_cm3
 from app.services.order_math import recompute_totals
+
+logger = logging.getLogger(__name__)
 
 # Forward-only status workflow for the admin PATCH endpoint. Terminal and
 # stock-affecting transitions are NOT in this map — cancellation goes through
@@ -112,6 +116,18 @@ class InPostPointRequiredError(Exception):
 
     def __init__(self) -> None:
         super().__init__("Select an InPost Paczkomat point for this shipping method")
+
+
+class ShippingRequiredError(Exception):
+    """A physical line is present but the checkout supplied no shipping details.
+
+    All-gift-card carts skip shipping (v2); any physical (non-gift-card) line
+    makes ``shipping_method_id`` + a destination country + an address mandatory.
+    The route maps this to 422.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("This order needs a shipping method and address")
 
 
 class NetTermsUnavailableError(Exception):
@@ -322,7 +338,15 @@ def build_order_items(
                 db, category=category, country_code=tax_country
             )
         domestic_rate = rate_cache[category.id]
-        if ctx.is_reverse_charge:
+        if product.is_gift_card:
+            # A gift-card sale is not a taxable supply (MPV voucher — VAT lands
+            # on the goods bought with the card, not on the card itself). The
+            # face value IS the price, so nothing is stripped; the line snapshots
+            # 0% and shows in the faktura's 0% group. Takes precedence over
+            # reverse charge — a voucher is untaxed under either treatment.
+            unit_price = gross_unit
+            vat_rate = 0
+        elif ctx.is_reverse_charge:
             # Strip the home VAT: the buyer pays net, the line snapshots 0% so the
             # faktura shows a single 0% group (compute_vat_breakdown is unchanged).
             unit_price = net_of_gross(gross_unit, domestic_rate)
@@ -343,6 +367,7 @@ def build_order_items(
                 unit_price=unit_price,
                 total_price=line_total,
                 vat_rate=vat_rate,
+                is_gift_card=product.is_gift_card,
             )
         )
     return items, quantize_money(subtotal), resolved
@@ -542,20 +567,47 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             tax_ctx=tax_ctx,
         )
 
-        # Shipping resolution lives in the shared resolve_order_shipping helper
-        # (rate lookup + InPost locker point guard + dimensional/billable
-        # weight); 422s out the route on a miss. Shared with the draft-order
-        # conversion so the two paths can't drift.
-        shipping_amount, ship_method = resolve_order_shipping(
-            db,
-            product_lines=[(products[line.product_id], line.quantity) for line in obj_in.items],
-            subtotal=subtotal,
-            country=obj_in.shipping_country,
-            currency=currency,
-            shipping_method_id=obj_in.shipping_method_id,
-            inpost_point=obj_in.inpost_point_id,
-        )
-        is_locker = is_inpost_locker_method(ship_method)
+        # Snapshot the gift-card delivery details onto the matching lines
+        # (``build_order_items`` returns items in request order). A NULL
+        # recipient means "email the buyer"; mark_paid resolves that fallback at
+        # issue time. Only gift-card lines carry these — a stray recipient on a
+        # physical line is ignored.
+        for item, line in zip(items, obj_in.items, strict=True):
+            if item.is_gift_card:
+                recipient = (line.gift_card_recipient_email or "").strip() or None
+                message = (line.gift_card_message or "").strip() or None
+                item.gift_card_recipient_email = recipient
+                item.gift_card_message = message
+
+        # Gift-card products (v2) ship nothing: buying one issues a stored-value
+        # card on payment. An **all**-gift-card cart therefore skips shipping
+        # entirely (no method / country / address). A mixed cart still ships the
+        # physical goods normally — the gift-card lines just contribute 0 weight
+        # (their weight_kg is NULL → 0 in resolve_order_shipping already).
+        requires_shipping = any(not products[line.product_id].is_gift_card for line in obj_in.items)
+        ship_method: ShippingMethod | None
+        if requires_shipping:
+            country = (obj_in.shipping_country or "").strip()
+            if obj_in.shipping_method_id is None or not country:
+                raise ShippingRequiredError()
+            # Shipping resolution lives in the shared resolve_order_shipping helper
+            # (rate lookup + InPost locker point guard + dimensional/billable
+            # weight); 422s out the route on a miss. Shared with the draft-order
+            # conversion so the two paths can't drift.
+            shipping_amount, ship_method = resolve_order_shipping(
+                db,
+                product_lines=[(products[line.product_id], line.quantity) for line in obj_in.items],
+                subtotal=subtotal,
+                country=country,
+                currency=currency,
+                shipping_method_id=obj_in.shipping_method_id,
+                inpost_point=obj_in.inpost_point_id,
+            )
+            is_locker = is_inpost_locker_method(ship_method)
+        else:
+            shipping_amount = ZERO_MONEY
+            ship_method = None
+            is_locker = False
 
         # Discount resolution: ``pick_best`` is the single source of truth for
         # which coupon (typed code vs active automatics) an order gets — the
@@ -568,13 +620,22 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         # retried without it (the customer never asked for it, so it must not
         # fail the checkout). The used_count bump lands in the same unit of
         # work as the order, so a rolled-back order never burns a use.
+        # Gift cards are excluded from discounts (Shopify parity): the coupon is
+        # picked + sized against the **discountable** subtotal (goods only), so a
+        # percent/fixed coupon never reduces a gift-card line and a min-order
+        # threshold is measured on the goods. The order total below still uses the
+        # full ``subtotal`` (gift cards included).
+        gift_card_subtotal = quantize_money(
+            sum((item.total_price for item in items if item.is_gift_card), ZERO_MONEY)
+        )
+        discountable_subtotal = quantize_money(subtotal - gift_card_subtotal)
         applied: AppliedDiscount | None = None
         excluded: set[int] = set()
         while True:
             applied = crud_coupon.pick_best(
                 db,
                 code=obj_in.coupon_code,
-                subtotal=subtotal,
+                subtotal=discountable_subtotal,
                 shipping=shipping_amount,
                 currency=currency,
                 user_id=user_id,
@@ -666,12 +727,15 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             coupon_code=redeemed_coupon.code if redeemed_coupon is not None else None,
             invoice_nip=obj_in.invoice_nip,
             invoice_name=obj_in.invoice_name,
-            shipping_address=obj_in.shipping_address,
-            shipping_city=obj_in.shipping_city,
-            shipping_postal_code=obj_in.shipping_postal_code,
+            # All-gift-card orders carry no address (the columns are NOT NULL, so
+            # they store "" rather than NULL); country stays NULL like a
+            # quote-converted order.
+            shipping_address=obj_in.shipping_address or "",
+            shipping_city=obj_in.shipping_city or "",
+            shipping_postal_code=obj_in.shipping_postal_code or "",
             shipping_country=obj_in.shipping_country,
-            shipping_method_id=ship_method.id,
-            shipping_method_name=ship_method.name,
+            shipping_method_id=ship_method.id if ship_method is not None else None,
+            shipping_method_name=ship_method.name if ship_method is not None else None,
             inpost_point_id=(obj_in.inpost_point_id or None) if is_locker else None,
             inpost_point_name=(obj_in.inpost_point_name or None) if is_locker else None,
             # Cash-on-delivery and net-terms (pay on account) are chosen at
@@ -1146,7 +1210,66 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             kind="paid",
             payload={"payment_method": payment_method},
         )
+        # v2: mint the purchased gift cards now that the money is in. Runs only on
+        # the PENDING→PAID edge (the early-return above makes it idempotent), and
+        # the issuer re-checks provenance so a double mark_paid never double-mints.
+        self._issue_purchased_gift_cards(db, order=order)
         return order
+
+    def _issue_purchased_gift_cards(self, db: Session, *, order: Order) -> None:
+        """Issue a stored-value ``GiftCard`` for every gift-card line on a paid order.
+
+        One card per unit of quantity, value = the line's ``unit_price``, in the
+        order's currency. The recipient is the line's ``gift_card_recipient_email``
+        or (fallback) the buyer/guest email; the plaintext code is emailed
+        best-effort (a failed send never rolls back the payment — an admin can
+        re-issue). Provenance (``order_id``) doubles as the double-issue guard.
+        Caller owns the commit.
+        """
+        gift_lines = [item for item in order.items if item.is_gift_card]
+        if not gift_lines:
+            return
+        # Defensive idempotency: if any card already traces to this order, a prior
+        # mark_paid already minted them — never mint a second set.
+        if db.query(GiftCard.id).filter(GiftCard.order_id == order.id).first() is not None:
+            return
+
+        from app.services.gift_card_email import send_gift_card_email
+
+        buyer = order.user
+        buyer_email = buyer.email if buyer is not None else order.guest_email
+        lang = order.guest_locale or (buyer.locale if buyer is not None else None) or "en"
+        for item in gift_lines:
+            recipient = item.gift_card_recipient_email or buyer_email
+            for _ in range(item.quantity):
+                card, code = crud_gift_card.issue(
+                    db,
+                    initial_value=item.unit_price,
+                    currency=order.currency,
+                    recipient_email=recipient,
+                    user_id=order.user_id,
+                    note=f"Purchased — order {order.order_number}",
+                    order_id=order.id,
+                )
+                if recipient:
+                    try:
+                        send_gift_card_email(
+                            email_to=recipient,
+                            code=code,
+                            amount=card.initial_value,
+                            currency=card.currency,
+                            expires_at=card.expires_at,
+                            message=item.gift_card_message,
+                            lang=lang,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Email send failed: kind=gift_card_purchase order_id=%s "
+                            "gift_card_id=%s",
+                            order.id,
+                            card.id,
+                            exc_info=True,
+                        )
 
     def record_net_terms_payment(
         self, db: Session, *, order: Order, actor_user_id: int | None
