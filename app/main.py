@@ -41,6 +41,12 @@ app.add_middleware(
         "Accept-Language",
         "X-Requested-With",
     ],
+    # Response headers the browser is allowed to READ. Only the CORS-safelisted
+    # ones are readable by default, and Content-Disposition is not among them —
+    # without this every cross-origin download (CSV exports, invoice PDFs) falls
+    # back to a generic client-side filename and the server-computed name
+    # (`_export_filename`, the faktura number) never reaches the user.
+    expose_headers=["Content-Disposition"],
 )
 
 # Security headers (HSTS only outside dev so localhost http isn't pinned).
