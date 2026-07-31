@@ -48,6 +48,7 @@ from app.schemas.shipping import (
     _classify_pricing,
 )
 from app.services.audit import AuditWriter, get_audit_writer
+from app.services.translation_admin import purge_translation_meta
 
 router = APIRouter()
 
@@ -339,6 +340,9 @@ async def delete_method(
         )
     audit.record_delete(resource_type="shipping_method", obj=method)
     db.delete(method)
+    # The translation sidecar is polymorphic, so it carries no FK and nothing
+    # at the database level cleans up after it.
+    purge_translation_meta(db, resource_type="shipping_method", resource_ids=[method_id])
     db.commit()
 
 

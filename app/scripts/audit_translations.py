@@ -3,6 +3,7 @@
     python -m app.scripts.audit_translations [--locale pl]
                                              [--resource-type shipping_method ...]
                                              [--all]
+                                             [--purge-orphans]
 
 Scans **active** resources via the translatable-resource registry
 (:mod:`app.services.translation_registry`) and reports any whose source-present
@@ -32,6 +33,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
+from app.services.translation_admin import purge_orphan_translation_meta
 from app.services.translation_registry import (
     TRANSLATABLE_RESOURCES,
     TRANSLATION_LOCALES,
@@ -133,6 +135,31 @@ def _log_report(report: AuditReport) -> None:
         )
 
 
+def _purge_orphans() -> int:
+    """Sweep sidecar rows whose resource is gone. Returns a process exit code.
+
+    Exits 0 even when it deletes nothing — this is maintenance, not a gate, so
+    it must never fail a deploy the way the audit itself is meant to.
+    """
+    db = SessionLocal()
+    try:
+        deleted = purge_orphan_translation_meta(db)
+        db.commit()
+    except Exception:
+        logger.exception("translation_meta orphan purge failed")
+        return 2
+    finally:
+        db.close()
+
+    total = sum(deleted.values())
+    if total == 0:
+        logger.info("translation_meta: no orphan rows")
+    else:
+        breakdown = ", ".join(f"{k}={v}" for k, v in sorted(deleted.items()) if v)
+        logger.info("translation_meta: purged %d orphan row(s) — %s", total, breakdown)
+    return 0
+
+
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     known_types = sorted(r.type for r in TRANSLATABLE_RESOURCES)
     parser = argparse.ArgumentParser(
@@ -161,11 +188,22 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="Audit every registered resource type (overrides --resource-type).",
     )
+    parser.add_argument(
+        "--purge-orphans",
+        action="store_true",
+        help=(
+            "Delete translation_meta rows whose resource no longer exists, then exit. "
+            "The sidecar is polymorphic so it carries no FK; the delete paths purge "
+            "explicitly and this is the self-healing backstop."
+        ),
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    if args.purge_orphans:
+        return _purge_orphans()
     if args.all:
         resource_types = [r.type for r in TRANSLATABLE_RESOURCES]
     else:

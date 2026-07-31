@@ -42,6 +42,7 @@ from app.services.image import (
     read_with_size_cap,
     upload_to_r2,
 )
+from app.services.translation_admin import purge_translation_meta
 
 logger = logging.getLogger(__name__)
 
@@ -444,6 +445,10 @@ async def delete_category(
         deleted_ids = [row.id for row in deleted_rows]
         for row in deleted_rows:
             audit.record_delete(resource_type="category", obj=row)
+        # The translation sidecar is polymorphic, so it carries no FK and
+        # nothing at the database level cleans up after it. A subtree delete
+        # takes the whole branch, so purge every id in one statement.
+        purge_translation_meta(db, resource_type="category", resource_ids=deleted_ids)
         db.commit()
         for deleted_id in deleted_ids:
             search_index.delete_category(deleted_id)

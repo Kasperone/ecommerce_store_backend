@@ -20,8 +20,13 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.models.shipping import ShippingMethod
+from app.models.translation_meta import TranslationMeta
 from app.scripts import audit_translations as audit_mod
 from app.scripts.audit_translations import AuditReport, IncompleteResource, run_audit
+from app.services.translation_admin import (
+    purge_orphan_translation_meta,
+    purge_translation_meta,
+)
 from app.services.translation_registry import (
     TRANSLATABLE_RESOURCES,
     field_is_translated,
@@ -274,3 +279,85 @@ def test_main_returns_2_on_unexpected_error(monkeypatch):
     monkeypatch.setattr(audit_mod, "SessionLocal", lambda: _DummySession())
     monkeypatch.setattr(audit_mod, "run_audit", boom)
     assert audit_mod.main([]) == 2
+
+
+# ---------------------------------------------------------------------------
+# Sidecar cleanup (the sidecar is polymorphic, so it carries no FK — nothing at
+# the database level cleans up after a resource is deleted)
+# ---------------------------------------------------------------------------
+
+
+def _meta(db: Session, *, resource_type: str, resource_id: int, field_key: str = "name"):
+    row = TranslationMeta(
+        resource_type=resource_type,
+        resource_id=resource_id,
+        field_key=field_key,
+        locale="pl",
+        source_digest=source_digest("whatever"),
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _digest_ids(db: Session, resource_type: str) -> set[int]:
+    rows = db.query(TranslationMeta).filter(TranslationMeta.resource_type == resource_type).all()
+    return {r.resource_id for r in rows}
+
+
+@pytest.mark.unit
+def test_purge_translation_meta_only_touches_the_named_resource(db_session: Session):
+    method = ShippingMethod(is_active=True, name="Purge Me", code="tr-purge-a")
+    keeper = ShippingMethod(is_active=True, name="Keep Me", code="tr-purge-b")
+    db_session.add_all([method, keeper])
+    db_session.flush()
+
+    _meta(db_session, resource_type="shipping_method", resource_id=method.id)
+    _meta(
+        db_session, resource_type="shipping_method", resource_id=method.id, field_key="description"
+    )
+    _meta(db_session, resource_type="shipping_method", resource_id=keeper.id)
+    # Same id, different type — must survive, or the purge is keyed too loosely.
+    _meta(db_session, resource_type="product", resource_id=method.id)
+
+    deleted = purge_translation_meta(
+        db_session, resource_type="shipping_method", resource_ids=[method.id]
+    )
+
+    assert deleted == 2
+    assert method.id not in _digest_ids(db_session, "shipping_method")
+    assert keeper.id in _digest_ids(db_session, "shipping_method")
+    assert method.id in _digest_ids(db_session, "product")
+
+
+@pytest.mark.unit
+def test_purge_translation_meta_is_a_noop_for_an_empty_id_list(db_session: Session):
+    assert purge_translation_meta(db_session, resource_type="product", resource_ids=[]) == 0
+
+
+@pytest.mark.unit
+def test_purge_orphan_translation_meta_drops_only_rows_whose_resource_is_gone(
+    db_session: Session,
+):
+    live = ShippingMethod(is_active=True, name="Alive", code="tr-orphan-live")
+    db_session.add(live)
+    db_session.flush()
+
+    _meta(db_session, resource_type="shipping_method", resource_id=live.id)
+    # An id no shipping method has — exactly what a delete leaves behind.
+    orphan_id = live.id + 10_000
+    _meta(db_session, resource_type="shipping_method", resource_id=orphan_id)
+
+    deleted = purge_orphan_translation_meta(db_session)
+
+    assert deleted["shipping_method"] == 1
+    surviving = _digest_ids(db_session, "shipping_method")
+    assert live.id in surviving
+    assert orphan_id not in surviving
+
+
+@pytest.mark.unit
+def test_purge_orphan_translation_meta_covers_every_registered_type(db_session: Session):
+    """Registry-driven: a new translatable type is swept without code changes."""
+    deleted = purge_orphan_translation_meta(db_session)
+    assert set(deleted) == {r.type for r in TRANSLATABLE_RESOURCES}
