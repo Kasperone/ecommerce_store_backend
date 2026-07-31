@@ -17,6 +17,7 @@ import pytest
 from app.core.security import create_access_token
 from app.models.admin_audit_event import AdminAuditEvent
 from app.models.shipping import ShippingMethod
+from app.models.translation_meta import TranslationMeta
 from app.models.user import UserRole
 
 pytestmark = pytest.mark.integration
@@ -394,3 +395,49 @@ async def test_clearing_translation_drops_digest(client, user_factory, db_sessio
     body = await _list(client, admin)
     row = _row_for(body, m.id)
     assert _field(row, "name")["outdated"] is False
+
+
+# ---------------------------------------------------------------------------
+# sidecar cleanup on delete
+# ---------------------------------------------------------------------------
+
+
+async def test_deleting_a_resource_purges_its_translation_meta(client, user_factory, db_session):
+    """The sidecar is polymorphic, so no FK cascade cleans up after a delete.
+
+    Without the explicit purge on the delete path these rows simply accumulate.
+    They are inert (serial ids are never reused, so nothing inherits a stale
+    "needs review" flag) but unbounded, and this is what keeps them from piling
+    up in the first place.
+    """
+    admin = user_factory(role=UserRole.ADMIN, is_owner=True)
+    method = _make_method(db_session, name="Purge On Delete", code="tr-del-purge")
+    db_session.commit()
+    method_id = method.id
+
+    # Translate it, which is what stamps the digest rows.
+    resp = await client.put(
+        f"/api/v1/admin/translations/shipping_method/{method_id}?locale=pl",
+        json={"fields": {"name": "Kurier"}},
+        headers=_headers(admin),
+    )
+    assert resp.status_code == 200
+    assert (
+        db_session.query(TranslationMeta)
+        .filter_by(resource_type="shipping_method", resource_id=method_id)
+        .count()
+        == 1
+    )
+
+    resp = await client.delete(
+        f"/api/v1/admin/shipping/methods/{method_id}", headers=_headers(admin)
+    )
+    assert resp.status_code == 204
+
+    db_session.expire_all()
+    assert (
+        db_session.query(TranslationMeta)
+        .filter_by(resource_type="shipping_method", resource_id=method_id)
+        .count()
+        == 0
+    )

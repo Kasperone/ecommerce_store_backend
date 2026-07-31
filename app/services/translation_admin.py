@@ -13,6 +13,9 @@ counts) can land later if a catalogue grows large enough to need it.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.base import BaseModel
@@ -340,6 +343,62 @@ def _clear_digest(
     ).delete()
 
 
+def purge_translation_meta(
+    db: Session,
+    *,
+    resource_type: str,
+    resource_ids: Iterable[int],
+) -> int:
+    """Drop every stored digest for the given resources; caller commits.
+
+    Call this from a resource's delete path. The sidecar is polymorphic — one
+    table describes four resource types — so it cannot carry a foreign key, and
+    nothing at the database level cleans up after a delete.
+
+    Leaving the rows behind is not merely untidy but it is also not dangerous:
+    a new resource cannot inherit a stale "needs review" flag, because Postgres
+    serial ids are never reused and every read is scoped to a live resource id.
+    So this is hygiene, and :func:`purge_orphan_translation_meta` is the
+    backstop for anything that slips past a call site.
+    """
+    ids = list(resource_ids)
+    if not ids:
+        return 0
+    return (
+        db.query(TranslationMeta)
+        .filter(
+            TranslationMeta.resource_type == resource_type,
+            TranslationMeta.resource_id.in_(ids),
+        )
+        .delete(synchronize_session=False)
+    )
+
+
+def purge_orphan_translation_meta(db: Session) -> dict[str, int]:
+    """Delete sidecar rows whose resource no longer exists; caller commits.
+
+    Registry-driven, so it needs no maintenance when a translatable resource
+    type is added — which is the point. The explicit
+    :func:`purge_translation_meta` calls on the delete paths are the primary
+    fix; this sweep is what makes a *missed* call site self-healing rather than
+    a silent leak, and it is also how pre-existing orphans get cleaned up.
+
+    Returns ``{resource_type: rows_deleted}`` for the caller to report.
+    """
+    deleted: dict[str, int] = {}
+    for resource_def in TRANSLATABLE_RESOURCES:
+        live_ids = select(resource_def.model.id)
+        deleted[resource_def.type] = (
+            db.query(TranslationMeta)
+            .filter(
+                TranslationMeta.resource_type == resource_def.type,
+                ~TranslationMeta.resource_id.in_(live_ids),
+            )
+            .delete(synchronize_session=False)
+        )
+    return deleted
+
+
 __all__ = [
     "FieldTooLongError",
     "UnknownFieldError",
@@ -348,6 +407,8 @@ __all__ = [
     "get_field_digests",
     "get_resource_def",
     "list_resources",
+    "purge_orphan_translation_meta",
+    "purge_translation_meta",
     "summarize_types",
     "update_resource",
     "validate_locale",
