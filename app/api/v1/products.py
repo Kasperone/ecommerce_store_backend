@@ -33,6 +33,7 @@ from app.schemas.product import (
 from app.services import search_index
 from app.services.audit import AuditWriter, get_audit_writer
 from app.services.b2b_pricing import annotate_products_for_user
+from app.services.translation_admin import purge_translation_meta
 
 router = APIRouter()
 
@@ -471,6 +472,9 @@ async def delete_product(
     # Snapshot before delete — the writer needs ``obj`` readable.
     audit.record_delete(resource_type="product", obj=product)
     crud_product.delete(db, id=product_id)
+    # The translation sidecar is polymorphic, so it carries no FK and nothing
+    # at the database level cleans up after it.
+    purge_translation_meta(db, resource_type="product", resource_ids=[product_id])
     # Defensive backstop: any FK reference the pre-check missed surfaces as an
     # IntegrityError on commit rather than a 500 — roll back and return 409.
     try:

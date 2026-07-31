@@ -42,6 +42,7 @@ from app.services.image import (
     read_with_size_cap,
     upload_to_r2,
 )
+from app.services.translation_admin import purge_translation_meta
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +198,9 @@ async def delete_collection(
     affected = crud_collection.member_product_ids(db, collection_id=collection_id)
     audit.record_delete(resource_type="collection", obj=collection)
     crud_collection.delete(db, id=collection_id)
+    # The translation sidecar is polymorphic, so it carries no FK and nothing
+    # at the database level cleans up after it.
+    purge_translation_meta(db, resource_type="collection", resource_ids=[collection_id])
     db.commit()
     search_index.sync_products_bulk(db, affected)
     return None
