@@ -406,6 +406,43 @@ async def test_preview_saved_segment(client, db_session, user_factory):
     assert target.id in ids
 
 
+async def test_preview_accepts_count_only_limit(client, db_session, user_factory):
+    """``limit=0`` is a count-only preview — the count still resolves, the
+    sample comes back empty.
+
+    Regression: the bound used to be ``ge=1``, so the admin campaign form's
+    "N recipients" hint (which asks for the count and no sample) 422'd on every
+    render and silently displayed nothing.
+    """
+    admin = user_factory(email="seg-countonly-admin@example.com", role=UserRole.ADMIN)
+    target = user_factory(email="seg-countonly-target@example.com")
+    _make_order(db_session, user_id=target.id, total=900, currency="EUR")
+    h = _headers(admin)
+    filters = {"min_total_spent": 500, "currency": "EUR"}
+
+    created = (
+        await client.post(
+            "/api/v1/admin/segments/",
+            json={"name": "Count only", "filters": filters},
+            headers=h,
+        )
+    ).json()
+
+    saved = await client.get(
+        f"/api/v1/admin/segments/{created['id']}/preview", params={"limit": 0}, headers=h
+    )
+    assert saved.status_code == 200
+    assert saved.json()["count"] >= 1
+    assert saved.json()["sample"] == []
+
+    unsaved = await client.post(
+        "/api/v1/admin/segments/preview", json=filters, params={"limit": 0}, headers=h
+    )
+    assert unsaved.status_code == 200
+    assert unsaved.json()["count"] == saved.json()["count"]
+    assert unsaved.json()["sample"] == []
+
+
 async def test_preview_saved_404(client, user_factory):
     admin = user_factory(email="seg-saved404@example.com", role=UserRole.ADMIN)
     assert (
