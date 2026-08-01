@@ -125,7 +125,7 @@ async def preview_unsaved_segment(
     filters: SegmentFilters,
     db: Session = Depends(get_db),
     current_admin: User = Depends(get_current_admin),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=0, le=100),  # 0 = count only, no sample rows
 ):
     """Resolve an **unsaved** filter body to a live membership count + sample —
     powers the filter-builder's "Matches N customers" preview before saving."""
@@ -169,7 +169,7 @@ async def preview_saved_segment(
     segment_id: int,
     db: Session = Depends(get_db),
     current_admin: User = Depends(get_current_admin),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=0, le=100),  # 0 = count only, no sample rows
 ):
     """Resolve a **saved** segment's stored filters to a live count + sample."""
     segment = crud_segment.get(db, segment_id)

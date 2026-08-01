@@ -214,6 +214,11 @@ class CRUDSegment:
         ``count`` is the full match total (set-based COUNT); ``sample`` is a
         page of matching ``User`` rows (newest first), tags eager-loaded for the
         ``CustomerListItem`` chips. One COUNT query + one page query — no loops.
+
+        ``limit=0`` is a legitimate *count-only* request: the sample query emits
+        ``LIMIT 0`` and returns nothing, while ``count`` is unaffected (it is a
+        separate COUNT). Callers that render "N recipients" without a preview
+        list use it.
         """
         base = self._resolve_query(filters).subquery()
         count = db.execute(select(func.count()).select_from(base)).scalar_one()
