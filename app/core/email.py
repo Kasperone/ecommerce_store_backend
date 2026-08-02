@@ -35,11 +35,32 @@ def send_email(
         text_content: Plain text fallback (optional)
 
     Returns:
-        Response from Resend API
+        Response from Resend API, or a ``{"id": "skipped-no-api-key"}`` marker
+        when email is not configured in this environment.
 
     Raises:
         Exception: If email sending fails
     """
+    # No key configured => email is disabled in this environment (dev, e2e, CI —
+    # all of which set RESEND_API_KEY=""). Without this short-circuit the SDK
+    # still makes a live call that Resend rejects with "API key is invalid", and
+    # its retries cost ~100 s PER EMAIL: registration (verification + welcome)
+    # measured 212 s against a local backend, which is long enough to look like
+    # a hung server rather than a misconfiguration.
+    #
+    # Returning instead of raising preserves the documented contract (see
+    # `.claude/rules/security.md`): "if RESEND_API_KEY is not configured,
+    # registration succeeds but the email never arrives and the account stays
+    # unverified". It is NOT a verification shortcut — nothing here marks anyone
+    # verified; seeding pre-verified accounts is still `manage_users.py`.
+    if not settings.RESEND_API_KEY:
+        logger.info(
+            "Email send skipped (RESEND_API_KEY not configured): recipient=%s subject=%s",
+            email_to,
+            subject,
+        )
+        return {"id": "skipped-no-api-key"}
+
     try:
         brand = get_email_brand_name()
         params = {
