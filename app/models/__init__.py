@@ -34,6 +34,7 @@ from app.models.draft_order import (
     DraftOrderItem,
     DraftOrderStatus,
 )
+from app.models.email_suppression import EmailSuppression
 from app.models.gift_card import (
     GIFT_CARD_ENTRY_KIND_VALUES,
     GIFT_CARD_STATUS_VALUES,
@@ -156,6 +157,7 @@ __all__ = [
     "DraftOrder",
     "DraftOrderItem",
     "DraftOrderStatus",
+    "EmailSuppression",
     "DRAFT_ORDER_STATUS_VALUES",
     "PaymentTerm",
     "PaymentTermType",

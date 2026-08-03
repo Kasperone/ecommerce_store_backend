@@ -22,3 +22,15 @@ class NewsletterSubscribeResponse(BaseSchema):
     """Generic, state-independent success response (anti-enumeration)."""
 
     status: str
+
+
+class NewsletterUnsubscribeResponse(BaseSchema):
+    """One-click unsubscribe result.
+
+    Also state-independent, and for a stronger reason than anti-enumeration:
+    the caller is usually a mailbox provider acting on the recipient's behalf
+    (RFC 8058), and surfacing a failure to it would show the recipient
+    "unsubscribe didn't work" — sending them to the spam button instead.
+    """
+
+    status: str
