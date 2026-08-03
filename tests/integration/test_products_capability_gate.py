@@ -15,14 +15,21 @@ the storefront-facing router. This module locks the fence in place:
   dependency tree includes ``get_current_admin`` must also (transitively)
   require ``require_capability`` — so the next admin write dropped into a
   "public" router can't slip the fence again.
+- a **second tripwire for dual-purpose routes** (SEC-016): a handler that takes
+  ``get_current_active_user`` and branches on ``UserRole.ADMIN`` internally is
+  admin-reachable but invisible to the check above. Each such write route must
+  reference a capability constant in its own source.
 """
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 from fastapi.routing import APIRoute
 
-from app.core.capabilities import CATALOG_WRITE, ORDERS_WRITE
+from app.core import capabilities as capabilities_module
+from app.core.capabilities import CAPABILITIES, CATALOG_WRITE, ORDERS_WRITE
 from app.core.security import create_access_token
 from app.main import app
 from app.models.user import UserRole
@@ -146,6 +153,14 @@ async def test_scoped_staffer_with_catalog_write_can_create_update_delete(client
 
 _WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
+# The symbol names routers reference (``ORDERS_WRITE``, …), derived from the
+# taxonomy so a new capability is picked up without editing this test.
+_CAPABILITY_NAMES = frozenset(
+    name
+    for name in dir(capabilities_module)
+    if name.isupper() and getattr(capabilities_module, name, None) in CAPABILITIES
+)
+
 
 def _dependency_call_qualnames(dependant) -> list[str]:
     """Every callable reachable in a route's dependency tree, by ``__qualname__``."""
@@ -185,4 +200,44 @@ def test_every_admin_write_route_is_capability_gated():
     assert not ungated, (
         "Admin write routes missing require_capability() — add a capability gate:\n"
         + "\n".join(ungated)
+    )
+
+
+def test_every_dual_purpose_write_route_gates_its_admin_branch():
+    """The blind spot of the tripwire above (SEC-016).
+
+    A route that takes ``get_current_active_user`` and branches on
+    ``UserRole.ADMIN`` inside the handler is admin-reachable, but its
+    dependency tree never mentions ``get_current_admin`` — so the structural
+    check can't see it. ``POST /orders/{id}/cancel`` slipped through exactly
+    that way and let any capability-less ADMIN cancel any order.
+
+    A route-level ``require_capability`` is the wrong fix for these (it layers
+    on ``get_current_admin`` and would 403 every customer), so the fence has to
+    live in the handler. Assert it is actually there: any write handler that
+    mentions ``UserRole.ADMIN`` must also reference a capability constant.
+    """
+    ungated: list[str] = []
+    for route in app.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        methods = (route.methods or set()) & _WRITE_METHODS
+        if not methods:
+            continue
+        qualnames = _dependency_call_qualnames(route.dependant)
+        if any("get_current_admin" in name for name in qualnames):
+            continue  # already covered by the dependency-tree tripwire
+        try:
+            source = inspect.getsource(route.endpoint)
+        except (OSError, TypeError):  # pragma: no cover - defensive
+            continue
+        if "UserRole.ADMIN" not in source:
+            continue
+        if not any(cap in source for cap in _CAPABILITY_NAMES):
+            ungated.append(f"{sorted(methods)} {route.path}")
+
+    assert not ungated, (
+        "Dual-purpose write routes branch on UserRole.ADMIN without a capability "
+        "check in the admin branch — gate them inside the branch (a route-level "
+        "require_capability would 403 customers):\n" + "\n".join(ungated)
     )
