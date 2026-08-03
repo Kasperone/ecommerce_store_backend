@@ -89,6 +89,39 @@ def _item_label(item: OrderItem) -> str:
     return item.product_name
 
 
+def _seller_lines(order: Order, store: StoreIdentity, labels: dict[str, str]) -> list[str]:
+    """Seller ("Sold by") block lines — shared by the invoice and the corrective
+    invoice so the two documents can't drift.
+
+    Shared for the same reason ``_buyer_lines`` is, and with more cause: this
+    block used to be copy-pasted, and the copy in the corrective renderer was
+    missing the reverse-charge ``vat_id`` line, so a KOR silently fell back to
+    the bare NIP for a transaction whose whole tax treatment depends on the EU
+    VAT-ID being present.
+    """
+    seller = [f"<b>{labels['seller']}</b>", _esc(store.name)]
+    seller += [_esc(v) for v in (store.address_line, store.postal_city, store.country) if v]
+    if store.tax_id:
+        seller.append(f"{labels['tax_id']}: {_esc(store.tax_id)}")
+    # Reverse charge requires both parties' EU VAT-IDs on the document.
+    if order.tax_treatment == TREATMENT_REVERSE_CHARGE and (store.vat_id or store.tax_id):
+        seller.append(f"{labels['vat_id']}: {_esc(store.vat_id or store.tax_id)}")
+    if store.email:
+        seller.append(_esc(store.email))
+    return seller
+
+
+def is_reverse_charge(order: Order) -> bool:
+    """Whether this order was sold under the EU reverse-charge mechanism.
+
+    A named predicate rather than an inline comparison because three separate
+    document elements depend on it (seller VAT-ID, buyer VAT-ID, the mandatory
+    ``odwrotne obciążenie`` annotation) across two renderers — and the corrective
+    renderer originally checked none of them.
+    """
+    return order.tax_treatment == TREATMENT_REVERSE_CHARGE
+
+
 def _buyer_lines(order: Order, labels: dict[str, str]) -> list[str]:
     """Buyer ("Bill to") block lines — shared by the invoice and the corrective
     invoice so the two documents can't drift.
@@ -278,6 +311,133 @@ def compute_vat_breakdown(order: Order, shipping_vat_rate: int) -> list[VatGroup
             continue
         net, vat = decompose_gross(gross, rate)
         groups.append(VatGroup(rate=rate, net=net, vat=vat, gross=gross))
+    return groups
+
+
+@dataclass(frozen=True)
+class CorrectionGroup:
+    """One VAT-rate group on a faktura korygująca.
+
+    Carries the before/after pair for a single rate; the legal "wartość korekty"
+    (difference) is derived, never stored, so the three columns can never drift
+    out of agreement.
+    """
+
+    rate: int
+    before: VatGroup
+    after: VatGroup
+
+    @property
+    def diff_net(self) -> Decimal:
+        return quantize_money(self.after.net - self.before.net)
+
+    @property
+    def diff_vat(self) -> Decimal:
+        return quantize_money(self.after.vat - self.before.vat)
+
+    @property
+    def diff_gross(self) -> Decimal:
+        return quantize_money(self.after.gross - self.before.gross)
+
+
+def _refund_weights_by_rate(
+    order: Order, refund: Refund, shipping_vat_rate: int, before: list[VatGroup]
+) -> dict[int, Decimal]:
+    """Relative weight of each VAT rate in what is being refunded.
+
+    Two sources, in order of precision:
+
+    1. **The refund's line picker** (``refund.items``), when the admin picked
+       lines. The rate mix then comes from the actual goods coming back, which
+       is the only way a mixed-rate order can be corrected correctly — refunding
+       a 5% book out of a cart that is mostly 23% electronics must not correct
+       23% VAT.
+    2. **The order's own rate mix**, when the refund is amount-only (the picker
+       is optional — a goodwill refund has no lines). Pro-rata across the
+       faktura's groups is the only defensible reading of "refund X currency
+       units of this order".
+
+    Weights, not amounts: the caller scales them to ``refund.amount``, which is
+    the legally binding figure. Deriving amounts here instead would let line
+    prices (pre-discount) disagree with the refund total on a discounted order.
+    """
+    weights: dict[int, Decimal] = {}
+    for item in refund.items or []:
+        order_item = item.order_item
+        if order_item is None:
+            continue
+        rate = order_item.vat_rate if order_item.vat_rate is not None else shipping_vat_rate
+        weights[rate] = weights.get(rate, ZERO_MONEY) + quantize_money(
+            order_item.unit_price * item.quantity
+        )
+
+    if not weights:
+        weights = {group.rate: group.gross for group in before}
+    return weights
+
+
+def compute_correction_breakdown(
+    order: Order, refund: Refund, shipping_vat_rate: int
+) -> list[CorrectionGroup]:
+    """Per-rate before/after breakdown for a faktura korygująca.
+
+    The "before" side is literally ``compute_vat_breakdown`` — the same function
+    the original faktura rendered from. That is deliberate and is the whole
+    point: a korygująca is only valid if it reconciles against its faktura, and
+    sharing the function makes agreement structural rather than something two
+    code paths have to remember to do identically. (They did not: this renderer
+    used to decompose the whole document at one flat ``store.vat_rate``, so any
+    refund on a mixed-rate or reverse-charge order printed VAT that never
+    existed on the original.)
+
+    The refunded amount is allocated across the rate groups by
+    ``_refund_weights_by_rate``, with the last group absorbing the rounding
+    remainder so the parts sum to ``refund.amount`` exactly — the same
+    last-group-absorbs rule ``compute_vat_breakdown`` uses for the order
+    discount.
+
+    Reverse charge needs no special case here: such an order's lines carry
+    ``vat_rate = 0``, so every group decomposes to net == gross with zero VAT,
+    and the correction stays a pure net movement. The *annotation* is the
+    renderer's job.
+    """
+    before = compute_vat_breakdown(order, shipping_vat_rate)
+    if not before:
+        return []
+
+    refunded_total = quantize_money(refund.amount)
+    weights = _refund_weights_by_rate(order, refund, shipping_vat_rate, before)
+    weight_total = quantize_money(sum(weights.values(), ZERO_MONEY))
+
+    # Iterate the faktura's own group order (rate descending) so the correction
+    # rows line up with the original document row for row.
+    rates = [group.rate for group in before]
+    allocatable = [rate for rate in rates if weights.get(rate, ZERO_MONEY) > 0]
+
+    allocated = ZERO_MONEY
+    refunded_by_rate: dict[int, Decimal] = {}
+    for i, rate in enumerate(allocatable):
+        if i == len(allocatable) - 1:
+            share = refunded_total - allocated
+        elif weight_total > 0:
+            share = quantize_money(refunded_total * weights[rate] / weight_total)
+            allocated += share
+        else:
+            share = ZERO_MONEY
+        refunded_by_rate[rate] = share
+
+    groups: list[CorrectionGroup] = []
+    for group in before:
+        refunded = refunded_by_rate.get(group.rate, ZERO_MONEY)
+        after_gross = quantize_money(group.gross - refunded)
+        after_net, after_vat = decompose_gross(after_gross, group.rate)
+        groups.append(
+            CorrectionGroup(
+                rate=group.rate,
+                before=group,
+                after=VatGroup(rate=group.rate, net=after_net, vat=after_vat, gross=after_gross),
+            )
+        )
     return groups
 
 
@@ -477,20 +637,12 @@ def build_invoice_pdf(
     )
 
     # Seller block.
-    seller = [f"<b>{labels['seller']}</b>", _esc(store.name)]
-    seller += [_esc(v) for v in (store.address_line, store.postal_city, store.country) if v]
-    if store.tax_id:
-        seller.append(f"{labels['tax_id']}: {_esc(store.tax_id)}")
-    # Reverse charge requires both parties' EU VAT-IDs on the faktura.
-    if order.tax_treatment == TREATMENT_REVERSE_CHARGE and (store.vat_id or store.tax_id):
-        seller.append(f"{labels['vat_id']}: {_esc(store.vat_id or store.tax_id)}")
-    if store.email:
-        seller.append(_esc(store.email))
+    seller = _seller_lines(order, store, labels)
 
     # Buyer block — company details when present, else the person (guest
     # orders bill to the guest email).
     buyer = _buyer_lines(order, labels)
-    if order.tax_treatment == TREATMENT_REVERSE_CHARGE and order.buyer_vat_id:
+    if is_reverse_charge(order) and order.buyer_vat_id:
         buyer.append(f"{labels['vat_id']}: {_esc(order.buyer_vat_id)}")
 
     parties = Table(
@@ -613,7 +765,7 @@ def build_invoice_pdf(
         pay_bits.append(f"<b>{labels['payment_method']}:</b> {_esc(order.payment_method)}")
     pay_bits.append(f"<b>{labels['status']}:</b> {_esc(status_str)}")
     # Mandatory reverse-charge annotation (odwrotne obciążenie).
-    if order.tax_treatment == TREATMENT_REVERSE_CHARGE:
+    if is_reverse_charge(order):
         pay_bits.append(f"<b>{labels['reverse_charge']}</b>")
     pay_para = Paragraph("<br/>".join(pay_bits), base)
 
@@ -702,13 +854,14 @@ def build_corrective_invoice_pdf(
     - Header: title + KOR number + issue date.
     - Reference block: original invoice number + its issue date + the refund
       reason (translated).
-    - Seller / buyer (same as the original faktura).
-    - Line items table (the items being refunded; v1 = all items, full refund).
-    - **Before correction** column: net / VAT / gross at the original totals.
-    - **After correction** column: net / VAT / gross at the post-refund totals
-      (v1 = 0, since the refund is full).
-    - **Difference** column: the refunded amounts as negative values (this is
-      the legal "wartość korekty").
+    - Seller / buyer, carrying the same identifiers the original faktura did
+      (including both EU VAT-IDs under reverse charge).
+    - Line items table — the picked refund lines when the refund has a picker,
+      else the order's lines.
+    - **Before / After / Difference** columns, broken down **per VAT rate**
+      (23 / 8 / 5 / 0) from ``compute_correction_breakdown``, plus the gross
+      total row. The difference column is the legal "wartość korekty".
+    - The reverse-charge annotation, when the order was reverse-charged.
     """
     _ensure_fonts_registered()
     labels = _LABELS.get(lang, _LABELS["en"])
@@ -773,15 +926,14 @@ def build_corrective_invoice_pdf(
         base,
     )
 
-    # Seller / buyer (same shape as build_invoice_pdf).
-    seller = [f"<b>{labels['seller']}</b>", _esc(store.name)]
-    seller += [_esc(v) for v in (store.address_line, store.postal_city, store.country) if v]
-    if store.tax_id:
-        seller.append(f"{labels['tax_id']}: {_esc(store.tax_id)}")
-    if store.email:
-        seller.append(_esc(store.email))
+    # Seller / buyer — must carry the SAME identifiers the original faktura did.
+    # A korygująca that drops the reverse-charge VAT-IDs stops evidencing the
+    # transaction it is correcting.
+    seller = _seller_lines(order, store, labels)
 
     buyer = _buyer_lines(order, labels)
+    if is_reverse_charge(order) and order.buyer_vat_id:
+        buyer.append(f"{labels['vat_id']}: {_esc(order.buyer_vat_id)}")
 
     parties = Table(
         [[Paragraph("<br/>".join(seller), base), Paragraph("<br/>".join(buyer), base)]],
@@ -797,18 +949,33 @@ def build_corrective_invoice_pdf(
         )
     )
 
-    # Line items (the items being refunded — v1: all).
+    # Line items — the lines actually coming back when the refund carries a
+    # picker, else the original order's lines. Listing all of them for a
+    # PARTIAL refund would claim the whole order was corrected while the totals
+    # block corrects a fraction of it, so the picker is used whenever present.
     item_rows: list[list] = [
         [labels["item"], labels["sku"], labels["qty"], labels["unit_price"], labels["line_total"]]
     ]
-    for it in order.items:
+    refunded_lines = [item for item in (refund.items or []) if item.order_item is not None]
+    if refunded_lines:
+        rendered = [
+            (
+                item.order_item,
+                item.quantity,
+                quantize_money(item.order_item.unit_price * item.quantity),
+            )
+            for item in refunded_lines
+        ]
+    else:
+        rendered = [(it, it.quantity, quantize_money(it.total_price)) for it in order.items]
+    for order_item, quantity, line_total in rendered:
         item_rows.append(
             [
-                Paragraph(_esc(_item_label(it)), base),
-                Paragraph(_esc(it.product_sku) if it.product_sku else "—", base),
-                str(it.quantity),
-                money(it.unit_price),
-                money(it.total_price),
+                Paragraph(_esc(_item_label(order_item)), base),
+                Paragraph(_esc(order_item.product_sku) if order_item.product_sku else "—", base),
+                str(quantity),
+                money(order_item.unit_price),
+                money(line_total),
             ]
         )
     items_tbl = Table(
@@ -839,34 +1006,36 @@ def build_corrective_invoice_pdf(
         )
     )
 
-    # Before / After / Difference totals (the legal "wartość korekty" block).
-    # v1 = full refund, so after-correction is the zero baseline and the
-    # difference equals the negative of the original gross total. The schema
-    # already supports partials (refund.amount can hold any value); the
-    # `after = original - amount` math below makes the partial-refund PR a
-    # one-line UI relaxation.
+    # Before / After / Difference totals (the legal "wartość korekty" block),
+    # broken down PER VAT RATE from the same helper the original faktura used —
+    # see ``compute_correction_breakdown`` for why sharing it is the point.
     original_gross = quantize_money(order.total)
     refunded_gross = quantize_money(refund.amount)
     after_gross = quantize_money(original_gross - refunded_gross)
-    original_net, original_vat = decompose_gross(original_gross, store.vat_rate)
-    after_net, after_vat = decompose_gross(after_gross, store.vat_rate)
-    diff_net = quantize_money(after_net - original_net)
-    diff_vat = quantize_money(after_vat - original_vat)
     diff_gross = quantize_money(after_gross - original_gross)
+    correction = compute_correction_breakdown(order, refund, store.vat_rate)
 
     totals_rows: list[list[str]] = [
         ["", labels["before_correction"], labels["after_correction"], labels["difference"]],
     ]
     if store.vat_rate > 0:
-        totals_rows.append([labels["net"], money(original_net), money(after_net), money(diff_net)])
-        totals_rows.append(
-            [
-                f"{labels['vat']} ({store.vat_rate}%)",
-                money(original_vat),
-                money(after_vat),
-                money(diff_vat),
-            ]
-        )
+        for group in correction:
+            totals_rows.append(
+                [
+                    f"{labels['net']} ({group.rate}%)",
+                    money(group.before.net),
+                    money(group.after.net),
+                    money(group.diff_net),
+                ]
+            )
+            totals_rows.append(
+                [
+                    f"{labels['vat']} ({group.rate}%)",
+                    money(group.before.vat),
+                    money(group.after.vat),
+                    money(group.diff_vat),
+                ]
+            )
     totals_rows.append(
         [labels["total_due"], money(original_gross), money(after_gross), money(diff_gross)]
     )
@@ -893,21 +1062,24 @@ def build_corrective_invoice_pdf(
         )
     )
 
-    doc.build(
-        [
-            header,
-            Spacer(1, 6 * mm),
-            ref_para,
-            Spacer(1, 6 * mm),
-            parties,
-            Spacer(1, 8 * mm),
-            items_tbl,
-            Spacer(1, 6 * mm),
-            totals_tbl,
-            Spacer(1, 10 * mm),
-            Paragraph(_esc(labels["kor_thank_you"]), footer),
-        ]
-    )
+    story: list = [
+        header,
+        Spacer(1, 6 * mm),
+        ref_para,
+        Spacer(1, 6 * mm),
+        parties,
+        Spacer(1, 8 * mm),
+        items_tbl,
+        Spacer(1, 6 * mm),
+        totals_tbl,
+    ]
+    # The reverse-charge annotation is mandatory on the correction too: the
+    # corrected document must still say who accounts for the VAT.
+    if is_reverse_charge(order):
+        story += [Spacer(1, 6 * mm), Paragraph(f"<b>{labels['reverse_charge']}</b>", base)]
+    story += [Spacer(1, 10 * mm), Paragraph(_esc(labels["kor_thank_you"]), footer)]
+
+    doc.build(story)
     return buf.getvalue()
 
 
