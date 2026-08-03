@@ -6,10 +6,17 @@ flush so ``id`` is populated for the audit writer; ``publish`` snapshots a
 ``page_versions`` row and swaps it into ``published_layout``.
 
 Preview tokens are short-TTL HMAC tokens (``itsdangerous``-free, stdlib ``hmac`` +
-``settings.SECRET_KEY``) bound to ``{page_id, version}`` where ``version`` is the
-page's ``updated_at`` epoch — so editing the draft invalidates an outstanding
-preview link. A bad/expired/tampered token verifies to ``None`` (the route 404s,
-anti-enumeration).
+``settings.SECRET_KEY``) bound to ``{pid, exp}`` — the page id and an expiry epoch.
+``verify_preview_token`` returns ``False`` for anything bad/expired/tampered, and
+the route turns that into a 404 rather than a 401/403 (anti-enumeration: a preview
+link never confirms a page exists).
+
+A token is **not** bound to the draft's content or version, so editing the draft
+does not invalidate an outstanding link — within its TTL the link keeps serving
+whatever the draft currently is. That is deliberate: ``onPreviewDraft`` in the
+admin editor flushes the draft *before* minting, i.e. the feature is "show me my
+working draft", not "snapshot this instant". Exposure stays bounded by the TTL
+below, a single page id, and draft content only.
 """
 
 from __future__ import annotations
