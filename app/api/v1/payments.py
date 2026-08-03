@@ -425,6 +425,13 @@ def _settle_stripe_order(
         order, paid_amount_minor=paid_amount_minor, paid_currency=paid_currency
     ):
         return None
+    # Serialise concurrent deliveries of the SAME event. Stripe's contract is
+    # at-least-once, so two workers can be inside this function at once; without
+    # the row lock both read PENDING before either commits, both return the id,
+    # and the caller emails the customer twice. `mark_paid` already no-ops on a
+    # non-pending order, so the STATE was always safe — it is the "did I perform
+    # the transition?" answer that needed serialising.
+    db.refresh(order, with_for_update=True)
     # Idempotent: mark_paid no-ops if the order isn't pending.
     was_pending = OrderStatus(order.status) == OrderStatus.PENDING
     crud_order.mark_paid(

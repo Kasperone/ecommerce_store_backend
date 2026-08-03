@@ -51,8 +51,11 @@ USER app
 
 EXPOSE 8000
 
+# Liveness, not readiness: Docker restarts an unhealthy container, and
+# restarting on database trouble turns a recoverable outage into a crash loop.
+# Point the PLATFORM's readiness/LB probe at /health, which does check the DB.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS "http://localhost:${PORT}/health" || exit 1
+    CMD curl -fsS "http://localhost:${PORT}/health/live" || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
