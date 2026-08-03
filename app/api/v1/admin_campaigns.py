@@ -41,6 +41,7 @@ from app.schemas.campaign import (
     validate_segment_audience,
 )
 from app.services.audit import AuditWriter, get_audit_writer
+from app.services.marketing_email import append_unsubscribe_footer, unsubscribe_headers
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +178,13 @@ async def send_campaign(
     to ``sent`` with ``sent_at`` stamped, alongside an audit row, in one
     transaction.
 
+    Every send carries an unsubscribe footer in the body and the RFC 8058
+    ``List-Unsubscribe`` headers. Both are per-recipient (the token's subject is
+    the address), which is why they are built inside the loop rather than once.
+    The audience resolver has already dropped anyone without marketing consent,
+    anyone deactivated, and anyone on the suppression list — see
+    ``crud_campaign.resolve_recipient_emails``.
+
     OUTWARD-FACING: this dispatches real email via Resend. Tests mock
     ``app.core.email.send_email`` — no live sends in pytest.
     """
@@ -196,7 +204,8 @@ async def send_campaign(
             email_mod.send_email(
                 email_to=recipient,
                 subject=campaign.subject,
-                html_content=campaign.body or "",
+                html_content=append_unsubscribe_footer(campaign.body or "", email=recipient),
+                headers=unsubscribe_headers(recipient),
             )
             sent_ok += 1
         except Exception:

@@ -19,6 +19,17 @@ if TYPE_CHECKING:
     from app.models.user import User
 
 
+# Consent types that count as an explicit opt-in to **marketing** email. Two
+# exist for historical reasons and both are genuine opt-ins: ``marketing_email``
+# is the account-preferences toggle, ``newsletter`` is the public footer signup.
+# A recipient who granted either has said yes to commercial mail.
+#
+# Lives on the model (not the service that reads it) because both the CRUD
+# audience resolver and the marketing-email service need it, and a constant
+# shared by those two layers belongs below both.
+MARKETING_CONSENT_TYPES: tuple[str, ...] = ("marketing_email", "newsletter")
+
+
 class UserConsent(BaseModel):
     """One immutable consent grant/withdrawal event for a user.
 

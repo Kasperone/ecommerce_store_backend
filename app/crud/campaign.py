@@ -12,11 +12,14 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
+from app.crud.email_suppression import email_suppression as crud_email_suppression
 from app.crud.segment import segment as crud_segment
+from app.crud.user_consent import user_consent as crud_user_consent
 from app.models.campaign import Campaign
 from app.models.company import Company
 from app.models.segment import Segment
 from app.models.user import User, UserRole
+from app.models.user_consent import MARKETING_CONSENT_TYPES
 from app.schemas.campaign import CampaignCreate, CampaignUpdate
 from app.schemas.segment import SegmentFilters
 
@@ -103,20 +106,62 @@ class CRUDCampaign:
     def resolve_recipient_emails(
         self, db: Session, *, audience: str, segment_id: int | None = None
     ) -> list[str]:
-        """Resolve a campaign ``audience`` to a list of recipient email addresses.
+        """Resolve a campaign ``audience`` to the addresses we may lawfully mail.
 
-        - ``all`` → every ``User`` with a non-empty email.
-        - ``customers`` → users whose ``role`` is ``CUSTOMER`` (non-empty email).
+        Audience shapes:
+
+        - ``all`` → every active ``User`` with a non-empty email.
+        - ``customers`` → the same, narrowed to ``role == CUSTOMER``.
         - ``b2b`` → distinct, non-null ``companies.email``.
         - ``segment`` → the ``User`` rows resolved by the referenced segment's
-          typed filters (``crud_segment.resolve_user_ids``), mapped to their
-          non-empty emails. If ``segment_id`` is missing or the segment row no
-          longer exists (e.g. it was deleted → ``ON DELETE SET NULL`` nulled the
-          FK), the result is empty — the send route then mails nobody.
+          typed filters (``crud_segment.resolve_user_ids``). If ``segment_id``
+          is missing or the segment row no longer exists (e.g. it was deleted →
+          ``ON DELETE SET NULL`` nulled the FK), the result is empty — the send
+          route then mails nobody.
 
-        Empty / NULL emails are filtered out so the send loop never hands a blank
-        address to the transport.
+        **Three filters apply on top of the shape**, and every one of them is
+        load-bearing:
+
+        1. **Explicit marketing consent** (user audiences only). A campaign is
+           unsolicited commercial mail unless the recipient opted in; under
+           UŚUDE art. 10 / GDPR Art. 6(1)(a) silence is not consent. This is the
+           same gate ``send_abandoned_cart_emails`` has always applied — the
+           campaign sender simply never had it. **Expect the addressable
+           audience to shrink sharply the first time this runs:** users who
+           predate the account-preferences toggle have no consent row and are
+           correctly excluded until they opt in.
+        2. **Active accounts only.** ``anonymize`` (GDPR erasure) sets
+           ``is_active = False`` and rewrites the address to
+           ``deleted-user-<id>@anon.invalid`` — non-empty, so the old
+           non-empty check happily mailed it. Every such send is a guaranteed
+           hard bounce, and hard bounces are what get a sending domain
+           throttled, taking the *transactional* mail down with it.
+        3. **The suppression list.** Anyone who used an unsubscribe link is
+           excluded regardless of what their consent rows say — a later opt-in
+           record must never silently resurrect a stopped address.
+
+        ``b2b`` is deliberately **not** consent-gated: ``companies.email`` is a
+        business contact address supplied for the trading relationship and there
+        is no per-company consent record to check. It is still suppression-
+        filtered and still carries an unsubscribe link. If the store ever mails
+        B2B prospects it did not trade with, this needs a real opt-in field on
+        ``Company`` — the current posture only holds for existing customers.
         """
+        if audience == "b2b":
+            rows = (
+                db.query(Company.email)
+                .filter(Company.email.isnot(None), Company.email != "")
+                .distinct()
+                .all()
+            )
+            emails = [email for (email,) in rows if email]
+            return crud_email_suppression.filter_allowed(db, emails=emails)
+
+        query = db.query(User.id, User.email).filter(
+            User.is_active.is_(True),
+            User.email.isnot(None),
+            User.email != "",
+        )
         if audience == "segment":
             if segment_id is None:
                 return []
@@ -128,30 +173,21 @@ class CRUDCampaign:
             )
             if not user_ids:
                 return []
-            rows = (
-                db.query(User.email)
-                .filter(
-                    User.id.in_(user_ids),
-                    User.email.isnot(None),
-                    User.email != "",
-                )
-                .all()
-            )
-            return [email for (email,) in rows if email]
-
-        if audience == "b2b":
-            rows = (
-                db.query(Company.email)
-                .filter(Company.email.isnot(None), Company.email != "")
-                .distinct()
-                .all()
-            )
-            return [email for (email,) in rows if email]
-
-        query = db.query(User.email).filter(User.email.isnot(None), User.email != "")
-        if audience == "customers":
+            query = query.filter(User.id.in_(user_ids))
+        elif audience == "customers":
             query = query.filter(User.role == UserRole.CUSTOMER)
-        return [email for (email,) in query.all() if email]
+
+        candidates = [(uid, email) for uid, email in query.all() if email]
+        if not candidates:
+            return []
+
+        consented = crud_user_consent.granted_user_ids(
+            db,
+            user_ids=[uid for uid, _ in candidates],
+            consent_types=MARKETING_CONSENT_TYPES,
+        )
+        emails = [email for uid, email in candidates if uid in consented]
+        return crud_email_suppression.filter_allowed(db, emails=emails)
 
     def mark_sent(self, db: Session, *, campaign: Campaign) -> Campaign:
         """Flip a campaign to ``sent`` and stamp ``sent_at`` (naive UTC).
