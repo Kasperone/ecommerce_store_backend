@@ -5,9 +5,14 @@ import pytest
 
 
 async def test_health_endpoint(client):
+    """``/health`` is the readiness probe and reports the database it checked.
+
+    The dependency-free liveness probe is ``/health/live``; both are covered
+    properly in ``tests/integration/test_health.py``.
+    """
     response = await client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {"status": "ok", "database": "up"}
 
 
 async def test_root_endpoint(client):

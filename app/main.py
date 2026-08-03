@@ -1,13 +1,20 @@
-from fastapi import FastAPI
+import logging
+
+from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import settings
+from app.core.database import engine
 from app.core.impersonation import ImpersonationWriteGuardMiddleware
 from app.core.rate_limit import limiter
 from app.core.security_headers import SecurityHeadersMiddleware, build_csp
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -71,8 +78,41 @@ async def root():
 
 
 @app.get("/health")
-async def health():
-    """Health check for monitoring"""
+async def health(response: Response):
+    """**Readiness** probe — is this instance fit to serve traffic?
+
+    Checks the database, because an instance that cannot reach Postgres cannot
+    serve a single useful request. This endpoint previously returned a hardcoded
+    ``{"status": "ok"}``, which meant a replica with a dead connection, an
+    exhausted pool, or a half-applied ``alembic upgrade head`` still reported
+    healthy and kept receiving traffic — the platform had no signal to take it
+    out of rotation.
+
+    Returns **503** when the check fails, which is what load balancers and
+    orchestrators act on. Use ``/health/live`` for liveness: a *liveness* probe
+    that fails on database trouble causes a restart loop, which turns a
+    recoverable outage into a crash-looping deployment.
+    """
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except SQLAlchemyError:
+        # Deliberately no exc_info: this fires once per probe interval per
+        # replica during an outage, and a stack trace per probe buries the
+        # actual cause. The connection error is already logged by the pool.
+        logger.warning("Readiness check failed: database unreachable")
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {"status": "degraded", "database": "down"}
+    return {"status": "ok", "database": "up"}
+
+
+@app.get("/health/live")
+async def liveness():
+    """**Liveness** probe — is the process running at all?
+
+    Deliberately dependency-free (see ``/health`` for why). If this responds,
+    the event loop is alive and restarting the container would achieve nothing.
+    """
     return {"status": "ok"}
 
 
