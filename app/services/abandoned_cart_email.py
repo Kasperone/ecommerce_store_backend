@@ -29,11 +29,17 @@ from typing import TYPE_CHECKING
 
 from app.core import email
 from app.core.config import settings
+from app.crud import email_suppression as crud_email_suppression
 from app.crud import saved_cart as crud_saved_cart
 from app.crud import store_config as crud_store_config
 from app.crud import user_consent as crud_user_consent
 from app.models.product import Product
 from app.services.brand import get_email_brand_name
+from app.services.marketing_email import (
+    append_unsubscribe_footer,
+    has_marketing_consent,
+    unsubscribe_headers,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -139,8 +145,13 @@ def send_abandoned_cart_emails(db: Session) -> int:
     for cart in candidates:
         user = cart.user
         consents = crud_user_consent.current_map(db, user_id=user.id)
-        if consents.get("marketing_email") is not True:
+        if not has_marketing_consent(consents):
             # Explicit opt-in only (UŚUDE): unset or revoked = never send.
+            continue
+        if crud_email_suppression.is_suppressed(db, email=user.email):
+            # Someone who used an unsubscribe link is out of *every* marketing
+            # channel, not just the one whose footer they clicked. Suppression
+            # is checked after consent because it must win over a stale grant.
             continue
         lang = user.locale or "en"
         item_lines = _item_lines(db, cart, lang)
@@ -152,7 +163,10 @@ def send_abandoned_cart_emails(db: Session) -> int:
             email.send_email(
                 email_to=user.email,
                 subject=_texts_for(lang)["subject"].format(name=get_email_brand_name()),
-                html_content=_build_html(cart, lang, token, item_lines),
+                html_content=append_unsubscribe_footer(
+                    _build_html(cart, lang, token, item_lines), email=user.email, lang=lang
+                ),
+                headers=unsubscribe_headers(user.email),
             )
         except Exception:
             # Best-effort per user — one Resend failure never aborts the run.

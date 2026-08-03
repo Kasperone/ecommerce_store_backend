@@ -16,6 +16,8 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.crud import campaign as crud_campaign
+from app.crud import email_suppression as crud_email_suppression
+from app.crud import user_consent as crud_user_consent
 from app.crud.segment import segment as crud_segment
 from app.models.campaign import Campaign
 from app.models.segment import Segment
@@ -37,6 +39,25 @@ def user_factory(db_session: Session):
         return UserFactory(**kwargs)
 
     return _make
+
+
+def _grant_marketing(db_session: Session, user, *, consent_type: str = "marketing_email") -> None:
+    """Give ``user`` an explicit marketing opt-in.
+
+    Every audience test needs this now: the resolver mails nobody who has not
+    opted in, so a user built by the factory alone is (correctly) unreachable.
+    """
+    crud_user_consent.record(
+        db_session, user_id=user.id, consent_type=consent_type, granted=True, source="test"
+    )
+    db_session.commit()
+
+
+def _revoke_marketing(db_session: Session, user, *, consent_type: str = "marketing_email") -> None:
+    crud_user_consent.record(
+        db_session, user_id=user.id, consent_type=consent_type, granted=False, source="test"
+    )
+    db_session.commit()
 
 
 @pytest.fixture
@@ -180,13 +201,90 @@ def test_resolve_segment_returns_exactly_member_emails(db_session: Session, user
     """A role=customer segment resolves to the matching customers' emails only."""
     cust = user_factory(email="seg-resolve-cust@example.com", role=UserRole.CUSTOMER)
     admin = user_factory(email="seg-resolve-admin@example.com", role=UserRole.ADMIN)
+    _grant_marketing(db_session, cust)
+    _grant_marketing(db_session, admin)
     seg = _make_segment(db_session, role="customer")
 
     emails = crud_campaign.resolve_recipient_emails(
         db_session, audience="segment", segment_id=seg.id
     )
     assert cust.email in emails
+    # The admin opted in too, so their absence is the segment filter at work
+    # rather than the consent gate silently hiding them.
     assert admin.email not in emails
+
+
+# ---------------------------------------------------------------------------
+# who may be mailed: consent, active state, suppression
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_excludes_user_without_marketing_consent(db_session: Session, user_factory):
+    """No consent row at all = never mailed. Silence is not consent."""
+    opted_in = user_factory(email="mk-in@example.com", role=UserRole.CUSTOMER)
+    never_asked = user_factory(email="mk-silent@example.com", role=UserRole.CUSTOMER)
+    _grant_marketing(db_session, opted_in)
+
+    emails = crud_campaign.resolve_recipient_emails(db_session, audience="all")
+    assert opted_in.email in emails
+    assert never_asked.email not in emails
+
+
+def test_resolve_excludes_user_who_revoked_consent(db_session: Session, user_factory):
+    """The LATEST row wins — a grant followed by a withdrawal means no."""
+    user = user_factory(email="mk-revoked@example.com", role=UserRole.CUSTOMER)
+    _grant_marketing(db_session, user)
+    assert user.email in crud_campaign.resolve_recipient_emails(db_session, audience="all")
+
+    _revoke_marketing(db_session, user)
+    assert user.email not in crud_campaign.resolve_recipient_emails(db_session, audience="all")
+
+
+def test_resolve_accepts_newsletter_consent_as_marketing_opt_in(db_session: Session, user_factory):
+    """The public footer signup records ``newsletter``, not ``marketing_email``.
+
+    Both are genuine opt-ins, so gating on only one would silently drop everyone
+    who subscribed through the storefront footer.
+    """
+    user = user_factory(email="mk-newsletter@example.com", role=UserRole.CUSTOMER)
+    _grant_marketing(db_session, user, consent_type="newsletter")
+
+    assert user.email in crud_campaign.resolve_recipient_emails(db_session, audience="all")
+
+
+def test_resolve_excludes_deactivated_and_anonymized_users(db_session: Session, user_factory):
+    """GDPR erasure sets is_active=False and rewrites the address to
+    ``deleted-user-<id>@anon.invalid`` — non-empty, so only the is_active check
+    keeps us from hard-bouncing every erased account on every campaign."""
+    erased = user_factory(email="deleted-user-999@anon.invalid", role=UserRole.CUSTOMER)
+    _grant_marketing(db_session, erased)
+    erased.is_active = False
+    db_session.add(erased)
+    db_session.commit()
+
+    assert erased.email not in crud_campaign.resolve_recipient_emails(db_session, audience="all")
+
+
+def test_resolve_excludes_suppressed_address_despite_consent(db_session: Session, user_factory):
+    """Suppression beats consent: an unsubscribe must not be undone by a stale
+    grant row that is still the newest one for its type."""
+    user = user_factory(email="mk-suppressed@example.com", role=UserRole.CUSTOMER)
+    _grant_marketing(db_session, user)
+    crud_email_suppression.suppress(db_session, email=user.email)
+    db_session.commit()
+
+    assert user.email not in crud_campaign.resolve_recipient_emails(db_session, audience="all")
+
+
+def test_resolve_suppression_is_case_insensitive(db_session: Session, user_factory):
+    """Addresses are one subject regardless of casing — otherwise unsubscribing
+    as ``Foo@x.com`` would leave ``foo@x.com`` still subscribed."""
+    user = user_factory(email="MixedCase@example.com", role=UserRole.CUSTOMER)
+    _grant_marketing(db_session, user)
+    crud_email_suppression.suppress(db_session, email="mixedcase@EXAMPLE.com")
+    db_session.commit()
+
+    assert user.email not in crud_campaign.resolve_recipient_emails(db_session, audience="all")
 
 
 def test_resolve_segment_missing_segment_id_is_empty(db_session: Session, user_factory):

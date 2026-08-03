@@ -18,7 +18,7 @@ from passlib.context import CryptContext
 
 from app.core.config import settings
 
-TokenType = Literal["access", "refresh"]
+TokenType = Literal["access", "refresh", "unsubscribe"]
 
 
 # Password hashing context - Argon2id configuration
@@ -113,6 +113,33 @@ def create_refresh_token(
     """
     delta = expires_delta or timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
     return _build_token(subject=subject, token_type="refresh", expires_delta=delta)  # noqa: S106 -- token type label, not a credential
+
+
+def create_unsubscribe_token(email: str) -> str:
+    """Issue a marketing-unsubscribe token whose subject is the email address.
+
+    Deliberately unlike the auth tokens in two ways:
+
+    - **The subject is an address, not a user id.** Marketing recipients include
+      company contacts and anonymous newsletter subscribers who have no account,
+      so a user-id subject could not cover them. The address is exactly the key
+      the suppression list uses.
+    - **It effectively never expires** (10 years). An unsubscribe link that has
+      lapsed is worse than useless: the recipient clicks it, nothing happens,
+      and their only remaining move is to hit "report spam" — which damages the
+      sending domain far more than an old token ever could. Mailbox providers
+      also probe these links long after delivery.
+
+    The ``type`` claim keeps it non-interchangeable with an access/refresh
+    token, so possessing one grants nothing but the ability to opt its own
+    address out of marketing.
+    """
+    token, _jti, _expires_at = _build_token(
+        subject=email.strip().lower(),
+        token_type="unsubscribe",  # noqa: S106 -- token type label, not a credential
+        expires_delta=timedelta(days=3650),
+    )
+    return token
 
 
 def decode_token(token: str, *, expected_type: TokenType) -> DecodedToken:

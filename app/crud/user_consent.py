@@ -6,6 +6,9 @@ Consent is never updated in place: every grant/withdrawal INSERTs a new row
 latest-per-type read used by `GET /me/preferences` + the data export.
 """
 
+from collections.abc import Collection
+
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.user_consent import UserConsent
@@ -45,6 +48,51 @@ class CRUDUserConsent:
             .order_by(UserConsent.created_at.desc(), UserConsent.id.desc())
             .all()
         )
+
+    def granted_user_ids(
+        self,
+        db: Session,
+        *,
+        user_ids: Collection[int],
+        consent_types: Collection[str],
+    ) -> set[int]:
+        """Of ``user_ids``, those whose LATEST row for ANY of ``consent_types``
+        is ``granted``.
+
+        The bulk counterpart to :meth:`current_map`, which answers the same
+        question for one user by walking the whole audit trail in Python. A
+        marketing audience can be tens of thousands of users, so per-user
+        iteration would issue one query each — this is a single query.
+
+        "Latest" uses the same ordering as :meth:`current_map`
+        (``created_at`` then ``id``, both descending) so the two can never
+        disagree about which row wins. Users with no row for any of the types
+        are simply absent from the result: never-touched is not consent.
+        """
+        if not user_ids or not consent_types:
+            return set()
+
+        ranked = (
+            select(
+                UserConsent.user_id,
+                UserConsent.granted,
+                func.row_number()
+                .over(
+                    partition_by=(UserConsent.user_id, UserConsent.consent_type),
+                    order_by=(UserConsent.created_at.desc(), UserConsent.id.desc()),
+                )
+                .label("rn"),
+            )
+            .where(
+                UserConsent.user_id.in_(user_ids),
+                UserConsent.consent_type.in_(consent_types),
+            )
+            .subquery()
+        )
+        rows = db.execute(
+            select(ranked.c.user_id).where(ranked.c.rn == 1, ranked.c.granted.is_(True)).distinct()
+        ).all()
+        return {user_id for (user_id,) in rows}
 
     def current_map(self, db: Session, *, user_id: int) -> dict[str, bool]:
         """Latest ``granted`` value per ``consent_type`` for the user.

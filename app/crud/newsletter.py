@@ -73,5 +73,24 @@ class CRUDNewsletter:
         db.add(subscriber)
         return subscriber
 
+    def unsubscribe(self, db: Session, *, email: str) -> NewsletterSubscriber | None:
+        """Park an existing subscriber row (``is_active = False``). Caller commits.
+
+        Returns the row it deactivated, or ``None`` when the address was never
+        subscribed — which is not an error: the unsubscribe route also handles
+        addresses that only ever appeared as a ``users`` or ``companies``
+        recipient, and those have no row here.
+
+        Parked rather than deleted so a later re-subscribe reactivates the same
+        row (keeping the original ``created_at``) instead of creating a
+        duplicate, exactly as ``subscribe`` expects.
+        """
+        existing = self.get_by_email(db, email=email)
+        if existing is None:
+            return None
+        existing.is_active = False
+        db.add(existing)
+        return existing
+
 
 newsletter = CRUDNewsletter()

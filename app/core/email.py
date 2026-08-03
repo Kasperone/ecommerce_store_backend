@@ -24,6 +24,7 @@ def send_email(
     html_content: str,
     text_content: str | None = None,
     attachments: list[dict] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> dict:
     """
     Send email using Resend API
@@ -33,6 +34,10 @@ def send_email(
         subject: Email subject
         html_content: HTML email content
         text_content: Plain text fallback (optional)
+        headers: Extra SMTP headers (optional). Used by the marketing senders to
+            attach ``List-Unsubscribe`` / ``List-Unsubscribe-Post`` — required by
+            the Gmail/Yahoo bulk-sender rules and, more importantly, the reason a
+            recipient reaches for "unsubscribe" instead of "report spam".
 
     Returns:
         Response from Resend API, or a ``{"id": "skipped-no-api-key"}`` marker
@@ -75,6 +80,9 @@ def send_email(
 
         if attachments:
             params["attachments"] = attachments
+
+        if headers:
+            params["headers"] = headers
 
         response = resend.Emails.send(params)  # pyright: ignore[reportArgumentType] -- resend SDK's SendParams TypedDict is stricter than our plain-dict construction
         return response  # pyright: ignore[reportReturnType] -- resend's SendResponse is dict-shaped; legacy annotation is dict, not the SDK type

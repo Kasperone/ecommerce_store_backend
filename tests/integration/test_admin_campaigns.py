@@ -19,6 +19,8 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
+from app.crud import email_suppression as crud_email_suppression
+from app.crud import user_consent as crud_user_consent
 from app.crud.segment import segment as crud_segment
 from app.models.admin_audit_event import AdminAuditEvent
 from app.models.campaign import Campaign
@@ -367,6 +369,19 @@ def _sent_to(captured_emails) -> set[str]:
     return {e["email_to"] for e in captured_emails if e["kind"] == "generic"}
 
 
+def _opt_in(db: Session, *users, consent_type: str = "marketing_email") -> None:
+    """Record an explicit marketing opt-in for each user.
+
+    Required by every send test now that the resolver mails only consenting
+    recipients — a factory-built user has no consent row and is unreachable.
+    """
+    for user in users:
+        crud_user_consent.record(
+            db, user_id=user.id, consent_type=consent_type, granted=True, source="test"
+        )
+    db.commit()
+
+
 async def test_send_404(client, user_factory):
     admin = user_factory(email="cmp-send404@example.com", role=UserRole.ADMIN)
     resp = await client.post("/api/v1/admin/campaigns/999999/send", headers=_headers(admin))
@@ -387,6 +402,7 @@ async def test_send_audience_all_mails_every_user_and_flips_status(
 ):
     admin = user_factory(email="cmp-send-all-admin@example.com", role=UserRole.ADMIN)
     cust = user_factory(email="cmp-send-all-cust@example.com", role=UserRole.CUSTOMER)
+    _opt_in(db_session, admin, cust)
     c = campaign_factory(name="ALLSEND", subject="Hi all", body="<p>Body</p>", audience="all")
     before_audit = _audit_count(db_session, "update")
 
@@ -407,10 +423,13 @@ async def test_send_audience_all_mails_every_user_and_flips_status(
 
 
 async def test_send_audience_customers_excludes_admins(
-    client, user_factory, campaign_factory, captured_emails
+    client, user_factory, campaign_factory, captured_emails, db_session
 ):
     admin = user_factory(email="cmp-send-cust-admin@example.com", role=UserRole.ADMIN)
     cust = user_factory(email="cmp-send-cust-cust@example.com", role=UserRole.CUSTOMER)
+    # Both opt in, so the admin's absence below proves the role filter rather
+    # than the consent gate.
+    _opt_in(db_session, admin, cust)
     c = campaign_factory(name="CUSTSEND", subject="For customers", audience="customers")
 
     resp = await client.post(f"/api/v1/admin/campaigns/{c.id}/send", headers=_headers(admin))
@@ -458,6 +477,7 @@ async def test_send_failing_recipient_does_not_abort_run(
 
     admin = user_factory(email="cmp-send-fail-admin@example.com", role=UserRole.ADMIN)
     cust = user_factory(email="cmp-send-fail-cust@example.com", role=UserRole.CUSTOMER)
+    _opt_in(db_session, admin, cust)
 
     seen: list[str] = []
 
@@ -477,6 +497,109 @@ async def test_send_failing_recipient_does_not_abort_run(
     # Both recipients were attempted (the good one still got mailed after the bad one).
     assert admin.email in seen
     assert cust.email in seen
+
+
+# ---------------------------------------------------------------------------
+# who a campaign may lawfully reach, and what every send must carry
+# ---------------------------------------------------------------------------
+
+
+async def test_send_skips_users_without_marketing_consent(
+    client, user_factory, campaign_factory, captured_emails, db_session
+):
+    """The consent gate at the route level, not just the resolver.
+
+    The opted-in user proves the send actually ran — without that positive
+    control an empty recipient set would pass this test even if sending were
+    broken outright.
+    """
+    admin = user_factory(email="cmp-consent-admin@example.com", role=UserRole.ADMIN)
+    opted_in = user_factory(email="cmp-consent-yes@example.com", role=UserRole.CUSTOMER)
+    never_asked = user_factory(email="cmp-consent-no@example.com", role=UserRole.CUSTOMER)
+    _opt_in(db_session, opted_in)
+
+    c = campaign_factory(name="CONSENTSEND", subject="hi", audience="all")
+    resp = await client.post(f"/api/v1/admin/campaigns/{c.id}/send", headers=_headers(admin))
+    assert resp.status_code == 200
+
+    recipients = _sent_to(captured_emails)
+    assert opted_in.email in recipients
+    assert never_asked.email not in recipients
+    assert admin.email not in recipients  # admin never opted in either
+
+
+async def test_send_skips_suppressed_address(
+    client, user_factory, campaign_factory, captured_emails, db_session
+):
+    """An unsubscribed address stays unsubscribed even with consent on file."""
+    admin = user_factory(email="cmp-supp-admin@example.com", role=UserRole.ADMIN)
+    still_in = user_factory(email="cmp-supp-in@example.com", role=UserRole.CUSTOMER)
+    opted_out = user_factory(email="cmp-supp-out@example.com", role=UserRole.CUSTOMER)
+    _opt_in(db_session, still_in, opted_out)
+    crud_email_suppression.suppress(db_session, email=opted_out.email)
+    db_session.commit()
+
+    c = campaign_factory(name="SUPPSEND", subject="hi", audience="all")
+    resp = await client.post(f"/api/v1/admin/campaigns/{c.id}/send", headers=_headers(admin))
+    assert resp.status_code == 200
+
+    recipients = _sent_to(captured_emails)
+    assert still_in.email in recipients
+    assert opted_out.email not in recipients
+
+
+async def test_send_attaches_unsubscribe_footer_and_headers(
+    client, user_factory, campaign_factory, captured_emails, db_session
+):
+    """Every marketing send carries a visible opt-out AND the RFC 8058 headers.
+
+    Both are required: the header drives the mail client's native button, the
+    footer link is the only route for clients that render neither.
+    """
+    admin = user_factory(email="cmp-unsub-admin@example.com", role=UserRole.ADMIN)
+    cust = user_factory(email="cmp-unsub-cust@example.com", role=UserRole.CUSTOMER)
+    _opt_in(db_session, cust)
+
+    c = campaign_factory(
+        name="UNSUBSEND", subject="hi", body="<p>Original body</p>", audience="all"
+    )
+    resp = await client.post(f"/api/v1/admin/campaigns/{c.id}/send", headers=_headers(admin))
+    assert resp.status_code == 200
+
+    sent = [e for e in captured_emails if e["kind"] == "generic" and e["email_to"] == cust.email]
+    assert len(sent) == 1
+    payload = sent[0]
+
+    # The author's body survives intact; the footer is appended, not wrapped.
+    assert "<p>Original body</p>" in payload["html_content"]
+    assert "/api/v1/newsletter/unsubscribe?token=" in payload["html_content"]
+
+    headers = payload["headers"]
+    assert headers["List-Unsubscribe"].startswith("<")
+    assert "/api/v1/newsletter/unsubscribe?token=" in headers["List-Unsubscribe"]
+    assert headers["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
+
+
+async def test_send_unsubscribe_token_is_per_recipient(
+    client, user_factory, campaign_factory, captured_emails, db_session
+):
+    """Two recipients must not share a token, or one person's unsubscribe would
+    silently opt the other out as well."""
+    admin = user_factory(email="cmp-tok-admin@example.com", role=UserRole.ADMIN)
+    a = user_factory(email="cmp-tok-a@example.com", role=UserRole.CUSTOMER)
+    b = user_factory(email="cmp-tok-b@example.com", role=UserRole.CUSTOMER)
+    _opt_in(db_session, a, b)
+
+    c = campaign_factory(name="TOKSEND", subject="hi", audience="all")
+    resp = await client.post(f"/api/v1/admin/campaigns/{c.id}/send", headers=_headers(admin))
+    assert resp.status_code == 200
+
+    by_recipient = {
+        e["email_to"]: e["headers"]["List-Unsubscribe"]
+        for e in captured_emails
+        if e["kind"] == "generic"
+    }
+    assert by_recipient[a.email] != by_recipient[b.email]
 
 
 # ---------------------------------------------------------------------------
@@ -576,6 +699,7 @@ async def test_send_segment_audience_mails_exactly_members(
     """A segment campaign mails exactly the segment's resolved members."""
     admin = user_factory(email="cmp-seg-send-admin@example.com", role=UserRole.ADMIN)
     member = user_factory(email="cmp-seg-send-member@example.com", role=UserRole.CUSTOMER)
+    _opt_in(db_session, admin, member)
     seg = _make_segment(db_session, role="customer")
     c = campaign_factory(
         name="SEGSEND", subject="for segment", audience="segment", segment_id=seg.id

@@ -9,16 +9,26 @@ subscriber row itself captures the opt-in (with ip/ua/source).
 
 The rate-limit test follows the ``test_rate_limits`` pattern (``reset_limiter``,
 exhaust the per-email budget, assert 429 on the over-cap call).
+
+``GET/POST /api/v1/newsletter/unsubscribe`` is the opt-out counterpart: a signed
+token whose subject is the address, so it works for registered users, company
+contacts and anonymous subscribers alike.
 """
 
 from __future__ import annotations
 
 import pytest
 
+from app.core.security import create_access_token, create_unsubscribe_token
+from app.crud import email_suppression as crud_email_suppression
+from app.crud import user_consent as crud_user_consent
+from app.models.email_suppression import EmailSuppression
 from app.models.newsletter_subscriber import NewsletterSubscriber
+from app.models.user import UserRole
 from app.models.user_consent import UserConsent
 
 SUBSCRIBE_PATH = "/api/v1/newsletter/subscribe"
+UNSUBSCRIBE_PATH = "/api/v1/newsletter/unsubscribe"
 
 pytestmark = pytest.mark.integration
 
@@ -140,3 +150,121 @@ async def test_subscribe_per_email_rate_limited(client, reset_limiter):
 
     over = await client.post(SUBSCRIBE_PATH, json={"email": "rl-news@example.com"})
     assert over.status_code == 429
+
+
+# ---------------------------------------------------------------------------
+# unsubscribe — the opt-out half of the marketing-consent story
+# ---------------------------------------------------------------------------
+
+
+async def test_unsubscribe_page_opts_out_every_channel(client, db_session, user_factory):
+    """One click must stop marketing across all three recipient shapes.
+
+    The same human can be a ``users`` row, a ``newsletter_subscribers`` row and
+    a campaign recipient at once, so the route writes to all of them. Asserting
+    only the suppression row would miss a stale ``granted`` consent that the
+    GDPR audit trail would still show.
+    """
+    user = user_factory(email="unsub-all@example.com", role=UserRole.CUSTOMER)
+    crud_user_consent.record(
+        db_session, user_id=user.id, consent_type="marketing_email", granted=True, source="test"
+    )
+    db_session.commit()
+    await client.post(SUBSCRIBE_PATH, json={"email": user.email})
+
+    token = create_unsubscribe_token(user.email)
+    resp = await client.get(f"{UNSUBSCRIBE_PATH}?token={token}")
+
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "unsubscribed" in resp.text.lower()
+
+    db_session.expire_all()
+    assert crud_email_suppression.is_suppressed(db_session, email=user.email) is True
+
+    row = (
+        db_session.query(NewsletterSubscriber)
+        .filter(NewsletterSubscriber.email == user.email)
+        .one()
+    )
+    assert row.is_active is False
+
+    current = crud_user_consent.current_map(db_session, user_id=user.id)
+    assert current["marketing_email"] is False
+    assert current["newsletter"] is False
+
+
+async def test_unsubscribe_works_for_address_with_no_account(client, db_session):
+    """Company contacts and anonymous subscribers have no user row — the
+    suppression list is keyed by address precisely so they can still opt out."""
+    token = create_unsubscribe_token("stranger@example.com")
+    resp = await client.get(f"{UNSUBSCRIBE_PATH}?token={token}")
+
+    assert resp.status_code == 200
+    assert crud_email_suppression.is_suppressed(db_session, email="stranger@example.com") is True
+
+
+async def test_unsubscribe_is_idempotent(client, db_session):
+    """Mail clients pre-fetch links and people click twice; neither may 500."""
+    token = create_unsubscribe_token("twice@example.com")
+    first = await client.get(f"{UNSUBSCRIBE_PATH}?token={token}")
+    second = await client.get(f"{UNSUBSCRIBE_PATH}?token={token}")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert (
+        db_session.query(EmailSuppression)
+        .filter(EmailSuppression.email == "twice@example.com")
+        .count()
+        == 1
+    )
+
+
+async def test_unsubscribe_rejects_a_token_of_the_wrong_type(client, db_session):
+    """An access token must not double as an unsubscribe token — the ``type``
+    claim is what stops one credential being replayed as another."""
+    access_token, _, _ = create_access_token(subject="1")
+    resp = await client.get(f"{UNSUBSCRIBE_PATH}?token={access_token}")
+
+    assert resp.status_code == 400
+    assert db_session.query(EmailSuppression).count() == 0
+
+
+async def test_unsubscribe_rejects_garbage_token(client, db_session):
+    resp = await client.get(f"{UNSUBSCRIBE_PATH}?token=not-a-jwt")
+    assert resp.status_code == 400
+    assert db_session.query(EmailSuppression).count() == 0
+
+
+async def test_one_click_post_unsubscribes(client, db_session):
+    """RFC 8058: providers POST here with no body and no auth."""
+    token = create_unsubscribe_token("oneclick@example.com")
+    resp = await client.post(f"{UNSUBSCRIBE_PATH}?token={token}")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "unsubscribed"}
+    assert crud_email_suppression.is_suppressed(db_session, email="oneclick@example.com") is True
+
+
+async def test_one_click_post_returns_200_on_a_bad_token(client, db_session):
+    """Reporting failure to the provider shows the recipient "unsubscribe didn't
+    work", which sends them to the spam button instead. Nothing is suppressed."""
+    resp = await client.post(f"{UNSUBSCRIBE_PATH}?token=garbage")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "unsubscribed"}
+    assert db_session.query(EmailSuppression).count() == 0
+
+
+async def test_resubscribe_after_unsubscribe_clears_nothing_by_itself(client, db_session):
+    """Subscribing again reactivates the newsletter row but must NOT silently
+    lift the suppression — coming back requires an explicit re-opt-in path, so
+    a stray form submit can never resurrect a stopped address."""
+    email = "returning@example.com"
+    await client.post(SUBSCRIBE_PATH, json={"email": email})
+    await client.get(f"{UNSUBSCRIBE_PATH}?token={create_unsubscribe_token(email)}")
+
+    await client.post(SUBSCRIBE_PATH, json={"email": email})
+
+    db_session.expire_all()
+    assert crud_email_suppression.is_suppressed(db_session, email=email) is True
