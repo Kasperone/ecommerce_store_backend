@@ -12,6 +12,10 @@ No scheduler in this app: an OS-cron entry point
 webhook needed. Payment is tracked ORTHOGONALLY to fulfilment (Program 2): a
 charged order stamps ``net_terms_paid_at`` and NEVER enters the ``PAID`` status.
 
+The charge is for ``order.amount_due`` (total minus gift-card / store-credit
+tender), never the raw ``total`` — an order already covered by stored value is
+settled inline with no Stripe call at all.
+
 Best-effort per order + commit per success, so a crash never double-charges. A
 declined card leaves the order unpaid (dunning / manual transfer still apply) and
 records a ``net_terms_auto_charge_failed`` order_event. Idempotency-keyed on the
@@ -57,9 +61,9 @@ CHARGED_EVENT_KIND = "net_terms_auto_charged"
 FAILED_EVENT_KIND = "net_terms_auto_charge_failed"
 
 
-def _amount_minor(total: Decimal) -> int:
-    """Order total → integer smallest unit (cents/grosze; USD/PLN/EUR are 2-decimal)."""
-    return int(quantize_money(total) * 100)
+def _amount_minor(amount: Decimal) -> int:
+    """Money amount → integer smallest unit (cents/grosze; USD/PLN/EUR are 2-decimal)."""
+    return int(quantize_money(amount) * 100)
 
 
 def charge_due_orders(db: Session, *, service: ChargeService | None = None) -> int:
@@ -97,11 +101,30 @@ def charge_due_orders(db: Session, *, service: ChargeService | None = None) -> i
     charged = 0
     for order in due:
         company = order.company
+
+        # Stored value (gift card / store credit) is TENDER, not a discount: it
+        # leaves ``total`` untouched and lowers ``amount_due``. Charging ``total``
+        # here would silently bill the buyer twice for the covered part.
+        if order.amount_due <= 0:
+            # Fully covered at checkout — nothing left to collect, and Stripe
+            # rejects a zero/negative charge. Settle it without touching Stripe.
+            order.net_terms_paid_at = now
+            db.add(order)
+            crud_order_event.record(
+                db,
+                order_id=order.id,
+                kind=CHARGED_EVENT_KIND,
+                payload={"reason": "covered_by_stored_value"},
+            )
+            db.commit()
+            charged += 1
+            continue
+
         try:
             result = service.charge_off_session(
                 customer_id=company.stripe_customer_id,  # type: ignore[arg-type]  -- filtered non-null
                 payment_method_id=company.auto_charge_payment_method_id,  # type: ignore[arg-type]
-                amount_minor=_amount_minor(order.total),
+                amount_minor=_amount_minor(order.amount_due),
                 currency=order.currency,
                 ext_order_id=order.order_number,
                 idempotency_key=f"net-terms-autocharge-{order.id}",
