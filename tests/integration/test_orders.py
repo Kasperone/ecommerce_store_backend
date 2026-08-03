@@ -12,6 +12,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy.orm import Session
 
+from app.core.capabilities import CATALOG_WRITE, ORDERS_WRITE
 from app.core.security import create_access_token
 from app.models.admin_audit_event import AdminAuditEvent
 from app.models.inventory_movement import InventoryMovement
@@ -470,6 +471,113 @@ async def test_cancel_cross_customer_404(
 
     resp = await client.post(f"/api/v1/orders/{order_id}/cancel", headers=_headers(other))
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /{id}/cancel — capability fence on the admin branch (SEC-016)
+# ---------------------------------------------------------------------------
+#
+# The route is dual-purpose (customer self-cancel + admin cancel), so the
+# capability check lives inside the ``is_admin`` branch rather than in a
+# route-level ``require_capability`` dependency — which would layer on
+# ``get_current_admin`` and 403 every customer. These lock that fence in place.
+
+
+async def _paid_order_id(client, customer, product, admin, shipping_method_id: int) -> int:
+    """Create an order as ``customer`` and have ``admin`` advance it past pending."""
+    created = await client.post(
+        "/api/v1/orders/",
+        json=_order_body(product.id, quantity=1, shipping_method_id=shipping_method_id),
+        headers=_headers(customer),
+    )
+    order_id = created.json()["id"]
+    await client.patch(
+        f"/api/v1/orders/{order_id}", json={"status": "paid"}, headers=_headers(admin)
+    )
+    return order_id
+
+
+async def test_admin_without_orders_write_cannot_cancel(
+    client, user_factory, product_factory, test_shipping_method_id
+):
+    customer = user_factory(email="capcancel-cust@example.com")
+    owner = user_factory(email="capcancel-owner@example.com", role=UserRole.ADMIN)
+    staffer = user_factory(
+        email="capcancel-nocap@example.com",
+        role=UserRole.ADMIN,
+        is_owner=False,
+        capabilities=[CATALOG_WRITE],  # wrong cap for an order write
+    )
+    product = product_factory(stock=10, price_usd=10.0)
+    order_id = await _paid_order_id(client, customer, product, owner, test_shipping_method_id)
+
+    resp = await client.post(f"/api/v1/orders/{order_id}/cancel", headers=_headers(staffer))
+    assert resp.status_code == 403
+
+
+async def test_admin_with_orders_write_cancels_any_order(
+    client, user_factory, product_factory, test_shipping_method_id
+):
+    customer = user_factory(email="capcancel-ok-cust@example.com")
+    owner = user_factory(email="capcancel-ok-owner@example.com", role=UserRole.ADMIN)
+    staffer = user_factory(
+        email="capcancel-ok-staff@example.com",
+        role=UserRole.ADMIN,
+        is_owner=False,
+        capabilities=[ORDERS_WRITE],
+    )
+    product = product_factory(stock=10, price_usd=10.0)
+    order_id = await _paid_order_id(client, customer, product, owner, test_shipping_method_id)
+
+    resp = await client.post(f"/api/v1/orders/{order_id}/cancel", headers=_headers(staffer))
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "cancelled"
+
+
+async def test_owner_cancels_any_order(
+    client, user_factory, product_factory, test_shipping_method_id
+):
+    """An owner holds every capability implicitly — no explicit grant needed."""
+    customer = user_factory(email="capcancel-own-cust@example.com")
+    owner = user_factory(email="capcancel-own-owner@example.com", role=UserRole.ADMIN)
+    assert owner.is_owner is True
+    product = product_factory(stock=10, price_usd=10.0)
+    order_id = await _paid_order_id(client, customer, product, owner, test_shipping_method_id)
+
+    resp = await client.post(f"/api/v1/orders/{order_id}/cancel", headers=_headers(owner))
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "cancelled"
+
+
+async def test_ungated_admin_403s_before_learning_order_state(
+    client, user_factory, product_factory, test_shipping_method_id
+):
+    """The fence precedes the cancellability check.
+
+    Against an already-cancelled (non-cancellable) order the gated path would
+    answer 400 "cannot cancel an order with status 'cancelled'". A staffer
+    without ``orders:write`` must get 403 instead — the refusal must not double
+    as an oracle for the order's status.
+    """
+    customer = user_factory(email="capcancel-oracle-cust@example.com")
+    owner = user_factory(email="capcancel-oracle-owner@example.com", role=UserRole.ADMIN)
+    staffer = user_factory(
+        email="capcancel-oracle-staff@example.com",
+        role=UserRole.ADMIN,
+        is_owner=False,
+        capabilities=[CATALOG_WRITE],
+    )
+    product = product_factory(stock=10, price_usd=10.0)
+    order_id = await _paid_order_id(client, customer, product, owner, test_shipping_method_id)
+    # Positive control: the owner really can cancel it, leaving it non-cancellable.
+    first = await client.post(f"/api/v1/orders/{order_id}/cancel", headers=_headers(owner))
+    assert first.status_code == 200, first.text
+    repeat = await client.post(f"/api/v1/orders/{order_id}/cancel", headers=_headers(owner))
+    assert repeat.status_code == 400, repeat.text
+
+    resp = await client.post(f"/api/v1/orders/{order_id}/cancel", headers=_headers(staffer))
+    assert resp.status_code == 403
+    assert "cancelled" not in resp.json()["detail"]
 
 
 # ---------------------------------------------------------------------------

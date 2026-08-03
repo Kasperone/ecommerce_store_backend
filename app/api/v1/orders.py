@@ -616,13 +616,22 @@ async def cancel_order(
     Cancel an order and restore stock.
 
     Customers may cancel only their own order while ``status=pending``. Admins
-    may cancel any order that is not already in a terminal state.
+    holding ``orders:write`` (or owners) may cancel any order that is not
+    already in a terminal state.
     """
     order = crud_order.get_scoped(db, order_id=order_id, user=current_user)
     if order is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
 
     is_admin = current_user.role == UserRole.ADMIN
+    # Dual-purpose route: a route-level require_capability() would layer on
+    # get_current_admin and 403 every customer, so the capability fence lives
+    # here, in the admin branch. Checked before any state inspection so an
+    # unauthorised staffer never learns the order's status.
+    if is_admin and not (
+        current_user.is_owner or ORDERS_WRITE in (current_user.capabilities or [])
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
     if not is_admin and OrderStatus(order.status) != OrderStatus.PENDING:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
