@@ -10,6 +10,7 @@ The live off-session charge is verified separately against the Stripe sandbox.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from sqlalchemy.orm import Session
@@ -64,12 +65,24 @@ def _autopay_company(company_factory, *, enabled=True, card=True):
     )
 
 
-def _make_order(db, company, *, order_number, due_at, paid_at=None, status=OrderStatus.PENDING):
+def _make_order(
+    db,
+    company,
+    *,
+    order_number,
+    due_at,
+    paid_at=None,
+    status=OrderStatus.PENDING,
+    gift_card_amount=Decimal("0"),
+    store_credit_amount=Decimal("0"),
+):
     order = Order(
         order_number=order_number,
         status=status,
         subtotal=100.0,
         total=100.0,
+        gift_card_amount=gift_card_amount,
+        store_credit_amount=store_credit_amount,
         currency="USD",
         shipping_address="1 Main St",
         shipping_city="Warsaw",
@@ -106,6 +119,52 @@ def test_due_order_is_charged_and_settled(db_session, company_factory):
     assert order.status == OrderStatus.PENDING  # payment tracked orthogonally
     events = crud_order_event.list_for_order(db_session, order_id=order.id)
     assert any(e.kind == CHARGED_EVENT_KIND for e in events)
+
+
+def test_partial_stored_value_charges_amount_due_not_total(db_session, company_factory):
+    """SEC-018: gift-card/store-credit tender is already collected — bill the remainder.
+
+    Charging ``total`` here would bill the buyer a second time for the covered part.
+    """
+    company = _autopay_company(company_factory)
+    order = _make_order(
+        db_session,
+        company,
+        order_number="AC-GC",
+        due_at=_past(),
+        gift_card_amount=Decimal("30.00"),
+        store_credit_amount=Decimal("5.50"),
+    )
+    fake = _FakeStripe()
+    assert charge_due_orders(db_session, service=fake) == 1
+    assert len(fake.calls) == 1
+    # 100.00 total - 30.00 gift card - 5.50 store credit = 64.50 USD
+    assert fake.calls[0]["amount_minor"] == 6450
+    db_session.refresh(order)
+    assert order.net_terms_paid_at is not None
+
+
+def test_fully_covered_by_stored_value_skips_stripe(db_session, company_factory):
+    """SEC-018: nothing owed → settle inline, never hand Stripe a zero-amount charge."""
+    company = _autopay_company(company_factory)
+    order = _make_order(
+        db_session,
+        company,
+        order_number="AC-COVERED",
+        due_at=_past(),
+        gift_card_amount=Decimal("60.00"),
+        store_credit_amount=Decimal("40.00"),
+    )
+    fake = _FakeStripe()
+    assert charge_due_orders(db_session, service=fake) == 1
+    assert fake.calls == []  # no Stripe call at all
+    db_session.refresh(order)
+    assert order.net_terms_paid_at is not None
+    assert order.status == OrderStatus.PENDING  # payment tracked orthogonally
+    events = crud_order_event.list_for_order(db_session, order_id=order.id)
+    charged_events = [e for e in events if e.kind == CHARGED_EVENT_KIND]
+    assert len(charged_events) == 1
+    assert charged_events[0].payload == {"reason": "covered_by_stored_value"}
 
 
 def test_not_yet_due_not_charged(db_session, company_factory):

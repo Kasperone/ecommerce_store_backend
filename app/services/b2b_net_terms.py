@@ -12,7 +12,7 @@ unlimited) hard-blocks the option once outstanding unpaid net-terms balance + th
 new order would exceed it.
 
 **Outstanding** is tracked orthogonally to fulfilment status: a net-terms order
-ships while unpaid and never enters the PAID status. Outstanding = Σ ``total``
+ships while unpaid and never enters the PAID status. Outstanding = Σ ``amount_due``
 over the company's ``net_terms`` orders that are not yet paid
 (``net_terms_paid_at IS NULL``) and not cancelled, in the given currency.
 """
@@ -109,7 +109,11 @@ def convert_to_credit_currency(
 def outstanding_balance(db: Session, *, company: Company) -> Decimal | None:
     """Σ the company's unpaid, non-cancelled net-terms orders, in its billing currency.
 
-    Cross-currency (Program D): each order's ``total`` is converted from its own
+    What is owed is ``amount_due`` (total minus gift-card / store-credit tender),
+    not ``total`` — the same figure the net-terms auto-charge actually bills. The
+    property has no SQL form, so the subtraction is spelled out column-wise here.
+
+    Cross-currency (Program D): each order's amount is converted from its own
     currency into ``company.default_currency`` via the admin FX rates. Returns
     ``None`` when the balance can't be measured — no billing currency set, or an
     order is in a currency with no configured FX rate (the caller then rejects
@@ -119,9 +123,14 @@ def outstanding_balance(db: Session, *, company: Company) -> Decimal | None:
     if default is None:
         return None
     rates = _fx_rates(db)
+    amount_due = (
+        Order.total
+        - func.coalesce(Order.gift_card_amount, 0)
+        - func.coalesce(Order.store_credit_amount, 0)
+    )
     # Group by currency so a mixed-currency AR needs one convert per currency.
     rows = (
-        db.query(Order.currency, func.coalesce(func.sum(Order.total), 0))
+        db.query(Order.currency, func.coalesce(func.sum(amount_due), 0))
         .filter(
             Order.company_id == company.id,
             Order.payment_method == NET_TERMS_METHOD,

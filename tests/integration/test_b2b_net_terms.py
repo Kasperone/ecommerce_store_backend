@@ -617,12 +617,23 @@ async def test_cross_currency_no_rate_rejects(
     assert resp.json()["detail"] == "net_terms_currency_mismatch"
 
 
-def _make_net_terms_order(db, company, *, order_number, currency, total):
+def _make_net_terms_order(
+    db,
+    company,
+    *,
+    order_number,
+    currency,
+    total,
+    gift_card_amount=Decimal("0"),
+    store_credit_amount=Decimal("0"),
+):
     order = Order(
         order_number=order_number,
         status=OrderStatus.PENDING,
         subtotal=total,
         total=total,
+        gift_card_amount=gift_card_amount,
+        store_credit_amount=store_credit_amount,
         currency=currency,
         shipping_address="1 Main St",
         shipping_city="Warsaw",
@@ -645,6 +656,27 @@ def test_outstanding_balance_sums_across_currencies(db_session, company_factory)
     _make_net_terms_order(db_session, company, order_number="AR-PLN", currency="PLN", total=200)
     # 40 USD + (200 PLN x 0.25 = 50 USD) = 90 USD
     assert outstanding_balance(db_session, company=company) == Decimal("90.00")
+
+
+def test_outstanding_balance_excludes_stored_value_tender(db_session, company_factory):
+    """SEC-018: AR is Σ amount_due — gift-card/store-credit tender is already collected.
+
+    Counting ``total`` over-states exposure against what auto-charge actually bills.
+    """
+    _set_fx_rates(db_session, {"USD": 1})
+    company = company_factory(name="ArTenderCo", default_currency="USD", net_terms_enabled=True)
+    _make_net_terms_order(
+        db_session,
+        company,
+        order_number="AR-GC",
+        currency="USD",
+        total=100,
+        gift_card_amount=Decimal("30.00"),
+        store_credit_amount=Decimal("10.00"),
+    )
+    _make_net_terms_order(db_session, company, order_number="AR-PLAIN", currency="USD", total=25)
+    # (100 - 30 - 10) + 25 = 85, not 125
+    assert outstanding_balance(db_session, company=company) == Decimal("85.00")
 
 
 def test_outstanding_balance_none_when_rate_missing(db_session, company_factory):
