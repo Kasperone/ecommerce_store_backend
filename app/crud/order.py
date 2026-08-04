@@ -203,6 +203,30 @@ class OrderShippingCountryMissingError(Exception):
         )
 
 
+class OrderTenderReconciliationError(Exception):
+    """An edit left ``amount_due`` negative — the tender ledger and the order disagree.
+
+    Editing an order downward releases the stored-value excess back to the card
+    / credit account and rewrites the snapshots by **what actually moved**
+    (SEC-019). If the ledger holds less than the snapshot claims, the release
+    comes up short and the order would be left owing a negative amount, which no
+    provider webhook can ever match — ``_paid_amount_matches`` computes
+    ``round(amount_due * 100)`` — so the order becomes unsettleable.
+
+    That is a data-integrity fault, not a user error: it means the snapshot was
+    written without a matching ledger row. Failing the edit loudly keeps the
+    order in its previous, payable state instead of silently wedging it.
+    """
+
+    def __init__(self, order_id: int, amount_due: Decimal) -> None:
+        self.order_id = order_id
+        self.amount_due = amount_due
+        super().__init__(
+            f"Order #{order_id} would be left with a negative amount due ({amount_due}): "
+            "its gift-card / store-credit snapshot exceeds what the tender ledger holds."
+        )
+
+
 class InsufficientStockError(Exception):
     """A line requests more units than the product has in stock."""
 
@@ -1037,7 +1061,10 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         Totals go through the shared ``order_math.recompute_totals``; shipping
         is re-resolved when the order has a method (weight/method may have
         changed). Writes an ``edited`` timeline event with a before/after line
-        diff. Caller owns the commit.
+        diff. Any stored-value tender is re-fitted to the new total by
+        ``_reconcile_tender`` in this same unit of work — an edit downward
+        returns the excess and may settle the order outright. Caller owns the
+        commit.
         """
         if OrderStatus(order.status) != OrderStatus.PENDING:
             raise OrderNotEditableError(order.status)
@@ -1173,8 +1200,83 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             actor_id=actor_id,
             payload={"before": before_lines, "after": after_lines},
         )
+
+        # 8. Reconcile the stored-value tender against the new total, in this
+        #    same unit of work (SEC-019). Recorded after the 'edited' event so
+        #    the timeline reads edited → released → paid.
+        self._reconcile_tender(db, order=order, actor_id=actor_id)
+
         db.add(order)
         return order
+
+    def _reconcile_tender(self, db: Session, *, order: Order, actor_id: int | None = None) -> None:
+        """Re-fit an edited order's gift-card / store-credit snapshots to its new total.
+
+        ``recompute_totals`` knows nothing about tenders, so an order edited
+        **downward** ends up covered by more stored value than it costs and
+        ``Order.amount_due`` goes negative — breaking the invariant its own
+        docstring asserts and leaving the order unsettleable (SEC-019). Edits
+        *upward* need nothing: the tender still stands and the customer simply
+        owes the difference.
+
+        Unwinding is **LIFO**, store credit before gift card, the exact inverse
+        of how checkout applies them (card first, credit on the remainder). That
+        way the surviving split is the one checkout would itself have produced
+        for the smaller total, rather than an arbitrary one.
+
+        Each snapshot is reduced by what the ledger **actually released**, never
+        by what was asked for, so a ledger that disagrees with the snapshot
+        surfaces as a negative ``amount_due`` and raises
+        ``OrderTenderReconciliationError`` instead of quietly claiming money
+        that never moved. Caller owns the commit.
+        """
+        gift_amount = order.gift_card_amount or ZERO_MONEY
+        credit_amount = order.store_credit_amount or ZERO_MONEY
+        tendered = quantize_money(gift_amount + credit_amount)
+        if tendered <= 0:
+            return
+
+        excess = quantize_money(tendered - order.total)
+        if excess > 0:
+            if credit_amount > 0:
+                released = crud_store_credit.release_for_order(db, order_id=order.id, amount=excess)
+                if released > 0:
+                    order.store_credit_amount = quantize_money(credit_amount - released)
+                    excess = quantize_money(excess - released)
+            if excess > 0 and gift_amount > 0:
+                released = crud_gift_card.release_for_order(db, order_id=order.id, amount=excess)
+                if released > 0:
+                    order.gift_card_amount = quantize_money(gift_amount - released)
+                    excess = quantize_money(excess - released)
+            db.flush()
+            crud_order_event.record(
+                db,
+                order_id=order.id,
+                kind="tender_released",
+                actor_id=actor_id,
+                payload={
+                    "gift_card_amount": str(order.gift_card_amount or ZERO_MONEY),
+                    "store_credit_amount": str(order.store_credit_amount or ZERO_MONEY),
+                },
+            )
+
+        # The invariant, now enforced rather than merely asserted in a docstring.
+        if order.amount_due < 0:
+            raise OrderTenderReconciliationError(order.id, order.amount_due)
+
+        # An edit downward can legitimately settle the order outright — the same
+        # close-out checkout runs when stored value covers everything (D10).
+        if (
+            (order.gift_card_amount or ZERO_MONEY) + (order.store_credit_amount or ZERO_MONEY)
+        ) > 0 and order.amount_due == 0:
+            self.mark_paid(
+                db,
+                order=order,
+                payment_intent_id=None,
+                payment_method=(
+                    "gift_card" if (order.gift_card_amount or ZERO_MONEY) > 0 else "store_credit"
+                ),
+            )
 
     def mark_paid(
         self,
