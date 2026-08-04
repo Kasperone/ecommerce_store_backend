@@ -124,8 +124,12 @@ async def confirm_auto_charge_card(
 ):
     """Store the vaulted PaymentMethod from a confirmed SetupIntent — COMPANY_ADMIN.
 
-    Only a ``succeeded`` SetupIntent whose customer matches the company's is
-    accepted (400 otherwise), so a client can't point us at an unrelated card.
+    Only a ``succeeded`` SetupIntent whose customer **equals** the company's
+    ``stripe_customer_id`` is accepted (400 otherwise), so a client can't point us
+    at an unrelated card. The match is strict: a company with no
+    ``stripe_customer_id``, or an intent with no customer, is refused rather than
+    trusted. ``/setup-intent`` always ensures the customer first, so a NULL here
+    means that flow was skipped — exactly the case to refuse.
     """
     service = get_stripe_service()
     company = membership.company
@@ -134,17 +138,11 @@ async def confirm_auto_charge_card(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="SetupIntent not completed"
         )
-    if (
-        company.stripe_customer_id
-        and info["customer"]
-        and info["customer"] != company.stripe_customer_id
-    ):
+    if not company.stripe_customer_id or info["customer"] != company.stripe_customer_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="SetupIntent customer mismatch"
         )
     company.auto_charge_payment_method_id = info["payment_method"]
-    if info["customer"]:
-        company.stripe_customer_id = info["customer"]
     db.add(company)
     db.commit()
     return AutoChargeStatusResponse(auto_charge_card_set=True)
