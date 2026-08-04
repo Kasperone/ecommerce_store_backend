@@ -10,6 +10,7 @@ throttled to once per ``NET_TERMS_DUNNING_INTERVAL_DAYS``. Dark by default behin
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 
@@ -33,6 +34,8 @@ def _make_net_terms_order(
     paid_at: datetime | None = None,
     status: OrderStatus = OrderStatus.PENDING,
     currency: str = "USD",
+    gift_card_amount: Decimal = Decimal("0"),
+    store_credit_amount: Decimal = Decimal("0"),
 ) -> Order:
     order = Order(
         user_id=user.id,
@@ -41,6 +44,8 @@ def _make_net_terms_order(
         subtotal=100.0,
         total=100.0,
         currency=currency,
+        gift_card_amount=gift_card_amount,
+        store_credit_amount=store_credit_amount,
         shipping_address="1 Main St",
         shipping_city="Warsaw",
         shipping_postal_code="00-001",
@@ -124,6 +129,38 @@ def test_overdue_sends_once_and_dedups(db_session, user_factory, captured_emails
     # Second run within the throttle window → no second email.
     assert send_net_terms_reminders(db_session) == 0
     assert len(captured_emails) == 1
+
+
+def test_reminder_quotes_amount_due_not_total(db_session, user_factory, captured_emails, _enabled):
+    """SEC-018 sibling: stored-value tender was already collected — dun for the remainder."""
+    user = user_factory(email="dun-gc@example.com")
+    _make_net_terms_order(
+        db_session,
+        user,
+        order_number="NT-GC-1",
+        due_at=_naive_now() - timedelta(days=3),
+        gift_card_amount=Decimal("30.00"),
+        store_credit_amount=Decimal("5.50"),
+    )
+    assert send_net_terms_reminders(db_session) == 1
+    html = captured_emails[0]["html_content"]
+    assert "64.50 USD" in html  # 100.00 - 30.00 - 5.50
+    assert "100.00 USD" not in html
+
+
+def test_fully_covered_order_is_not_dunned(db_session, user_factory, captured_emails, _enabled):
+    """Nothing is owed, so there is no debt to chase — and this pass has no
+    auto-charge filter, so without the skip such an order is dunned forever."""
+    user = user_factory(email="dun-covered@example.com")
+    _make_net_terms_order(
+        db_session,
+        user,
+        order_number="NT-COVERED",
+        due_at=_naive_now() - timedelta(days=3),
+        gift_card_amount=Decimal("100.00"),
+    )
+    assert send_net_terms_reminders(db_session) == 0
+    assert captured_emails == []
 
 
 def test_pl_locale_copy(db_session, user_factory, captured_emails, _enabled):
