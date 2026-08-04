@@ -245,10 +245,17 @@ class Order(BaseModel):
         """What a payment provider must still collect (D2 — tenders, not discounts).
 
         ``total`` is unchanged by gift-card/store-credit tenders; the snapshots
-        record what stored value already covered. ≥ 0 by construction (the
-        checkout applies ``min(balance, remainder)`` per D10). Surfaced on the
-        wire via ``OrderResponse.amount_due`` and used by every provider charge
-        + webhook amount check.
+        record what stored value already covered. Surfaced on the wire via
+        ``OrderResponse.amount_due`` and used by every provider charge + webhook
+        amount check.
+
+        **≥ 0, and enforced rather than assumed.** Checkout applies
+        ``min(balance, remainder)`` per D10, but that alone only held until an
+        admin edited the order downward — ``recompute_totals`` lowers ``total``
+        and knows nothing about tenders (SEC-019). ``crud_order._reconcile_tender``
+        now releases the excess on every edit and raises rather than leave this
+        negative, because a negative amount due is one no provider webhook can
+        ever match, so the order could never be settled.
         """
         return quantize_money(
             self.total - (self.gift_card_amount or 0) - (self.store_credit_amount or 0)
