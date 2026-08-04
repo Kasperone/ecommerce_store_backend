@@ -11,6 +11,10 @@ pass. Unlike abandoned-cart, these are **transactional** (about an existing
 invoice debt, not marketing), so there is no ``marketing_email`` consent gate;
 the feature is instead dark by default behind ``settings.NET_TERMS_DUNNING_ENABLED``.
 
+The reminder quotes ``order.amount_due``, not ``total`` — stored-value tender was
+already collected — and an order fully covered by stored value is skipped entirely
+(no debt to chase).
+
 Re-send is throttled to at most once per ``NET_TERMS_DUNNING_INTERVAL_DAYS`` per
 order, deduped via a ``net_terms_reminder`` **order_event** (the timeline table
 already exists — no schema change). Each successful send records its event and
@@ -76,7 +80,10 @@ def _build_html(order: Order, lang: str, first_name: str) -> str:
     texts = _texts_for(lang)
     num = html_escape(order.order_number)
     due = order.payment_due_at.date().isoformat() if order.payment_due_at else ""
-    amount = html_escape(f"{order.total} {order.currency}")
+    # What is still owed, not the headline total: gift-card / store-credit tender was
+    # already collected at checkout (SEC-018 — same reason the auto-charge bills
+    # ``amount_due``). Dunning for ``total`` overstates the debt to the buyer.
+    amount = html_escape(f"{order.amount_due} {order.currency}")
     return (
         f'<h2 style="margin:0 0 12px;">{texts["heading"]}</h2>'
         f"<p>{html_escape(texts['greeting'].format(first_name=first_name))}</p>"
@@ -126,6 +133,12 @@ def send_net_terms_reminders(db: Session) -> int:
 
     sent = 0
     for order in overdue:
+        if order.amount_due <= 0:
+            # Stored value already covered it — there is no debt to chase. Note this
+            # pass has no auto-charge filter, so it reaches companies
+            # ``charge_due_orders`` never settles; without this skip they would be
+            # dunned indefinitely for an amount of 0.
+            continue
         last = _last_reminder_at(db, order.id)
         if last is not None and (now - last) < interval:
             continue  # already reminded within the throttle window
