@@ -237,12 +237,22 @@ class CRUDStoreCredit:
         )
         return account, entry
 
-    def release_for_order(self, db: Session, *, order_id: int) -> Decimal:
-        """Credit back whatever ``order_id`` redeemed (order-cancel seam, D5).
+    def release_for_order(
+        self, db: Session, *, order_id: int, amount: Decimal | None = None
+    ) -> Decimal:
+        """Credit back what ``order_id`` redeemed (order-cancel / order-edit seam, D5).
 
-        Idempotent: releases ``sum(redeems) - sum(releases)`` for the order, so
-        re-running (or cancelling an order that never used credit) is a no-op
-        returning ``0.00``. Caller owns the commit.
+        ``amount=None`` (the cancel case) releases everything still outstanding.
+        Passing an ``amount`` releases at most that much — the order-edit case
+        (SEC-019), where an order edited *downward* over-covers itself and only
+        the excess comes back.
+
+        Idempotent: the outstanding figure is ``sum(redeems) - sum(releases)``
+        for the order and every release is clamped to it, so re-running (or
+        cancelling an order that never used credit) is a no-op returning
+        ``0.00``. **Returns what was actually released** — see the gift-card
+        twin for why a caller rewriting a snapshot must use that, not the
+        requested amount. Caller owns the commit.
         """
         rows = (
             db.query(StoreCreditEntry)
@@ -262,7 +272,8 @@ class CRUDStoreCredit:
         released = sum(
             (e.amount for e in rows if e.kind == StoreCreditEntryKind.RELEASE.value), ZERO_MONEY
         )
-        to_release = quantize_money(redeemed - released)
+        outstanding = quantize_money(redeemed - released)
+        to_release = outstanding if amount is None else min(quantize_money(amount), outstanding)
         if to_release <= 0:
             return ZERO_MONEY
         account = (

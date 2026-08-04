@@ -43,6 +43,7 @@ from app.crud.order import (
     OrderLineSpec,
     OrderNotEditableError,
     OrderShippingCountryMissingError,
+    OrderTenderReconciliationError,
     ProductUnavailableError,
     ShippingRequiredError,
     VariantRequiredError,
@@ -582,6 +583,10 @@ async def edit_order_items(
     except OrderNotEditableError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except OrderShippingCountryMissingError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except OrderTenderReconciliationError as exc:
+        # The edit is rolled back with the request, so the order stays payable
+        # in its previous shape — a 409 the admin can act on beats a wedged order.
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except ProductUnavailableError as exc:
         raise HTTPException(

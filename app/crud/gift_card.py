@@ -359,14 +359,26 @@ class CRUDGiftCard:
         )
         return card, entry
 
-    def release_for_order(self, db: Session, *, order_id: int) -> Decimal:
-        """Credit back whatever ``order_id`` redeemed (order-cancel seam, D5).
+    def release_for_order(
+        self, db: Session, *, order_id: int, amount: Decimal | None = None
+    ) -> Decimal:
+        """Credit back what ``order_id`` redeemed (order-cancel / order-edit seam, D5).
 
-        Idempotent by construction: releases ``sum(redeems) - sum(releases)``
-        for the order, so re-running (or cancelling an order that never
+        ``amount=None`` (the cancel case) releases everything still outstanding.
+        Passing an ``amount`` releases at most that much — the order-edit case
+        (SEC-019), where an order edited *downward* over-covers itself and only
+        the excess comes back.
+
+        Idempotent by construction: the outstanding figure is
+        ``sum(redeems) - sum(releases)`` for the order, and every release is
+        clamped to it, so re-running (or cancelling an order that never
         redeemed) is a no-op returning ``0.00``. The release goes through even
-        on a disabled/expired card — cancelling an order must never strand the
-        customer's money. Caller owns the commit.
+        on a disabled/expired card — neither cancelling nor editing an order may
+        strand the customer's money. **Returns what was actually released**,
+        which callers rewriting an order's tender snapshot must use rather than
+        what they asked for: a short release means the ledger disagrees with the
+        snapshot, and the snapshot must not claim money that never moved.
+        Caller owns the commit.
         """
         rows = (
             db.query(GiftCardEntry)
@@ -386,7 +398,8 @@ class CRUDGiftCard:
         released = sum(
             (e.amount for e in rows if e.kind == GiftCardEntryKind.RELEASE.value), ZERO_MONEY
         )
-        to_release = quantize_money(redeemed - released)
+        outstanding = quantize_money(redeemed - released)
+        to_release = outstanding if amount is None else min(quantize_money(amount), outstanding)
         if to_release <= 0:
             return ZERO_MONEY
         card = self._locked(db, rows[0].gift_card_id)
