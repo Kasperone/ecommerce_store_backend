@@ -12,8 +12,8 @@ camel-converter==5.1.0
 certifi==2025.10.5
 cffi==2.0.0
 charset-normalizer==3.4.4
-click==8.3.0
-cryptography==48.0.1
+click==8.3.3
+cryptography==50.0.0
 Deprecated==1.3.1
 dnspython==2.8.0
 email-validator==2.3.0
@@ -34,7 +34,7 @@ meilisearch==0.41.0
 nh3==0.3.5
 packaging==26.2
 passlib==1.7.4
-Pillow==12.2.0
+Pillow==12.3.0
 psycopg2-binary==2.9.11
 pycparser==2.23
 pydantic==2.12.2
