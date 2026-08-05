@@ -22,8 +22,8 @@ from math import ceil
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import ORDERS_REFUND, ORDERS_WRITE
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.capabilities import ORDERS_READ, ORDERS_REFUND, ORDERS_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.core.money import ZERO_MONEY, quantize_money
 from app.crud import refund as crud_refund
 from app.crud import return_request as crud_return_request
@@ -48,6 +48,8 @@ from app.services import order_email, return_email, search_index
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+_read = Depends(require_read(ORDERS_READ))
 
 # RMA workflow actions gate on orders:write; the money-moving refund on orders:refund.
 _orders_write = Depends(require_capability(ORDERS_WRITE))
@@ -90,7 +92,7 @@ async def _apply_transition_or_400(
 @router.get("/", response_model=ReturnRequestListResponse)
 async def list_returns(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     return_status: ReturnStatusLiteral | None = Query(
@@ -115,7 +117,7 @@ async def list_returns(
 async def get_return(
     return_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """Get one return request (lines + denormalised order summary fields)."""
     return _get_or_404(db, return_id)

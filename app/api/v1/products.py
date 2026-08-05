@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import CATALOG_WRITE
+from app.core.capabilities import CATALOG_READ, CATALOG_WRITE, staff_can_read
 from app.core.dependencies import (
     get_current_admin,
     get_db,
@@ -21,7 +21,7 @@ from app.models.order import OrderItem
 from app.models.price_history import SUPPORTED_CURRENCIES
 from app.models.product import Product
 from app.models.quote import QuoteItem
-from app.models.user import User, UserRole
+from app.models.user import User
 from app.schemas.price_history import LowestPriceResponse
 from app.schemas.product import (
     ProductCreate,
@@ -81,8 +81,9 @@ async def list_products(
     is_active: bool | None = Query(
         None,
         description=(
-            "Filter by active status. Admin-only — non-admin callers always "
-            "receive active products regardless of this value (omit = all, for admins)."
+            "Filter by active status. Requires the ``catalog:read`` capability — "
+            "every other caller receives active products regardless of this value "
+            "(omit = all, for capable staff)."
         ),
     ),
     is_featured: bool | None = Query(None, description="Filter by featured status"),
@@ -107,8 +108,9 @@ async def list_products(
     - **page**: Page number (starts from 1)
     - **page_size**: Number of items per page (1-100)
     - **category_id**: Filter by category
-    - **is_active**: Admin-only filter. Non-admins always get active products;
-      an admin may pass ``false`` (inactive only) or omit it for all
+    - **is_active**: needs the ``catalog:read`` capability. Everyone else always
+      gets active products; capable staff may pass ``false`` (inactive only) or
+      omit it for all
     - **is_featured**: Filter featured products
     - **min_price/max_price**: Price range filter (USD)
     - **in_stock**: Filter by stock availability
@@ -116,11 +118,14 @@ async def list_products(
     - **sort_by**: Field to sort by (created_at, price_usd, name)
     - **order**: Sort direction (asc or desc)
     """
-    # This list endpoint is public. Only admins may see inactive products (or the
-    # unfiltered "all" view via is_active=None); for every other caller we force
-    # the active-only filter regardless of what was requested, so a guest can
-    # never enumerate inactive / unpublished products through this route.
-    if current_user is None or current_user.role != UserRole.ADMIN:
+    # This list endpoint is public. Only staff holding ``catalog:read`` may see
+    # inactive products (or the unfiltered "all" view via is_active=None); for
+    # every other caller we force the active-only filter regardless of what was
+    # requested, so a guest can never enumerate inactive / unpublished products
+    # through this route. A staffer *without* the capability degrades to the
+    # public view rather than 403 — this route is the storefront, and 403ing a
+    # logged-in staff member would break it for them.
+    if not staff_can_read(current_user, CATALOG_READ):
         is_active = True
 
     skip = (page - 1) * page_size

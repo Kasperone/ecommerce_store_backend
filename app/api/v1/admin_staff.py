@@ -19,8 +19,8 @@ from math import ceil
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import STAFF_WRITE
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.capabilities import STAFF_READ, STAFF_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.crud import user as crud_user
 from app.models.user import User, UserRole
 from app.schemas.staff import StaffListResponse, StaffResponse, StaffUpdate
@@ -30,6 +30,7 @@ router = APIRouter()
 
 # Capability gate for this router's write/DELETE routes.
 _require = Depends(require_capability(STAFF_WRITE))
+_read = Depends(require_read(STAFF_READ))
 
 # Audit resource type for staff role/activation changes. The rows live in the
 # same users table as customers, so ``"user"`` keeps the audit log coherent.
@@ -39,7 +40,7 @@ AUDIT_RESOURCE_TYPE = "user"
 @router.get("/", response_model=StaffListResponse)
 async def list_staff(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     search: str | None = Query(

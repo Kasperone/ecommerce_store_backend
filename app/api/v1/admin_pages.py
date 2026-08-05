@@ -30,8 +30,8 @@ from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import CONTENT_WRITE
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.capabilities import CONTENT_READ, CONTENT_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.crud import page as crud_page
 from app.crud.page import PREVIEW_TOKEN_TTL_SECONDS, make_preview_token
 from app.models.user import User
@@ -54,6 +54,7 @@ router = APIRouter()
 
 # Capability gate for this router's write/DELETE routes.
 _require = Depends(require_capability(CONTENT_WRITE))
+_read = Depends(require_read(CONTENT_READ))
 
 # nh3 (Rust ammonia) allowlist for the custom-html block. Defaults already drop
 # <script>/<style> and event handlers; we explicitly allow a pragmatic content
@@ -181,7 +182,7 @@ def _get_or_404(db: Session, page_id: int):
 @router.get("/", response_model=PageListResponse)
 async def list_pages(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     locale: PageLocaleLiteral | None = Query(None, description="Filter by locale"),
@@ -252,7 +253,7 @@ async def create_page(
 async def get_page(
     page_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """Get one page by id (draft + published)."""
     return _get_or_404(db, page_id)
@@ -353,7 +354,7 @@ async def create_preview_token(
 async def list_versions(
     page_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """List a page's immutable versions, newest first."""
     _get_or_404(db, page_id)

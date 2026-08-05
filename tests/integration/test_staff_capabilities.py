@@ -84,15 +84,27 @@ async def test_customer_403_and_anonymous_401(client, user_factory):
     assert anon.status_code == 401
 
 
-async def test_reads_stay_open_to_any_staff(client, user_factory):
-    # A staffer with NO capabilities can still GET (read) the tag vocabulary.
-    staffer = user_factory(
+async def test_reads_are_capability_scoped_too(client, user_factory):
+    """SEC-021 changed this rule. Reads used to be open to any staff; a staffer
+    with no capabilities now 403s, and a ``catalog:write`` holder still reads
+    the tag vocabulary because write implies read (no grant had to change).
+    """
+    ungranted = user_factory(
         email="cap-reader@example.com",
         role=UserRole.ADMIN,
         is_owner=False,
         capabilities=[],
     )
-    resp = await client.get("/api/v1/admin/tags/", headers=_headers(staffer))
+    resp = await client.get("/api/v1/admin/tags/", headers=_headers(ungranted))
+    assert resp.status_code == 403
+
+    catalog_staffer = user_factory(
+        email="cap-reader-catalog@example.com",
+        role=UserRole.ADMIN,
+        is_owner=False,
+        capabilities=[CATALOG_WRITE],
+    )
+    resp = await client.get("/api/v1/admin/tags/", headers=_headers(catalog_staffer))
     assert resp.status_code == 200
 
 

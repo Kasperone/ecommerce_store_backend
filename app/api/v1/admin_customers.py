@@ -14,9 +14,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.core import email as email_service
-from app.core.capabilities import CUSTOMERS_WRITE, ORDERS_REFUND
+from app.core.capabilities import CUSTOMERS_READ, CUSTOMERS_WRITE, ORDERS_REFUND
 from app.core.config import settings
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.core.money import to_money
 from app.core.rate_limit import limiter
 from app.core.security import create_access_token
@@ -56,6 +56,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+_read = Depends(require_read(CUSTOMERS_READ))
+
 # Customer-record mutations gate on customers:write; the store-credit adjustment
 # moves money, so it gates on the financial orders:refund capability.
 _customers_write = Depends(require_capability(CUSTOMERS_WRITE))
@@ -81,7 +83,7 @@ def _detail(db: Session, user: User) -> CustomerDetail:
 @router.get("/", response_model=CustomerListResponse)
 async def list_customers(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     role: UserRole | None = Query(None, description="Filter by role"),
@@ -149,7 +151,7 @@ async def list_customers(
 async def get_customer(
     customer_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """Get one customer with lifetime order metrics (admin)."""
     user = crud_user.get(db, id=customer_id)
@@ -346,7 +348,7 @@ def _get_note_or_404(db: Session, customer_id: int, note_id: int) -> CustomerNot
 async def list_customer_notes(
     customer_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """List a customer's internal notes (admin), newest first."""
     _get_customer_or_404(db, customer_id)
@@ -525,7 +527,7 @@ def _store_credit_summary(db: Session, customer_id: int) -> StoreCreditSummaryRe
 async def get_customer_store_credit(
     customer_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """A customer's store credit: per-currency balances + ledger, newest first."""
     _get_customer_or_404(db, customer_id)

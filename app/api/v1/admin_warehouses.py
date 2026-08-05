@@ -11,8 +11,8 @@ from math import ceil
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import INVENTORY_WRITE
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.capabilities import INVENTORY_READ, INVENTORY_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.crud import warehouse as crud_warehouse
 from app.models.user import User
 from app.schemas.warehouse import (
@@ -27,12 +27,13 @@ router = APIRouter()
 
 # Capability gate for this router's write/DELETE routes.
 _require = Depends(require_capability(INVENTORY_WRITE))
+_read = Depends(require_read(INVENTORY_READ))
 
 
 @router.get("/", response_model=WarehouseListResponse)
 async def list_warehouses(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     is_active: bool | None = Query(None, description="Filter by active status"),
@@ -81,7 +82,7 @@ async def create_warehouse(
 async def get_warehouse(
     warehouse_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """Get one warehouse by id."""
     warehouse = crud_warehouse.get(db, warehouse_id)

@@ -7,9 +7,9 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import CATALOG_WRITE
+from app.core.capabilities import CATALOG_READ, CATALOG_WRITE
 from app.core.config import settings
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.core.storage import get_r2_client
 from app.crud import category as crud_category
 from app.crud.category import (
@@ -50,6 +50,7 @@ router = APIRouter()
 
 # Capability gate for this router's write/DELETE routes.
 _require = Depends(require_capability(CATALOG_WRITE))
+_read = Depends(require_read(CATALOG_READ))
 
 DeleteMode = Literal["cascade", "reparent_to_root"]
 
@@ -216,7 +217,7 @@ async def get_category(
 async def category_delete_preview(
     category_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """Counts the admin needs before picking ``cascade`` vs ``reparent_to_root``."""
     category = crud_category.get(db, id=category_id)

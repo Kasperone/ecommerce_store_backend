@@ -21,8 +21,8 @@ from math import ceil
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import ORDERS_WRITE
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.capabilities import ORDERS_READ, ORDERS_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.crud import draft_order as crud_draft_order
 from app.crud.draft_order import (
     DraftOrderItemError,
@@ -51,6 +51,7 @@ router = APIRouter()
 
 # Capability gate for this router's write/DELETE routes.
 _require = Depends(require_capability(ORDERS_WRITE))
+_read = Depends(require_read(ORDERS_READ))
 
 
 def _get_draft_or_404(db: Session, draft_id: int) -> DraftOrder:
@@ -80,7 +81,7 @@ def _check_user_ref(db: Session, payload: DraftOrderCreate | DraftOrderUpdate) -
 @router.get("/", response_model=DraftOrderListResponse)
 async def list_draft_orders(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     status_filter: DraftOrderStatusLiteral | None = Query(
@@ -132,7 +133,7 @@ async def create_draft_order(
 async def get_draft_order(
     draft_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """Get one draft by id, with its nested line items (live-priced)."""
     return _get_draft_or_404(db, draft_id)

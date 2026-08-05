@@ -19,8 +19,8 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import SETTINGS_WRITE
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.capabilities import SETTINGS_READ, SETTINGS_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.models.user import User
 from app.schemas.translation import (
     TranslationResourceListResponse,
@@ -46,6 +46,7 @@ router = APIRouter()
 
 # Capability gate for this router's write/DELETE routes.
 _require = Depends(require_capability(SETTINGS_WRITE))
+_read = Depends(require_read(SETTINGS_READ))
 
 
 def _resolve_locale(locale: str) -> str:
@@ -70,7 +71,7 @@ def _resolve_resource_def(resource_type: str):
 @router.get("/resource-types", response_model=TranslationResourceTypesResponse)
 async def list_resource_types(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     locale: str = Query("pl"),
 ):
     """Registry summary + per-type completeness counts for ``locale`` (admin)."""
@@ -82,7 +83,7 @@ async def list_resource_types(
 async def list_translations(
     resource_type: str,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     locale: str = Query("pl"),
     status_filter: Literal["all", "missing", "outdated"] = Query("all", alias="status"),
     q: str | None = Query(None),

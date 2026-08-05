@@ -18,9 +18,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import CUSTOMERS_WRITE
+from app.core.capabilities import COMPANIES_READ, CUSTOMERS_WRITE
 from app.core.config import settings
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.crud import company as crud_company
 from app.crud import payment_term as crud_payment_term
 from app.crud import price_list as crud_price_list
@@ -42,12 +42,13 @@ router = APIRouter()
 
 # Capability gate for this router's write/DELETE routes.
 _require = Depends(require_capability(CUSTOMERS_WRITE))
+_read = Depends(require_read(COMPANIES_READ))
 
 
 @router.get("/", response_model=CompanyListResponse)
 async def list_companies(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     status_filter: CompanyStatusLiteral | None = Query(
@@ -119,7 +120,7 @@ async def create_company(
 async def get_company(
     company_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """Get one company by id."""
     company = crud_company.get(db, company_id)
@@ -132,7 +133,7 @@ async def get_company(
 async def get_company_credit(
     company_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """The company's net-terms credit summary (limit / outstanding AR / available).
 

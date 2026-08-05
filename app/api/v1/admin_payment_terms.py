@@ -17,8 +17,8 @@ from math import ceil
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import CUSTOMERS_WRITE
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.capabilities import COMPANIES_READ, CUSTOMERS_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.crud import payment_term as crud_payment_term
 from app.models.payment_term import PaymentTermType
 from app.models.user import User
@@ -33,6 +33,7 @@ from app.services.audit import AuditWriter, get_audit_writer
 router = APIRouter()
 
 _require = Depends(require_capability(CUSTOMERS_WRITE))
+_read = Depends(require_read(COMPANIES_READ))
 
 
 def _validate_shape(term_type: str, net_days: int | None, due_date) -> None:
@@ -52,7 +53,7 @@ def _validate_shape(term_type: str, net_days: int | None, due_date) -> None:
 @router.get("/", response_model=PaymentTermListResponse)
 async def list_payment_terms(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     search: str | None = Query(None, description="Case-insensitive substring on name"),
@@ -88,7 +89,7 @@ async def create_payment_term(
 async def get_payment_term(
     payment_term_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """Get one payment term."""
     row = crud_payment_term.get(db, payment_term_id)
