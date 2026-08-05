@@ -19,8 +19,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import SETTINGS_WRITE
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.capabilities import SETTINGS_WRITE, SHIPPING_READ
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.core.money import as_float
 from app.crud import shipping_method as crud_shipping_method
 from app.crud import shipping_rate as crud_shipping_rate
@@ -54,6 +54,7 @@ router = APIRouter()
 
 # Capability gate for this router's write/DELETE routes.
 _require = Depends(require_capability(SETTINGS_WRITE))
+_read = Depends(require_read(SHIPPING_READ))
 
 
 def _zone_detail(zone: ShippingZone) -> ShippingZoneDetail:
@@ -106,7 +107,7 @@ def _rate_list_item(rate: ShippingRate) -> ShippingRateListItem:
 @router.get("/zones", response_model=ShippingZoneListResponse)
 async def list_zones(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
 ):
@@ -145,7 +146,7 @@ async def list_zones(
 async def get_zone(
     zone_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """Get one zone with its country list (admin)."""
     zone = crud_shipping_zone.get_with_countries(db, id=zone_id)
@@ -236,7 +237,7 @@ async def delete_zone(
 @router.get("/methods", response_model=ShippingMethodListResponse)
 async def list_methods(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
 ):
@@ -258,7 +259,7 @@ async def list_methods(
 async def get_method(
     method_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     method = crud_shipping_method.get(db, id=method_id)
     if method is None:
@@ -354,7 +355,7 @@ async def delete_method(
 @router.get("/rates", response_model=ShippingRateListResponse)
 async def list_rates(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     zone_id: int | None = Query(None, description="Filter by zone"),
     method_id: int | None = Query(None, description="Filter by method"),
     currency: str | None = Query(None, pattern="^(USD|PLN|EUR)$", description="Filter by currency"),

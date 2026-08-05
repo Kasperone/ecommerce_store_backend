@@ -15,7 +15,7 @@ from fastapi import (
 from limits import parse as parse_rate_limit
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import ORDERS_REFUND, ORDERS_WRITE
+from app.core.capabilities import ORDERS_READ, ORDERS_REFUND, ORDERS_WRITE
 from app.core.config import settings
 from app.core.dependencies import (
     get_current_active_user,
@@ -23,6 +23,7 @@ from app.core.dependencies import (
     get_db,
     get_optional_user,
     require_capability,
+    require_read,
 )
 from app.core.money import to_money
 from app.core.rate_limit import get_ip_key, limiter
@@ -90,6 +91,8 @@ from app.services import order_email, order_export, return_email, search_index
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+_read = Depends(require_read(ORDERS_READ))
 
 # Anonymous order creation is an unauthenticated stock decrement — 10/minute
 # per IP blunts junk-order stock-burn (accepted v1 posture; no payment-first
@@ -296,8 +299,10 @@ async def list_orders(
     """
     List orders, scoped to the caller.
 
-    Customers see only their own orders; admins see all. Optional status filter
-    and ``created_at`` date range (``date_to`` inclusive, UTC calendar days).
+    Customers see only their own orders; staff holding ``orders:read`` see all.
+    A staffer without it degrades to customer scope (their own orders), not 403.
+    Optional status filter and ``created_at`` date range (``date_to`` inclusive,
+    UTC calendar days).
     """
     skip = (page - 1) * page_size
     orders = crud_order.get_multi_scoped(
@@ -329,7 +334,7 @@ async def list_orders(
 )
 async def export_orders(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     order_status: OrderStatus | None = Query(
         None, alias="status", description="Filter by order status"
     ),
@@ -763,7 +768,7 @@ async def issue_refund(
 async def list_order_events(
     order_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """The order's timeline, newest first (admin — any staff may read).
 
@@ -817,7 +822,8 @@ async def list_order_refunds(
     """
     List refunds for an order, scoped to the caller (customer / admin).
 
-    Customers see only their own orders' refunds; admins see any. A non-existent
+    Customers see only their own orders' refunds; staff holding ``orders:read``
+    see any (a staffer without it stays customer-scoped). A non-existent
     or not-owned order returns 404 (existence is not leaked). The customer
     surface is expected to drop ``note`` client-side — that field is internal,
     but the schema exposes it because the admin uses the same endpoint shape.
@@ -939,7 +945,8 @@ async def list_order_returns(
     """
     List return requests for an order, scoped to the caller (customer / admin).
 
-    Customers see only their own orders' returns; admins see any. A
+    Customers see only their own orders' returns; staff holding ``orders:read``
+    see any (a staffer without it stays customer-scoped). A
     non-existent or not-owned order returns 404 (existence is not leaked). The
     customer surface drops ``admin_note`` client-side — same convention as the
     refund ``note``.

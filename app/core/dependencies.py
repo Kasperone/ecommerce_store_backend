@@ -6,7 +6,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jwt import PyJWTError
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import effective_capabilities
+from app.core.capabilities import staff_can_read
 from app.core.database import SessionLocal
 from app.core.security import decode_token
 from app.crud import company_user as crud_company_user
@@ -170,27 +170,6 @@ def require_capability(cap: str):
         )
 
     return _dep
-
-
-def staff_can_read(current_user: User | None, cap: str) -> bool:
-    """Whether ``current_user`` may read the domain guarded by ``cap``.
-
-    The non-raising half of read scoping, for **dual-purpose and public routes**
-    where admin privilege is a *scope widening* rather than a separate endpoint:
-    ``GET /orders/`` widens from "your own orders" to "all orders" for staff, and
-    ``GET /products/`` lets staff see inactive products. A staffer without the
-    read capability must **degrade to customer scope**, not 403 — 403 would stop
-    a staffer seeing their *own* orders and would break the storefront for any
-    logged-in staff member.
-
-    Anonymous callers and customers are ``False`` (they never take the widened
-    branch); an owner is always ``True``.
-    """
-    if current_user is None or current_user.role != UserRole.ADMIN:
-        return False
-    if current_user.is_owner:
-        return True
-    return cap in effective_capabilities(current_user.capabilities)
 
 
 def require_read(cap: str):

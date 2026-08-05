@@ -12,8 +12,8 @@ naming so the two systems never collide.
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import CATALOG_WRITE
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.capabilities import CATALOG_READ, CATALOG_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.crud import product_tag as crud_product_tag
 from app.models.product_tag import ProductTag
 from app.models.user import User
@@ -24,6 +24,7 @@ router = APIRouter()
 
 # Capability gate for this router's write/DELETE routes.
 _require = Depends(require_capability(CATALOG_WRITE))
+_read = Depends(require_read(CATALOG_READ))
 
 
 def _response(tag: ProductTag, usage_count: int) -> ProductTagResponse:
@@ -40,7 +41,7 @@ def _response(tag: ProductTag, usage_count: int) -> ProductTagResponse:
 @router.get("/", response_model=list[ProductTagResponse])
 async def list_product_tags(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """List the product-tag vocabulary with per-tag product usage counts (admin)."""
     return [_response(t, count) for t, count in crud_product_tag.list_with_counts(db)]

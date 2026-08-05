@@ -19,8 +19,8 @@ from math import ceil
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import CUSTOMERS_WRITE
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.capabilities import COMPANIES_READ, CUSTOMERS_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.crud import price_list as crud_price_list
 from app.crud import product as crud_product
 from app.models.product_variant import ProductVariant
@@ -39,6 +39,7 @@ from app.services.audit import AuditWriter, get_audit_writer
 router = APIRouter()
 
 _require = Depends(require_capability(CUSTOMERS_WRITE))
+_read = Depends(require_read(COMPANIES_READ))
 
 
 # --- price-list header CRUD ------------------------------------------------
@@ -47,7 +48,7 @@ _require = Depends(require_capability(CUSTOMERS_WRITE))
 @router.get("/", response_model=PriceListListResponse)
 async def list_price_lists(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     search: str | None = Query(None, description="Case-insensitive substring on name"),
@@ -84,7 +85,7 @@ async def create_price_list(
 async def get_price_list(
     price_list_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """Get one price list with its nested entries."""
     row = crud_price_list.get_with_entries(db, price_list_id)

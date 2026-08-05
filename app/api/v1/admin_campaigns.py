@@ -25,8 +25,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core import email as email_mod
-from app.core.capabilities import MARKETING_WRITE
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.capabilities import MARKETING_READ, MARKETING_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.crud import campaign as crud_campaign
 from app.crud.segment import segment as crud_segment
 from app.models.user import User
@@ -49,12 +49,13 @@ router = APIRouter()
 
 # Capability gate for this router's write/DELETE routes.
 _require = Depends(require_capability(MARKETING_WRITE))
+_read = Depends(require_read(MARKETING_READ))
 
 
 @router.get("/", response_model=CampaignListResponse)
 async def list_campaigns(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     status_filter: CampaignStatusLiteral | None = Query(
@@ -108,7 +109,7 @@ async def create_campaign(
 async def get_campaign(
     campaign_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """Get one campaign by id."""
     campaign = crud_campaign.get(db, campaign_id)

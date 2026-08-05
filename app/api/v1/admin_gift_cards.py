@@ -18,8 +18,8 @@ from math import ceil
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import ORDERS_REFUND
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.capabilities import ORDERS_READ, ORDERS_REFUND
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.core.money import to_money
 from app.crud import gift_card as crud_gift_card
 from app.crud import user as crud_user
@@ -45,6 +45,7 @@ router = APIRouter()
 
 # Capability gate for this router's write/DELETE routes.
 _require = Depends(require_capability(ORDERS_REFUND))
+_read = Depends(require_read(ORDERS_READ))
 
 
 def _detail(card) -> GiftCardDetailResponse:
@@ -59,7 +60,7 @@ def _detail(card) -> GiftCardDetailResponse:
 @router.get("/", response_model=GiftCardListResponse)
 async def list_gift_cards(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     status_filter: GiftCardStatusLiteral | None = Query(
@@ -147,7 +148,7 @@ async def issue_gift_card(
 async def get_gift_card(
     gift_card_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """Get one gift card with its ledger (newest first)."""
     card = crud_gift_card.get_with_entries(db, gift_card_id)

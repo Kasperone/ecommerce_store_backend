@@ -10,12 +10,15 @@ from datetime import UTC, date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import REPORTS_READ
+from app.core.dependencies import get_db, require_read
 from app.crud import dashboard as crud_dashboard
 from app.models.user import User
 from app.schemas.dashboard import DashboardKpis
 
 router = APIRouter()
+
+_read = Depends(require_read(REPORTS_READ))
 
 # Cap a custom range at a year (inclusive) — mirrors the ``window_days`` upper bound
 # and keeps the trend payload bounded.
@@ -25,7 +28,7 @@ MAX_RANGE_DAYS = 366
 @router.get("/kpis", response_model=DashboardKpis)
 async def get_dashboard_kpis(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     window_days: int = Query(
         30, ge=1, le=365, description="Trailing window for the trend + windowed KPIs (days)"
     ),

@@ -13,8 +13,8 @@ from math import ceil
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import INVENTORY_WRITE
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.capabilities import INVENTORY_READ, INVENTORY_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.crud import inventory as crud_inventory
 from app.crud import product as crud_product
 from app.crud import product_variant as crud_product_variant
@@ -44,6 +44,7 @@ router = APIRouter()
 
 # Capability gate for this router's write/DELETE routes.
 _require = Depends(require_capability(INVENTORY_WRITE))
+_read = Depends(require_read(INVENTORY_READ))
 
 
 def _export_filename(inventory_status: str | None, search: str | None) -> str:
@@ -113,7 +114,7 @@ def _resolve_variant_grain(
 @router.get("/", response_model=InventoryListResponse)
 async def list_inventory(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     inventory_status: InventoryStatus | None = Query(
@@ -168,7 +169,7 @@ async def list_inventory(
 )
 async def export_inventory(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     inventory_status: InventoryStatus | None = Query(None, alias="status"),
     search: str | None = Query(None, max_length=100),
 ):
@@ -220,7 +221,7 @@ async def export_inventory(
 @router.get("/low-stock-summary", response_model=LowStockSummary)
 async def low_stock_summary(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """Grouped stock-status counts for the dashboard low-stock badge (admin).
 
@@ -278,7 +279,7 @@ async def email_low_stock_report(
 async def list_product_levels(
     product_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """Per-warehouse stock breakdown for one product (admin).
 
@@ -504,7 +505,7 @@ async def transfer_stock(
 @router.get("/movements", response_model=InventoryMovementListResponse)
 async def list_movements(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     product_id: int | None = Query(None, description="Filter to one product's movements"),

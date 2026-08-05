@@ -15,8 +15,8 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import SETTINGS_WRITE
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.capabilities import SETTINGS_WRITE, TAX_READ
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.crud import tax_category as crud_tax_category
 from app.crud import tax_rate as crud_tax_rate
 from app.models.user import User
@@ -33,6 +33,7 @@ from app.services.audit import AuditWriter, get_audit_writer
 router = APIRouter()
 
 _require = Depends(require_capability(SETTINGS_WRITE))
+_read = Depends(require_read(TAX_READ))
 
 
 # --- categories ------------------------------------------------------------
@@ -41,7 +42,7 @@ _require = Depends(require_capability(SETTINGS_WRITE))
 @router.get("/categories", response_model=list[TaxCategoryResponse])
 async def list_tax_categories(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """All tax categories (default first), each with its rates nested — enough
     for the admin picker to label a category with its home-country rate."""
@@ -77,7 +78,7 @@ async def create_tax_category(
 async def get_tax_category(
     category_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """One tax category with its rates."""
     row = crud_tax_category.get(db, category_id)

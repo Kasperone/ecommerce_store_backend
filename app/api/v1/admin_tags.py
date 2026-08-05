@@ -8,8 +8,8 @@ audited as ``resource_type="tag"``. Tag *assignment* to a customer lives under
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import CATALOG_WRITE
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.capabilities import CATALOG_READ, CATALOG_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.crud import tag as crud_tag
 from app.models.tag import Tag
 from app.models.user import User
@@ -20,6 +20,7 @@ router = APIRouter()
 
 # Capability gate for this router's write/DELETE routes.
 _require = Depends(require_capability(CATALOG_WRITE))
+_read = Depends(require_read(CATALOG_READ))
 
 
 def _response(tag: Tag, usage_count: int) -> TagResponse:
@@ -36,7 +37,7 @@ def _response(tag: Tag, usage_count: int) -> TagResponse:
 @router.get("/", response_model=list[TagResponse])
 async def list_tags(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """List the tag vocabulary with per-tag customer usage counts (admin)."""
     return [_response(t, count) for t, count in crud_tag.list_with_counts(db)]

@@ -12,7 +12,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import CATALOG_WRITE, ORDERS_WRITE
+from app.core.capabilities import CATALOG_WRITE, ORDERS_REFUND, ORDERS_WRITE
 from app.core.security import create_access_token
 from app.models.admin_audit_event import AdminAuditEvent
 from app.models.inventory_movement import InventoryMovement
@@ -512,6 +512,43 @@ async def test_admin_without_orders_write_cannot_cancel(
     order_id = await _paid_order_id(client, customer, product, owner, test_shipping_method_id)
 
     resp = await client.post(f"/api/v1/orders/{order_id}/cancel", headers=_headers(staffer))
+    # 404, not 403, since SEC-021 phase 2: `get_scoped` now narrows to customer
+    # scope for a staffer without `orders:read`, so the order is invisible to
+    # this caller and the route refuses before the capability fence is reached.
+    # The refusal moved *earlier* and leaks *less* — a 403 would have confirmed
+    # the order exists. Either way the cancellation does not happen, which is
+    # what SEC-016 fenced.
+    assert resp.status_code == 404
+
+
+async def test_staffer_who_can_read_orders_but_not_write_still_403s(
+    client, user_factory, product_factory, test_shipping_method_id
+):
+    """The SEC-016 capability fence, on the only path that still reaches it.
+
+    Once read scoping landed (SEC-021 phase 2) a staffer with *no* order
+    capability is refused earlier, by ``get_scoped``, with a 404 — so this is
+    the case that keeps the in-handler ``ORDERS_WRITE`` check covered. An
+    ``orders:refund`` holder implies ``orders:read``, so the order **is**
+    visible to them; cancelling it is still a write they do not hold.
+    Delete the fence and this test is what fails.
+    """
+    customer = user_factory(email="capcancel-refunder-cust@example.com")
+    owner = user_factory(email="capcancel-refunder-owner@example.com", role=UserRole.ADMIN)
+    refunder = user_factory(
+        email="capcancel-refunder@example.com",
+        role=UserRole.ADMIN,
+        is_owner=False,
+        capabilities=[ORDERS_REFUND],  # implies orders:read, not orders:write
+    )
+    product = product_factory(stock=10, price_usd=10.0)
+    order_id = await _paid_order_id(client, customer, product, owner, test_shipping_method_id)
+
+    # Positive control: the order really is visible to this staffer.
+    seen = await client.get(f"/api/v1/orders/{order_id}", headers=_headers(refunder))
+    assert seen.status_code == 200, seen.text
+
+    resp = await client.post(f"/api/v1/orders/{order_id}/cancel", headers=_headers(refunder))
     assert resp.status_code == 403
 
 
@@ -552,12 +589,19 @@ async def test_owner_cancels_any_order(
 async def test_ungated_admin_403s_before_learning_order_state(
     client, user_factory, product_factory, test_shipping_method_id
 ):
-    """The fence precedes the cancellability check.
+    """The refusal precedes the cancellability check.
 
-    Against an already-cancelled (non-cancellable) order the gated path would
+    Against an already-cancelled (non-cancellable) order the ungated path would
     answer 400 "cannot cancel an order with status 'cancelled'". A staffer
-    without ``orders:write`` must get 403 instead — the refusal must not double
+    without ``orders:write`` must never see that — the refusal must not double
     as an oracle for the order's status.
+
+    Since SEC-021 phase 2 the refusal is a **404**: such a staffer also lacks
+    ``orders:read``, so ``get_scoped`` narrows to customer scope and the order
+    is invisible to them. That is strictly less leaky than the 403 this test
+    originally asserted (which confirmed the order existed). The property under
+    test is unchanged — the status must not come back — so it is the status
+    assertion below, not the code, that carries the meaning.
     """
     customer = user_factory(email="capcancel-oracle-cust@example.com")
     owner = user_factory(email="capcancel-oracle-owner@example.com", role=UserRole.ADMIN)
@@ -576,7 +620,7 @@ async def test_ungated_admin_403s_before_learning_order_state(
     assert repeat.status_code == 400, repeat.text
 
     resp = await client.post(f"/api/v1/orders/{order_id}/cancel", headers=_headers(staffer))
-    assert resp.status_code == 403
+    assert resp.status_code == 404
     assert "cancelled" not in resp.json()["detail"]
 
 

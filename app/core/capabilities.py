@@ -35,6 +35,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 
+from app.models.user import User, UserRole
+
 # --- Write capabilities ---------------------------------------------------
 # Kept as module-level names so routers reference a symbol, not a stringly-typed
 # literal (a typo then fails at import, not at request time).
@@ -146,3 +148,30 @@ def effective_capabilities(granted: Iterable[str] | None) -> frozenset[str]:
     for cap in tuple(caps):
         caps |= IMPLIED_READS.get(cap, frozenset())
     return frozenset(caps)
+
+
+def staff_can_read(current_user: User | None, cap: str) -> bool:
+    """Whether ``current_user`` may read the domain guarded by ``cap``.
+
+    The non-raising half of read scoping, for **dual-purpose and public
+    surfaces** where admin privilege is a *scope widening* rather than a
+    separate endpoint: ``crud_order.get_scoped`` widens from "your own orders"
+    to "all orders", and ``GET /products/`` lets staff see inactive products. A
+    staffer without the read capability must **degrade to customer scope**, not
+    403 — a 403 would stop a staffer seeing their *own* orders and would break
+    the storefront for any logged-in staff member.
+
+    This lives beside the taxonomy rather than in ``dependencies.py`` so the
+    CRUD layer can enforce the policy at the choke point where the widening
+    actually happens. That is deliberate: it is the same coupling the role check
+    it replaces already had, and putting the fence in the widening branch means
+    a future caller cannot forget to pass a flag.
+
+    Anonymous callers and customers are ``False`` (they never take the widened
+    branch); an owner is always ``True``.
+    """
+    if current_user is None or current_user.role != UserRole.ADMIN:
+        return False
+    if current_user.is_owner:
+        return True
+    return cap in effective_capabilities(current_user.capabilities)
