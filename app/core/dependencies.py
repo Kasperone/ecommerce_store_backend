@@ -6,6 +6,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jwt import PyJWTError
 from sqlalchemy.orm import Session
 
+from app.core.capabilities import effective_capabilities
 from app.core.database import SessionLocal
 from app.core.security import decode_token
 from app.crud import company_user as crud_company_user
@@ -156,12 +157,57 @@ def require_capability(cap: str):
     role check, and FastAPI dedupes the shared ``get_current_admin`` when a route
     also declares ``get_audit_writer``). An **owner** implicitly holds every
     capability; a scoped staffer must have ``cap`` in ``users.capabilities``.
-    Gate every write/DELETE admin route with this; GET routes stay open to any
-    staff. See ``app/core/capabilities.py`` for the taxonomy.
+    Gate every write/DELETE admin route with this; admin GET routes take
+    ``require_read`` instead. See ``app/core/capabilities.py`` for the taxonomy.
     """
 
     async def _dep(current_user: User = Depends(get_current_admin)) -> User:
         if current_user.is_owner or cap in (current_user.capabilities or []):
+            return current_user
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions",
+        )
+
+    return _dep
+
+
+def staff_can_read(current_user: User | None, cap: str) -> bool:
+    """Whether ``current_user`` may read the domain guarded by ``cap``.
+
+    The non-raising half of read scoping, for **dual-purpose and public routes**
+    where admin privilege is a *scope widening* rather than a separate endpoint:
+    ``GET /orders/`` widens from "your own orders" to "all orders" for staff, and
+    ``GET /products/`` lets staff see inactive products. A staffer without the
+    read capability must **degrade to customer scope**, not 403 — 403 would stop
+    a staffer seeing their *own* orders and would break the storefront for any
+    logged-in staff member.
+
+    Anonymous callers and customers are ``False`` (they never take the widened
+    branch); an owner is always ``True``.
+    """
+    if current_user is None or current_user.role != UserRole.ADMIN:
+        return False
+    if current_user.is_owner:
+        return True
+    return cap in effective_capabilities(current_user.capabilities)
+
+
+def require_read(cap: str):
+    """Build a dependency that requires staff to hold read capability ``cap``.
+
+    The read counterpart of ``require_capability``, for ``admin_*`` routers where
+    the whole route is admin-only — a caller without ``cap`` gets 403. Holding a
+    domain's *write* capability implies its read (and the cross-module reads that
+    domain's workflows need), so ``require_read`` resolves against
+    ``effective_capabilities`` rather than the raw grant array.
+
+    For routes a customer can also reach, use ``staff_can_read`` inside the
+    handler instead — a route-level gate there would 403 legitimate customers.
+    """
+
+    async def _dep(current_user: User = Depends(get_current_admin)) -> User:
+        if staff_can_read(current_user, cap):
             return current_user
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

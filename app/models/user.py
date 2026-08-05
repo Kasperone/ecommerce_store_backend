@@ -96,7 +96,10 @@ class User(BaseModel):
     # A scoped staffer has ``is_owner=False`` and an explicit ``capabilities``
     # subset (validated against ``app.core.capabilities.CAPABILITIES``). Existing
     # admins are backfilled to ``is_owner=True`` in the migration so nobody loses
-    # access. See ``app/core/dependencies.py::require_capability``.
+    # access. The array stores only what was *granted*: a write capability also
+    # authorises the matching reads without them being stored, so read the
+    # effective set through ``app.core.capabilities.effective_capabilities``.
+    # See ``app/core/dependencies.py::require_capability`` / ``require_read``.
     is_owner: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     capabilities: Mapped[list[str]] = mapped_column(
         ARRAY(String), default=list, server_default=text("'{}'")

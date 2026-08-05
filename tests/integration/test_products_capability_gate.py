@@ -29,7 +29,7 @@ import pytest
 from fastapi.routing import APIRoute
 
 from app.core import capabilities as capabilities_module
-from app.core.capabilities import CAPABILITIES, CATALOG_WRITE, ORDERS_WRITE
+from app.core.capabilities import CATALOG_WRITE, ORDERS_WRITE, WRITE_CAPABILITIES
 from app.core.security import create_access_token
 from app.main import app
 from app.models.user import UserRole
@@ -154,11 +154,16 @@ async def test_scoped_staffer_with_catalog_write_can_create_update_delete(client
 _WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 # The symbol names routers reference (``ORDERS_WRITE``, …), derived from the
-# taxonomy so a new capability is picked up without editing this test.
+# taxonomy so a new capability is picked up without editing this test. Scoped to
+# the *write* half deliberately: once read scoping (SEC-021) lands, a
+# dual-purpose handler may mention a ``*_READ`` constant for its read-scope
+# check, and that must not count as a write gate.
 _CAPABILITY_NAMES = frozenset(
     name
     for name in dir(capabilities_module)
-    if name.isupper() and getattr(capabilities_module, name, None) in CAPABILITIES
+    if name.isupper()
+    and isinstance(getattr(capabilities_module, name, None), str)
+    and getattr(capabilities_module, name) in WRITE_CAPABILITIES
 )
 
 
