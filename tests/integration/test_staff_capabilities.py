@@ -7,8 +7,9 @@ owner/capability management + escalation guards on ``PATCH /admin/staff/{id}``:
   and 403s the rest; reads stay open to any staff
 - ``/auth/me`` exposes ``is_owner`` + ``capabilities`` so the FE can gate
 - staff PATCH: owner grants caps/owner; unknown cap → 422; a non-owner
-  ``staff:write`` holder can't touch owner/capabilities (escalation → 403);
-  the last active owner can't be removed (400)
+  ``staff:write`` holder can't touch owner/capabilities nor promote anyone into
+  the admin pool (escalation → 403, SEC-022) while demotion and edits to
+  existing staff still work; the last active owner can't be removed (400)
 - a backfilled existing admin (factory owner) is unchanged (regression)
 """
 
@@ -302,6 +303,95 @@ async def test_non_owner_staff_writer_can_toggle_non_owner_admin(client, user_fa
     )
     assert resp.status_code == 200
     assert resp.json()["is_active"] is False
+
+
+async def test_non_owner_staff_writer_cannot_promote_customer_to_admin(
+    client, user_factory, db_session: Session
+):
+    # SEC-022: minting staff is owner-only. A scoped staff:write holder passes
+    # the route gate but may not add anyone to the admin pool.
+    staff_writer = user_factory(
+        email="staffmgr5@example.com",
+        role=UserRole.ADMIN,
+        is_owner=False,
+        capabilities=[STAFF_WRITE],
+    )
+    target = user_factory(email="promo-target@example.com", role=UserRole.CUSTOMER)
+
+    resp = await client.patch(
+        f"/api/v1/admin/staff/{target.id}",
+        json={"role": "ADMIN"},
+        headers=_headers(staff_writer),
+    )
+    assert resp.status_code == 403
+    assert "owner" in resp.json()["detail"].lower()
+
+    # Assert the effect, not just the status: the row must be untouched.
+    db_session.refresh(target)
+    assert target.role == UserRole.CUSTOMER
+
+
+async def test_owner_can_promote_customer_to_admin(client, user_factory, db_session: Session):
+    # Positive control for the guard above — the operation itself works, it is
+    # only the actor that is restricted.
+    owner = user_factory(email="promoting-owner@example.com", role=UserRole.ADMIN, is_owner=True)
+    target = user_factory(email="promo-target2@example.com", role=UserRole.CUSTOMER)
+
+    resp = await client.patch(
+        f"/api/v1/admin/staff/{target.id}",
+        json={"role": "ADMIN"},
+        headers=_headers(owner),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["role"] == "ADMIN"
+
+    db_session.refresh(target)
+    assert target.role == UserRole.ADMIN
+    # Minted with nothing granted — the promotion is not itself an escalation.
+    assert target.is_owner is False
+    assert not (target.capabilities or [])
+
+
+async def test_non_owner_staff_writer_may_resend_admin_role_on_existing_admin(client, user_factory):
+    # Precision control: the guard fires on *promotion*, not on any PATCH that
+    # happens to carry role=admin. A staff:write holder editing an account that
+    # is already staff must keep working.
+    staff_writer = user_factory(
+        email="staffmgr6@example.com",
+        role=UserRole.ADMIN,
+        is_owner=False,
+        capabilities=[STAFF_WRITE],
+    )
+    target = user_factory(email="already-admin@example.com", role=UserRole.ADMIN, is_owner=False)
+
+    resp = await client.patch(
+        f"/api/v1/admin/staff/{target.id}",
+        json={"role": "ADMIN", "is_active": True},
+        headers=_headers(staff_writer),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["role"] == "ADMIN"
+
+
+async def test_non_owner_staff_writer_can_still_demote_an_admin(client, user_factory):
+    # Demotion is not restricted — only minting is. (A second active admin keeps
+    # the last-active-admin guard out of the way.)
+    staff_writer = user_factory(
+        email="staffmgr7@example.com",
+        role=UserRole.ADMIN,
+        is_owner=False,
+        capabilities=[STAFF_WRITE],
+    )
+    user_factory(email="spare-admin@example.com", role=UserRole.ADMIN)
+    target = user_factory(email="demote-target@example.com", role=UserRole.ADMIN, is_owner=False)
+
+    resp = await client.patch(
+        f"/api/v1/admin/staff/{target.id}",
+        json={"role": "CUSTOMER"},
+        headers=_headers(staff_writer),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["role"] == "CUSTOMER"
 
 
 # ---------------------------------------------------------------------------

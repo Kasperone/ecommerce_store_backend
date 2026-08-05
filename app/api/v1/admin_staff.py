@@ -85,6 +85,9 @@ async def update_staff(
       change ``capabilities``, or edit an account that is *currently* an owner.
       A scoped ``staff:write`` holder can only flip role/activation on
       non-owner accounts. (This endpoint is already gated ``staff:write``.)
+    - **Promotion to staff** — only an *owner* may promote a ``CUSTOMER`` to
+      ``ADMIN`` (SEC-022); minting an admin creates a foothold that outlives
+      the promoter. Demotion stays open to any ``staff:write`` holder.
     - **Self-lockout** — the acting admin can't demote/deactivate themselves.
     - **Last active admin** — can't drop the only remaining active admin.
     - **Last active owner** — can't remove the only remaining active owner
@@ -108,6 +111,19 @@ async def update_staff(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only an owner can manage owners and capabilities",
+        )
+
+    # Minting staff is owner-only too (SEC-022). The promoted account starts
+    # with no capabilities, so post-SEC-021 it can neither write nor read any
+    # gated surface — but it is an ADMIN foothold that persists after the
+    # promoter is gone and sits one grant away from real access. Deciding who
+    # joins the staff pool belongs to an owner. Re-sending ``role: ADMIN`` on an
+    # account that is *already* staff is not a promotion and stays allowed.
+    promotes_to_staff = data.get("role") == UserRole.ADMIN and user.role != UserRole.ADMIN
+    if promotes_to_staff and not current_admin.is_owner:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only an owner can promote an account to admin",
         )
 
     # Merged target state — only overwrite a field the caller actually sent.
