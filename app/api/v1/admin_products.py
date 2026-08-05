@@ -30,8 +30,8 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, Up
 from sqlalchemy.orm import Session
 
 from app.api.v1.products import _reconcile_product_tags
-from app.core.capabilities import CATALOG_WRITE
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.capabilities import CATALOG_READ, CATALOG_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.core.money import as_float
 from app.crud import category as crud_category
 from app.crud import collection as crud_collection
@@ -52,6 +52,8 @@ from app.services import product_export, product_import, search_index
 from app.services.audit import AuditWriter, get_audit_writer
 
 router = APIRouter()
+
+_read = Depends(require_read(CATALOG_READ))
 
 # Every write route in this router is a catalog mutation.
 _catalog_write = Depends(require_capability(CATALOG_WRITE))
@@ -82,7 +84,7 @@ def _export_filename(category_id: int | None, is_active: bool | None, search: st
 )
 async def export_products(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     category_id: int | None = Query(None, description="Filter by category ID"),
     is_active: bool | None = Query(None, description="Filter by active status (omit = all)"),
     search: str | None = Query(None, max_length=100, description="Search in name/description"),

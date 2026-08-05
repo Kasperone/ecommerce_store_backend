@@ -17,9 +17,9 @@ import uuid
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import CATALOG_WRITE
+from app.core.capabilities import CATALOG_READ, CATALOG_WRITE
 from app.core.config import settings
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.core.storage import get_r2_client
 from app.crud import collection as crud_collection
 from app.crud import product as crud_product
@@ -50,6 +50,7 @@ router = APIRouter()
 
 # Capability gate for this router's write/DELETE routes.
 _require = Depends(require_capability(CATALOG_WRITE))
+_read = Depends(require_read(CATALOG_READ))
 
 
 def _check_slug_pl_collision(
@@ -89,7 +90,7 @@ def _with_count(db: Session, collection) -> dict:
 @router.get("/", response_model=list[CollectionWithProductCount])
 async def list_collections(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """List every collection (active or not) with member product counts (admin)."""
     collections = crud_collection.get_multi(db, skip=0, limit=100)
@@ -106,7 +107,7 @@ async def list_collections(
 async def get_collection(
     collection_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """Get a collection by id with its product count (admin)."""
     collection = crud_collection.get(db, id=collection_id)

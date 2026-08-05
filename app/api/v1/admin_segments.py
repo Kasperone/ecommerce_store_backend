@@ -20,8 +20,8 @@ from math import ceil
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import CUSTOMERS_WRITE
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.capabilities import CUSTOMERS_READ, CUSTOMERS_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.crud import segment as crud_segment
 from app.crud import user as crud_user
 from app.models.segment import Segment
@@ -42,6 +42,7 @@ router = APIRouter()
 
 # Capability gate for this router's write/DELETE routes.
 _require = Depends(require_capability(CUSTOMERS_WRITE))
+_read = Depends(require_read(CUSTOMERS_READ))
 
 
 def _to_list_items(db: Session, users: list[User]) -> list[CustomerListItem]:
@@ -77,7 +78,7 @@ def _preview(db: Session, filters: SegmentFilters, *, limit: int) -> SegmentPrev
 @router.get("/", response_model=SegmentListResponse)
 async def list_segments(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     is_active: bool | None = Query(None, description="Filter by active toggle"),
@@ -136,7 +137,7 @@ async def preview_unsaved_segment(
 async def get_segment(
     segment_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """Get one segment by id."""
     segment = crud_segment.get(db, segment_id)
@@ -168,7 +169,7 @@ async def update_segment(
 async def preview_saved_segment(
     segment_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     limit: int = Query(20, ge=0, le=100),  # 0 = count only, no sample rows
 ):
     """Resolve a **saved** segment's stored filters to a live count + sample."""

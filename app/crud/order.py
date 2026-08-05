@@ -21,6 +21,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Query, Session, selectinload
 
+from app.core.capabilities import ORDERS_READ, staff_can_read
 from app.core.config import settings
 from app.core.money import ZERO_MONEY, net_of_gross, quantize_money
 from app.crud import coupon as crud_coupon
@@ -46,7 +47,7 @@ from app.models.order import Order, OrderItem, OrderStatus
 from app.models.product import Product
 from app.models.product_variant import ProductVariant
 from app.models.shipping import ShippingMethod
-from app.models.user import User, UserRole
+from app.models.user import User
 from app.schemas.order import OrderCreate, OrderUpdate
 from app.services import tax as tax_service
 from app.services.dimensional_weight import billable_weight_kg, line_volume_cm3
@@ -1432,7 +1433,10 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
     def get_scoped(self, db: Session, *, order_id: int, user: User) -> Order | None:
         """Fetch one order visible to ``user``.
 
-        Customers see only their own; admins see any. Returns None for both
+        Customers see only their own; staff holding ``orders:read`` (implied by
+        ``orders:write`` / ``orders:refund``) see any — a staffer without it
+        **degrades to customer scope** rather than 403ing, so they can still see
+        their own orders. Returns None for both
         not-found and not-owned so the route can 404 without leaking existence.
         Eager-loads ``refunds`` (+ actor + KOR) so the response carries the full
         admin/customer view in one query — see ``app/crud/refund.py``.
@@ -1451,7 +1455,7 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
             )
             .filter(Order.id == order_id)
         )
-        if user.role != UserRole.ADMIN:
+        if not staff_can_read(user, ORDERS_READ):
             query = query.filter(Order.user_id == user.id)
         return query.first()
 
@@ -1472,7 +1476,7 @@ class CRUDOrder(CRUDBase[Order, OrderCreate, OrderUpdate]):
         ``created_at`` is naive UTC, so the boundaries are UTC days, not the
         admin's local timezone.
         """
-        if user.role != UserRole.ADMIN:
+        if not staff_can_read(user, ORDERS_READ):
             query = query.filter(Order.user_id == user.id)
         if status is not None:
             query = query.filter(Order.status == status)

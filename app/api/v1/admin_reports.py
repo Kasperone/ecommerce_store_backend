@@ -23,7 +23,8 @@ from datetime import date
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import REPORTS_READ
+from app.core.dependencies import get_db, require_read
 from app.crud import report as crud_report
 from app.models.user import User
 from app.schemas.report import (
@@ -37,6 +38,8 @@ from app.schemas.report import (
 from app.services import tax_threshold
 
 router = APIRouter()
+
+_read = Depends(require_read(REPORTS_READ))
 
 
 # Sales CSV columns are part of the contract — currency columns are emitted in a
@@ -72,7 +75,7 @@ def _sales_csv(buckets: list[dict]) -> bytes:
 @router.get("/sales", response_model=SalesReport)
 async def get_sales_report(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     start: date = Query(..., description="Range start (UTC calendar day, inclusive)"),
     end: date = Query(..., description="Range end (UTC calendar day, inclusive)"),
     granularity: SalesGranularity = Query("day", description="Bucket size: day|week|month"),
@@ -89,7 +92,7 @@ async def get_sales_report(
 @router.get("/top-products", response_model=TopProductsReport)
 async def get_top_products_report(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     start: date | None = Query(None, description="Range start (UTC day, inclusive)"),
     end: date | None = Query(None, description="Range end (UTC day, inclusive)"),
     limit: int = Query(10, ge=1, le=100, description="Max rows"),
@@ -102,7 +105,7 @@ async def get_top_products_report(
 @router.get("/by-category", response_model=CategoryRevenueReport)
 async def get_category_revenue_report(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     start: date | None = Query(None, description="Range start (UTC day, inclusive)"),
     end: date | None = Query(None, description="Range end (UTC day, inclusive)"),
 ):
@@ -118,7 +121,7 @@ async def get_category_revenue_report(
 @router.get("/refund-summary", response_model=RefundSummary)
 async def get_refund_summary_report(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     start: date | None = Query(None, description="Range start (UTC day, inclusive)"),
     end: date | None = Query(None, description="Range end (UTC day, inclusive)"),
 ):
@@ -130,7 +133,7 @@ async def get_refund_summary_report(
 @router.get("/eu-distance-selling", response_model=EuDistanceSellingStatus)
 async def get_eu_distance_selling_status(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     year: int | None = Query(
         None, ge=2000, le=2100, description="Calendar year (defaults to the current year)"
     ),
@@ -151,7 +154,7 @@ async def get_eu_distance_selling_status(
 )
 async def export_sales_csv(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     start: date = Query(..., description="Range start (UTC calendar day, inclusive)"),
     end: date = Query(..., description="Range end (UTC calendar day, inclusive)"),
     granularity: SalesGranularity = Query("day", description="Bucket size: day|week|month"),

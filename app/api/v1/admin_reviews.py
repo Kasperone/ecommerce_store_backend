@@ -11,8 +11,8 @@ from math import ceil
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import CATALOG_WRITE
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.capabilities import CATALOG_READ, CATALOG_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.crud import review as crud_review
 from app.models.review import Review, ReviewStatus
 from app.models.user import User
@@ -27,6 +27,7 @@ router = APIRouter()
 
 # Capability gate for this router's write/DELETE routes.
 _require = Depends(require_capability(CATALOG_WRITE))
+_read = Depends(require_read(CATALOG_READ))
 
 
 def _to_admin_item(review: Review) -> AdminReviewListItem:
@@ -55,7 +56,7 @@ def _to_admin_item(review: Review) -> AdminReviewListItem:
 @router.get("/", response_model=AdminReviewListResponse)
 async def list_reviews(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     review_status: ReviewStatus | None = Query(
@@ -96,7 +97,7 @@ async def list_reviews(
 async def get_review(
     review_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """Get a single review (admin)."""
     review = crud_review.get(db, id=review_id)

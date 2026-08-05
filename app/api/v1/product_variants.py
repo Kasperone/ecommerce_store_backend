@@ -14,8 +14,8 @@ and the Meilisearch document is re-synced after commit (best-effort).
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import CATALOG_WRITE
-from app.core.dependencies import get_current_admin, get_db, require_capability
+from app.core.capabilities import CATALOG_READ, CATALOG_WRITE
+from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.crud import price_history as crud_price_history
 from app.crud import product as crud_product
 from app.crud import product_variant as crud_product_variant
@@ -38,6 +38,7 @@ router = APIRouter()
 
 # Capability gate for this router's write/DELETE routes.
 _require = Depends(require_capability(CATALOG_WRITE))
+_read = Depends(require_read(CATALOG_READ))
 
 
 def _get_product_or_404(db: Session, product_id: int) -> Product:
@@ -73,7 +74,7 @@ def _record_variant_prices(db: Session, *, product: Product, variant: ProductVar
 async def list_product_variants(
     product_id: int,
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
 ):
     """Admin: all variants of a product, including inactive ones."""
     _get_product_or_404(db, product_id)

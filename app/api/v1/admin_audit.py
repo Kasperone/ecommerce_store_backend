@@ -11,13 +11,16 @@ from math import ceil
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_current_admin, get_db
+from app.core.capabilities import AUDIT_READ
+from app.core.dependencies import get_db, require_read
 from app.crud import audit_event as crud_audit_event
 from app.models.admin_audit_event import AdminAuditEvent
 from app.models.user import User
 from app.schemas.audit_event import AuditEventItem, AuditEventListResponse
 
 router = APIRouter()
+
+_read = Depends(require_read(AUDIT_READ))
 
 
 def _item(event: AdminAuditEvent) -> AuditEventItem:
@@ -40,7 +43,7 @@ def _item(event: AdminAuditEvent) -> AuditEventItem:
 @router.get("/", response_model=AuditEventListResponse)
 async def list_audit_events(
     db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin),
+    current_admin: User = _read,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     resource_type: str | None = Query(None, description="Filter by resource type"),
