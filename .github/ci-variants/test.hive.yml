@@ -116,8 +116,25 @@ jobs:
       contents: read
       packages: write
 
+    # Isolate the Docker CLI config for this job. All three self-hosted runners execute
+    # as the same host user (`bee`), so docker/login-action's GHCR token otherwise lands
+    # in the SHARED ~/.docker/config.json — and the daemon then replays that repo-scoped
+    # token on every ghcr.io request, including anonymous pulls of unrelated public
+    # images, which GHCR answers `denied` instead of falling back to anonymous. The
+    # credential outlives the job and sits on the host until `docker logout ghcr.io` is
+    # run by hand — one left behind by an earlier run broke a hive-side
+    # `docker compose pull` on 2026-08-05. runner.temp is emptied at the start of each
+    # job, so the credential now dies with the job.
+    env:
+      DOCKER_CONFIG: ${{ runner.temp }}/.docker
+
     steps:
       - uses: actions/checkout@v5
+
+      # docker login would create this itself, but steps that run before the login
+      # (buildx setup / the pull-backend-image action) expect it to exist already.
+      - name: Isolate Docker CLI config
+        run: mkdir -p "$DOCKER_CONFIG"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
