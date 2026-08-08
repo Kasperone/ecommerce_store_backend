@@ -5,7 +5,8 @@ owner/capability management + escalation guards on ``PATCH /admin/staff/{id}``:
 
 - an owner passes every gated write; a scoped staffer passes only granted caps
   and 403s the rest; reads stay open to any staff
-- ``/auth/me`` exposes ``is_owner`` + ``capabilities`` so the FE can gate
+- ``/auth/me`` exposes ``is_owner``, ``capabilities`` and the expanded
+  ``effective_capabilities`` so the FE can gate
 - staff PATCH: owner grants caps/owner; unknown cap → 422; a non-owner
   ``staff:write`` holder can't touch owner/capabilities nor promote anyone into
   the admin pool (escalation → 403, SEC-022) while demotion and edits to
@@ -21,9 +22,12 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.core.capabilities import (
+    CATALOG_READ,
     CATALOG_WRITE,
+    MARKETING_READ,
     MARKETING_WRITE,
     STAFF_WRITE,
+    TAX_READ,
 )
 from app.core.security import create_access_token
 from app.models.user import User, UserRole
@@ -147,6 +151,40 @@ async def test_me_exposes_owner_and_capabilities(client, user_factory):
     body = resp.json()
     assert body["is_owner"] is False
     assert set(body["capabilities"]) == {CATALOG_WRITE, MARKETING_WRITE}
+    # The raw grants stay raw — the expansion is an *additional* field, so
+    # anything still reading `capabilities` (e.g. the staff edit form, which
+    # round-trips the stored set) is unaffected.
+    assert set(body["effective_capabilities"]) == {
+        CATALOG_WRITE,
+        MARKETING_WRITE,
+        CATALOG_READ,
+        TAX_READ,  # catalog:write reaches the per-product VAT picker
+        MARKETING_READ,
+    }
+
+
+async def test_me_effective_capabilities_empty_for_a_customer(client, user_factory):
+    customer = user_factory(email="cap-me-customer@example.com")
+    resp = await client.get("/api/v1/auth/me", headers=_headers(customer))
+    assert resp.status_code == 200
+    assert resp.json()["effective_capabilities"] == []
+
+
+async def test_me_does_not_special_case_the_owner(client, user_factory):
+    """An owner's expansion reflects their *grants*, not their bypass.
+
+    Owners hold everything by virtue of ``is_owner`` — ``require_read`` never
+    consults their capability array, and the frontend's ``can()`` short-circuits
+    on the same flag. Returning the full taxonomy here would be a second, silent
+    definition of ownership; pinning the current shape stops someone "fixing"
+    that later and coupling the FE's owner handling to this field.
+    """
+    owner = user_factory(email="cap-me-owner@example.com", role=UserRole.ADMIN, is_owner=True)
+    resp = await client.get("/api/v1/auth/me", headers=_headers(owner))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["is_owner"] is True
+    assert body["effective_capabilities"] == []
 
 
 # ---------------------------------------------------------------------------
