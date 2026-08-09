@@ -32,9 +32,11 @@ from fastapi.routing import APIRoute
 
 import app as app_package
 from app.core.capabilities import (
+    CATALOG_READ,
     CATALOG_WRITE,
     CUSTOMERS_WRITE,
     MARKETING_WRITE,
+    ORDERS_READ,
     ORDERS_WRITE,
     SETTINGS_WRITE,
 )
@@ -246,6 +248,47 @@ async def test_order_staff_can_read_shipping_and_companies(client, user_factory)
     assert (
         await client.get("/api/v1/admin/companies/", headers=_headers(staffer))
     ).status_code == 200
+
+
+async def test_read_only_order_staff_reach_the_same_cross_module_reads(client, user_factory):
+    """The cross-module edges hang off ``orders:read``, not ``orders:write``.
+
+    The admin sidebar links Orders on ``orders:read``, so a staffer can hold the
+    read alone and open ``/admin/draft-orders/{id}`` — which fetches shipping
+    methods to price the order. Keying the edge to the write capability leaves
+    that page half-loaded with no error (the query binds ``data`` only).
+    """
+    staffer = user_factory(
+        email="read-orders-only@example.com",
+        role=UserRole.ADMIN,
+        is_owner=False,
+        capabilities=[ORDERS_READ],
+    )
+    assert (
+        await client.get("/api/v1/admin/shipping/methods", headers=_headers(staffer))
+    ).status_code == 200
+    assert (
+        await client.get("/api/v1/admin/companies/", headers=_headers(staffer))
+    ).status_code == 200
+    # Still finer than the write half: no customer database, no store config.
+    assert (
+        await client.get("/api/v1/admin/customers/", headers=_headers(staffer))
+    ).status_code == 403
+    assert (
+        await client.get("/api/v1/admin/settings", headers=_headers(staffer))
+    ).status_code == 403
+
+
+async def test_read_only_catalog_staff_reach_tax_categories(client, user_factory):
+    """Same shape for the VAT picker: ``catalog:read`` alone must reach it."""
+    staffer = user_factory(
+        email="read-catalog-only@example.com",
+        role=UserRole.ADMIN,
+        is_owner=False,
+        capabilities=[CATALOG_READ],
+    )
+    resp = await client.get("/api/v1/admin/tax/categories", headers=_headers(staffer))
+    assert resp.status_code == 200
 
 
 async def test_catalog_staff_can_read_tax_categories(client, user_factory):
