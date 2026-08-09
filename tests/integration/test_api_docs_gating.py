@@ -55,6 +55,27 @@ def test_explicit_override_wins_in_both_directions():
     assert _settings(ENVIRONMENT="development", ENABLE_API_DOCS=False).api_docs_enabled is False
 
 
+def test_each_url_is_independently_nulled():
+    """Asserts the mapping directly, because the HTTP surface cannot.
+
+    FastAPI mounts `/docs` and `/redoc` *inside* `if self.openapi_url:`, so
+    once `openapi_url` is None the other two can never mount whatever they are
+    set to. A route-level test therefore passes even if `redoc_url` were
+    hardcoded to "/redoc" — mutation-testing proved exactly that survives.
+    The earlier gate orphans the later ones' coverage; checking the values is
+    what keeps each of the three honest.
+    """
+    prod = _settings(ENVIRONMENT="production", DEBUG=False).api_docs_urls
+    assert prod == {"docs_url": None, "redoc_url": None, "openapi_url": None}
+
+    dev = _settings(ENVIRONMENT="development").api_docs_urls
+    assert dev == {
+        "docs_url": "/docs",
+        "redoc_url": "/redoc",
+        "openapi_url": "/openapi.json",
+    }
+
+
 def test_all_three_routes_disappear_together_in_production():
     """Hiding `/docs` while still serving `/openapi.json` is theatre — the
     schema is the disclosure, and anyone can point a local Swagger at it. They
