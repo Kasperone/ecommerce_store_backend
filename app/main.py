@@ -62,8 +62,12 @@ app.add_middleware(
 app.add_middleware(
     SecurityHeadersMiddleware,
     hsts=settings.ENVIRONMENT == "production",
-    csp=build_csp(extra_connect_origins=settings.CORS_ORIGINS),
+    csp=build_csp(
+        extra_connect_origins=settings.CORS_ORIGINS,
+        report_uri=settings.CSP_REPORT_URI,
+    ),
     csp_enforce=False,
+    csp_report_uri=settings.CSP_REPORT_URI,
 )
 
 
@@ -160,6 +164,7 @@ from app.api.v1 import (  # noqa: E402
     contact,
     cookie_consent,
     coupons,
+    csp_report,
     feeds,
     gift_cards,
     newsletter,
@@ -188,6 +193,9 @@ app.include_router(carts.router, prefix="/api/v1/carts", tags=["Carts"])
 app.include_router(coupons.router, prefix="/api/v1/coupons", tags=["Coupons"])
 app.include_router(gift_cards.router, prefix="/api/v1/gift-cards", tags=["Gift Cards"])
 app.include_router(contact.router, prefix="/api/v1", tags=["Contact"])
+# Browser-facing CSP violation collector — deliberately absent from the OpenAPI
+# schema (see the module docstring), so it adds no operation to `api.gen.ts`.
+app.include_router(csp_report.router, prefix="/api/v1", tags=["Security"])
 app.include_router(banners.router, prefix="/api/v1/banners", tags=["Banners"])
 app.include_router(pages.router, prefix="/api/v1/pages", tags=["Pages"])
 app.include_router(blocks.router, prefix="/api/v1/blocks", tags=["Blocks"])
