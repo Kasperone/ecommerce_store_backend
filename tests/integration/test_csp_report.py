@@ -12,6 +12,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from app.api.v1.csp_report import MAX_FIELD_CHARS, MAX_REPORT_BYTES
+from app.core.config import settings
 from app.main import app as live_app
 
 pytestmark = pytest.mark.usefixtures("reset_limiter")
@@ -175,3 +176,42 @@ def test_endpoint_requires_no_authentication():
     silently discard every report."""
     response = _post(json.dumps(LEGACY_REPORT))
     assert response.status_code == 204
+
+
+@pytest.mark.integration
+def test_app_loggers_survive_the_alembic_migration_run(db_session):
+    """Guards every log assertion in this file.
+
+    `tests/conftest.py` runs `alembic command.upgrade()` **in-process**, and
+    `alembic/env.py` configures logging via `fileConfig`. With the default
+    `disable_existing_loggers=True` that call sets `disabled = True` on every
+    already-imported `app.*` logger, silencing application logging for the
+    rest of the session — which made the tests above fail only when run
+    alongside any DB-backed test, and pass in isolation.
+
+    Depends on `db_session` so the migration has definitely run first.
+    """
+    assert not logging.getLogger("app.api.v1.csp_report").disabled
+    assert not logging.getLogger("app").disabled
+
+
+@pytest.mark.rate_limit
+@pytest.mark.skipif(
+    not settings.rate_limit_enabled,
+    reason="rate limiting disabled in this environment (E2E_DISABLE_RATE_LIMIT)",
+)
+def test_report_flood_is_rate_limited():
+    """The only cap on total log volume from one source. Without it a single
+    client can write to our logs without limit, which is both a disk-fill
+    vector and a way to bury the real violations the watch window is for."""
+    body = json.dumps({"csp-report": {"blocked-uri": "https://evil.example.com/x"}})
+    with TestClient(live_app) as tc:
+        codes = [
+            tc.post(
+                ENDPOINT, content=body, headers={"content-type": "application/csp-report"}
+            ).status_code
+            for _ in range(122)
+        ]
+
+    assert codes.count(204) == 120
+    assert codes[120] == 429
