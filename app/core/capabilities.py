@@ -17,10 +17,18 @@ The taxonomy has two halves:
 **Write implies read.** Holding ``catalog:write`` authorises ``catalog:read``
 without the grant being stored, so no existing grant set breaks and no backfill
 migration is needed. The implication map (``IMPLIED_READS``) also carries the
-three genuine *cross-module* reads found by the Phase 0 call-graph inventory —
-an order staffer must read companies and shipping to compose a draft order, a
+genuine *cross-module* reads found by the Phase 0 call-graph inventory — an
+order staffer must read companies and shipping to compose a draft order, a
 catalog staffer must read tax rates to set a product's VAT. A read gate keyed
 naively to the single matching write capability would break those workflows.
+
+**Those cross-module edges hang off the *read* capability, not the write one.**
+A staffer granted only ``orders:read`` opens ``/admin/draft-orders/{id}`` — a
+viewable detail page — and it prices the order from the shipping-method list;
+the dependency belongs to *reading* the surface, not to writing it. So the map
+has read→read edges and the expansion is a transitive closure rather than a
+single pass. Each write capability therefore implies only its own domain's read
+and inherits the cross-module reads through it.
 
 Two read domains are **standalone** (``STANDALONE_READS``): no write capability
 implies ``reports:read`` or ``audit:read``, because neither surface has writes.
@@ -41,7 +49,10 @@ from app.models.user import User, UserRole
 # Kept as module-level names so routers reference a symbol, not a stringly-typed
 # literal (a typo then fails at import, not at request time).
 CATALOG_WRITE = (
-    "catalog:write"  # products, variants, categories, collections, tags, media, uploads, reviews
+    # "tags" here is the *product*-tag vocabulary (/admin/product-tags). The
+    # customer-tag vocabulary (/admin/tags) is a customers surface — it renders
+    # on /admin/customers, so it is gated on CUSTOMERS_*.
+    "catalog:write"  # products, variants, categories, collections, product tags, media, reviews
 )
 INVENTORY_WRITE = "inventory:write"  # inventory adjust/restock/transfer, warehouses
 ORDERS_WRITE = "orders:write"  # order status, editing (A2), timeline comments (A3), drafts, quotes
@@ -59,7 +70,7 @@ STAFF_WRITE = "staff:write"  # manage other staff + capabilities (owner-only in 
 # are cross-module read targets, and folding them into `customers:read` /
 # `settings:read` would over-grant the two most sensitive surfaces (the customer
 # database and store configuration) to every order staffer.
-CATALOG_READ = "catalog:read"  # products, variants, categories, collections, tags, reviews, media
+CATALOG_READ = "catalog:read"  # products, variants, categories, collections, product tags, reviews
 INVENTORY_READ = "inventory:read"  # stock levels, warehouses, low-stock alerts
 ORDERS_READ = "orders:read"  # orders, draft orders, returns, quotes, invoices
 CUSTOMERS_READ = "customers:read"  # customer records, notes, tags, segments — PII
@@ -109,27 +120,37 @@ READ_CAPABILITIES: frozenset[str] = frozenset(
 # unknown capability is rejected at the schema boundary.
 CAPABILITIES: frozenset[str] = WRITE_CAPABILITIES | READ_CAPABILITIES
 
-# --- Write → read implication --------------------------------------------
-# Every write capability grants its own domain's read plus, where the Phase 0
-# frontend call-graph inventory found a real cross-module dependency, the reads
-# that dependency needs. Amend this map (not the call sites) when annotating a
-# route surfaces a fourth cross-module read.
+# --- Capability implication ----------------------------------------------
+# Two kinds of edge, and the distinction is the whole design:
 #
-# Reads never imply anything, so a single expansion pass is a fixpoint — an
-# invariant the tests enforce.
+# - **write → its own domain's read.** The no-migration guarantee. Nothing else
+#   belongs here: a write capability picks up cross-module reads transitively,
+#   through the read it implies.
+# - **read → cross-module read.** Where the frontend call-graph inventory found
+#   a page in domain A that fetches from domain B. Keyed to the *read* because
+#   the dependency is a property of viewing the page, and read-only grants are
+#   real grants now (a staffer can hold `orders:read` with no `orders:write`).
+#
+# Amend this map, never the call sites, when annotating a route surfaces a new
+# cross-module read. The expansion is a closure, so a new edge propagates to
+# every capability that reaches it — including the write ones.
 IMPLIED_READS: Mapping[str, frozenset[str]] = {
-    # /admin/products/{new,[id]/edit} render the per-product VAT-rate picker.
-    CATALOG_WRITE: frozenset({CATALOG_READ, TAX_READ}),
+    CATALOG_WRITE: frozenset({CATALOG_READ}),
     INVENTORY_WRITE: frozenset({INVENTORY_READ}),
-    # /admin/quotes{,/new} pick the company a quote is for;
-    # /admin/draft-orders/[id] needs shipping methods to price the order.
-    ORDERS_WRITE: frozenset({ORDERS_READ, COMPANIES_READ, SHIPPING_READ}),
+    ORDERS_WRITE: frozenset({ORDERS_READ}),
     ORDERS_REFUND: frozenset({ORDERS_READ}),
-    CUSTOMERS_WRITE: frozenset({CUSTOMERS_READ, COMPANIES_READ}),
+    CUSTOMERS_WRITE: frozenset({CUSTOMERS_READ}),
     MARKETING_WRITE: frozenset({MARKETING_READ}),
     CONTENT_WRITE: frozenset({CONTENT_READ}),
-    SETTINGS_WRITE: frozenset({SETTINGS_READ, SHIPPING_READ, TAX_READ}),
+    SETTINGS_WRITE: frozenset({SETTINGS_READ}),
     STAFF_WRITE: frozenset({STAFF_READ}),
+    # /admin/products/{new,[id]/edit} render the per-product VAT-rate picker.
+    CATALOG_READ: frozenset({TAX_READ}),
+    # /admin/quotes/new picks the company a quote is for;
+    # /admin/draft-orders/[id] needs shipping methods to price the order.
+    ORDERS_READ: frozenset({COMPANIES_READ, SHIPPING_READ}),
+    CUSTOMERS_READ: frozenset({COMPANIES_READ}),
+    SETTINGS_READ: frozenset({SHIPPING_READ, TAX_READ}),
 }
 
 # Reads no write capability grants. Granting one of these is a deliberate act:
@@ -140,13 +161,21 @@ STANDALONE_READS: frozenset[str] = frozenset({REPORTS_READ, AUDIT_READ})
 def effective_capabilities(granted: Iterable[str] | None) -> frozenset[str]:
     """Expand a stored grant set into everything it actually authorises.
 
-    Adds the read capabilities implied by each held write capability. Owners
-    bypass this entirely (they hold every capability by definition) — see
-    ``app/core/dependencies.py::require_read``.
+    The transitive closure over ``IMPLIED_READS``: a write capability reaches
+    its own domain's read, and through that read every cross-module read the
+    domain's pages need. Owners bypass this entirely (they hold every
+    capability by definition) — see ``app/core/dependencies.py::require_read``.
+
+    The map is acyclic and tiny, but the worklist is written to terminate on a
+    cycle anyway — a capability is enqueued only when it is newly added.
     """
     caps = set(granted or ())
-    for cap in tuple(caps):
-        caps |= IMPLIED_READS.get(cap, frozenset())
+    pending = list(caps)
+    while pending:
+        for implied in IMPLIED_READS.get(pending.pop(), ()):
+            if implied not in caps:
+                caps.add(implied)
+                pending.append(implied)
     return frozenset(caps)
 
 

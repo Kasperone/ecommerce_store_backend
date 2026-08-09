@@ -3,12 +3,18 @@
 CRUD over the shared customer-tag vocabulary. Admin-gated; every mutation is
 audited as ``resource_type="tag"``. Tag *assignment* to a customer lives under
 ``/api/v1/admin/customers/{id}/tags`` (see ``admin_customers.py``).
+
+Gated on ``customers:*``, not ``catalog:*`` — these are customer tags, and the
+vocabulary is fetched by ``/admin/customers`` itself. It was catalog-gated from
+the original capability rollout through BE #242, which meant a customers
+staffer's own index page 403'd on the tag chips. The *product*-tag vocabulary
+is a separate router (``admin_product_tags.py``) and stays on ``catalog:*``.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.core.capabilities import CATALOG_READ, CATALOG_WRITE
+from app.core.capabilities import CUSTOMERS_READ, CUSTOMERS_WRITE
 from app.core.dependencies import get_current_admin, get_db, require_capability, require_read
 from app.crud import tag as crud_tag
 from app.models.tag import Tag
@@ -19,8 +25,8 @@ from app.services.audit import AuditWriter, get_audit_writer
 router = APIRouter()
 
 # Capability gate for this router's write/DELETE routes.
-_require = Depends(require_capability(CATALOG_WRITE))
-_read = Depends(require_read(CATALOG_READ))
+_require = Depends(require_capability(CUSTOMERS_WRITE))
+_read = Depends(require_read(CUSTOMERS_READ))
 
 
 def _response(tag: Tag, usage_count: int) -> TagResponse:

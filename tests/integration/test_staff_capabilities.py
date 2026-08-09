@@ -24,6 +24,8 @@ from sqlalchemy.orm import Session
 from app.core.capabilities import (
     CATALOG_READ,
     CATALOG_WRITE,
+    CUSTOMERS_READ,
+    CUSTOMERS_WRITE,
     MARKETING_READ,
     MARKETING_WRITE,
     STAFF_WRITE,
@@ -49,7 +51,7 @@ async def _create_tag(client, actor):
 
 
 # ---------------------------------------------------------------------------
-# require_capability — write-route gating matrix (POST /admin/tags → catalog:write)
+# require_capability — write-route gating matrix (POST /admin/tags → customers:write)
 # ---------------------------------------------------------------------------
 
 
@@ -62,10 +64,10 @@ async def test_owner_passes_gated_write(client, user_factory):
 
 async def test_scoped_staffer_with_capability_passes(client, user_factory):
     staffer = user_factory(
-        email="cap-catalog@example.com",
+        email="cap-customers@example.com",
         role=UserRole.ADMIN,
         is_owner=False,
-        capabilities=[CATALOG_WRITE],
+        capabilities=[CUSTOMERS_WRITE],
     )
     resp = await _create_tag(client, staffer)
     assert resp.status_code == 201
@@ -76,7 +78,7 @@ async def test_scoped_staffer_without_capability_403(client, user_factory):
         email="cap-marketing-only@example.com",
         role=UserRole.ADMIN,
         is_owner=False,
-        capabilities=[MARKETING_WRITE],  # wrong cap for a catalog write
+        capabilities=[MARKETING_WRITE],  # wrong cap for a customers write
     )
     resp = await _create_tag(client, staffer)
     assert resp.status_code == 403
@@ -91,7 +93,7 @@ async def test_customer_403_and_anonymous_401(client, user_factory):
 
 async def test_reads_are_capability_scoped_too(client, user_factory):
     """SEC-021 changed this rule. Reads used to be open to any staff; a staffer
-    with no capabilities now 403s, and a ``catalog:write`` holder still reads
+    with no capabilities now 403s, and a ``customers:write`` holder still reads
     the tag vocabulary because write implies read (no grant had to change).
     """
     ungranted = user_factory(
@@ -103,23 +105,57 @@ async def test_reads_are_capability_scoped_too(client, user_factory):
     resp = await client.get("/api/v1/admin/tags/", headers=_headers(ungranted))
     assert resp.status_code == 403
 
+    customers_staffer = user_factory(
+        email="cap-reader-customers@example.com",
+        role=UserRole.ADMIN,
+        is_owner=False,
+        capabilities=[CUSTOMERS_WRITE],
+    )
+    resp = await client.get("/api/v1/admin/tags/", headers=_headers(customers_staffer))
+    assert resp.status_code == 200
+
+
+async def test_read_only_customers_grant_reads_the_tag_vocabulary(client, user_factory):
+    """``/admin/customers`` renders the tag chips, and the sidebar links it on
+    ``customers:read`` — so the vocabulary has to be readable from that grant
+    alone, with no write capability behind it."""
+    reader = user_factory(
+        email="cap-customers-reader@example.com",
+        role=UserRole.ADMIN,
+        is_owner=False,
+        capabilities=[CUSTOMERS_READ],
+    )
+    resp = await client.get("/api/v1/admin/tags/", headers=_headers(reader))
+    assert resp.status_code == 200
+
+
+async def test_customer_tag_vocabulary_is_not_a_catalog_surface(client, user_factory):
+    """Regression for the mis-gate this PR fixes. ``/admin/tags`` is the
+    *customer*-tag vocabulary; it was on ``catalog:*`` from the original rollout,
+    which 403'd the customers index for the staff who own that page. Product tags
+    live at ``/admin/product-tags`` and stay on ``catalog:*``.
+    """
     catalog_staffer = user_factory(
-        email="cap-reader-catalog@example.com",
+        email="cap-catalog-tags@example.com",
         role=UserRole.ADMIN,
         is_owner=False,
         capabilities=[CATALOG_WRITE],
     )
+    assert (await _create_tag(client, catalog_staffer)).status_code == 403
     resp = await client.get("/api/v1/admin/tags/", headers=_headers(catalog_staffer))
+    assert resp.status_code == 403
+
+    resp = await client.get("/api/v1/admin/product-tags/", headers=_headers(catalog_staffer))
     assert resp.status_code == 200
 
 
 async def test_cross_capability_isolation(client, user_factory):
-    # catalog:write staffer may create tags but NOT create coupons (marketing:write).
+    # customers:write staffer may create tags but NOT create coupons (marketing:write).
     staffer = user_factory(
-        email="cap-catalog2@example.com",
+        email="cap-customers2@example.com",
         role=UserRole.ADMIN,
         is_owner=False,
-        capabilities=[CATALOG_WRITE],
+        capabilities=[CUSTOMERS_WRITE],
     )
     assert (await _create_tag(client, staffer)).status_code == 201
     coupon = await client.post(
