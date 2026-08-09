@@ -1,8 +1,22 @@
 import logging
-from typing import Literal
+from typing import Literal, TypedDict
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class ApiDocsUrls(TypedDict):
+    """The three doc-route kwargs of ``FastAPI(...)``.
+
+    A ``TypedDict`` rather than a plain dict so pyright can check the spread at
+    the call site — spreading a ``dict[str, str | None]`` makes it validate the
+    value against *every* FastAPI parameter and fail on all of them.
+    """
+
+    docs_url: str | None
+    redoc_url: str | None
+    openapi_url: str | None
+
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +79,13 @@ class Settings(BaseSettings):
     # Empty disables reporting entirely: the policy then carries no
     # ``report-uri``/``report-to`` and violations go nowhere.
     CSP_REPORT_URI: str = "/api/v1/csp-report"
+
+    # Interactive API docs (`/docs`, `/redoc`) and the raw schema
+    # (`/openapi.json`). ``None`` = derive from ENVIRONMENT: off in production,
+    # on elsewhere. Set true/false to override — CI needs them on, and it runs
+    # its backend containers with ENVIRONMENT=development, so the default
+    # already covers codegen-check and e2e without an explicit opt-in.
+    ENABLE_API_DOCS: bool | None = None
 
     # Rate limiting (slowapi). Use ``memory://`` for single-instance dev,
     # ``redis://host:port/db`` for multi-worker / production deployments.
@@ -184,6 +205,37 @@ class Settings(BaseSettings):
         ``ENVIRONMENT=development`` AND the explicit ``E2E_DISABLE_RATE_LIMIT``
         opt-in. Any other combination keeps rate limiting on."""
         return not (self.ENVIRONMENT == "development" and self.E2E_DISABLE_RATE_LIMIT)
+
+    @property
+    def api_docs_enabled(self) -> bool:
+        """Whether to mount `/docs`, `/redoc` and `/openapi.json`.
+
+        Defaults to off in production and on everywhere else; `ENABLE_API_DOCS`
+        overrides in either direction. All three move together on purpose —
+        hiding `/docs` while leaving `/openapi.json` served is theatre, since
+        the schema is the disclosure and anyone can point a local Swagger at it.
+        """
+        if self.ENABLE_API_DOCS is not None:
+            return self.ENABLE_API_DOCS
+        return self.ENVIRONMENT != "production"
+
+    @property
+    def api_docs_urls(self) -> ApiDocsUrls:
+        """The three `FastAPI(...)` kwargs, so `main.py` spreads one value.
+
+        Kept here rather than inlined at the call site so a test can exercise
+        the *same* object the app is built from. `app.main:app` is constructed
+        at import time from ambient settings, so a test that rebuilds its own
+        FastAPI would only ever be mirroring this wiring, not checking it.
+        """
+        enabled = self.api_docs_enabled
+        return ApiDocsUrls(
+            **{
+                "docs_url": "/docs" if enabled else None,
+                "redoc_url": "/redoc" if enabled else None,
+                "openapi_url": "/openapi.json" if enabled else None,
+            }
+        )
 
     @model_validator(mode="after")
     def _no_debug_in_production(self) -> "Settings":

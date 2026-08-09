@@ -16,10 +16,22 @@ from app.core.security_headers import SecurityHeadersMiddleware, build_csp
 
 logger = logging.getLogger(__name__)
 
+# `/docs`, `/redoc` and `/openapi.json` are mounted only when
+# `settings.api_docs_enabled` (default: off in production). Two reasons, and the
+# second is the one with a deadline:
+#
+# 1. The schema is a complete map of ~240 operations. Publishing it to anonymous
+#    traffic is free reconnaissance.
+# 2. Swagger UI violates our own CSP four ways per load — CDN script, inline
+#    bootstrap script, CDN stylesheet, external favicon. Left mounted in
+#    production it would emit a constant violation stream into the report-only
+#    collector, so the "clean watch window" that gates flipping the CSP to
+#    enforce could never come up clean. See the pre-prod hardening checklist.
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description="E-commerce API built with FastAPI",
+    **settings.api_docs_urls,
 )
 
 # Impersonation write-guard. Registered first so it ends up the INNERMOST
