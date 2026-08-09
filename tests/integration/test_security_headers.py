@@ -15,7 +15,11 @@ import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
-from app.core.security_headers import SecurityHeadersMiddleware, build_csp
+from app.core.security_headers import (
+    CSP_REPORT_GROUP,
+    SecurityHeadersMiddleware,
+    build_csp,
+)
 from app.main import app as live_app
 
 # These tests are pure middleware checks — no DB, no rate limiting, no
@@ -27,6 +31,7 @@ def _build_app(
     hsts: bool,
     csp: str | None = None,
     csp_enforce: bool = False,
+    csp_report_uri: str = "",
 ) -> FastAPI:
     isolated = FastAPI()
     isolated.add_middleware(
@@ -34,6 +39,7 @@ def _build_app(
         hsts=hsts,
         csp=csp,
         csp_enforce=csp_enforce,
+        csp_report_uri=csp_report_uri,
     )
 
     @isolated.get("/probe")
@@ -147,3 +153,54 @@ def test_csp_report_only_present_on_live_app_health():
     assert csp_ro is not None
     assert "default-src 'self'" in csp_ro
     assert response.headers.get("content-security-policy") is None
+
+
+def test_build_csp_omits_reporting_directives_when_no_uri():
+    """Reporting is opt-out: an empty CSP_REPORT_URI must leave the policy
+    free of both directives rather than emitting a dangling group name."""
+    csp = build_csp()
+    assert "report-uri" not in csp
+    assert "report-to" not in csp
+
+
+def test_build_csp_emits_both_reporting_directives():
+    """`report-uri` is deprecated but is all Safari implements; `report-to` is
+    what Chrome wants. A policy carrying only one silently loses reports from
+    whichever half of the browser market it omits."""
+    csp = build_csp(report_uri="/api/v1/csp-report")
+    assert "report-uri /api/v1/csp-report" in csp
+    assert f"report-to {CSP_REPORT_GROUP}" in csp
+
+
+def test_reporting_endpoints_header_binds_the_group_to_the_uri():
+    """`report-to` names a group; without the Reporting-Endpoints header
+    binding that name to a URL, the directive resolves to nothing."""
+    csp = build_csp(report_uri="https://collector.example.com/csp")
+    with TestClient(
+        _build_app(hsts=False, csp=csp, csp_report_uri="https://collector.example.com/csp")
+    ) as tc:
+        response = tc.get("/probe")
+    assert (
+        response.headers.get("reporting-endpoints")
+        == f'{CSP_REPORT_GROUP}="https://collector.example.com/csp"'
+    )
+
+
+def test_reporting_endpoints_header_absent_when_reporting_disabled():
+    with TestClient(_build_app(hsts=False, csp=build_csp())) as tc:
+        response = tc.get("/probe")
+    assert "reporting-endpoints" not in {k.lower() for k in response.headers}
+
+
+@pytest.mark.integration
+def test_live_app_report_only_policy_actually_reports_somewhere():
+    """The point of the whole module: a Report-Only policy blocks nothing, so
+    one that also reports nowhere is inert decoration. The enforce-flip
+    rollout depends on a watch window, which depends on this being wired."""
+    with TestClient(live_app) as tc:
+        response = tc.get("/health")
+    csp_ro = response.headers.get("content-security-policy-report-only")
+    assert csp_ro is not None
+    assert "report-uri " in csp_ro
+    assert f"report-to {CSP_REPORT_GROUP}" in csp_ro
+    assert response.headers.get("reporting-endpoints") is not None

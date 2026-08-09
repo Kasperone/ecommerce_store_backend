@@ -56,6 +56,16 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
 
+    # Where the browser posts Content-Security-Policy violation reports. The
+    # default points at this app's own built-in collector, which logs each
+    # violation at WARNING — enough to run the "watch for a clean window"
+    # step that must precede flipping the CSP from Report-Only to enforce.
+    # Point it at a hosted collector (Sentry, report-uri.com) in production
+    # to get aggregation and alerting; use an ABSOLUTE URL when you do.
+    # Empty disables reporting entirely: the policy then carries no
+    # ``report-uri``/``report-to`` and violations go nowhere.
+    CSP_REPORT_URI: str = "/api/v1/csp-report"
+
     # Rate limiting (slowapi). Use ``memory://`` for single-instance dev,
     # ``redis://host:port/db`` for multi-worker / production deployments.
     RATE_LIMIT_STORAGE_URL: str = "memory://"
