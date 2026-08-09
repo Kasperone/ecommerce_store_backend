@@ -8,11 +8,17 @@ The invariants below are the ones that make the taxonomy safe to roll out:
 
 - **write implies read**, so no stored grant set loses a surface it has today
   and no backfill migration is needed
-- the implication map is **closed and one-pass** (reads imply nothing), so
-  ``effective_capabilities`` needs no fixpoint loop
-- every read capability is either implied by a write capability or a
+- the implication map is **closed**: every value is a read capability, and
+  ``effective_capabilities`` takes its transitive closure, so a write reaches
+  the cross-module reads hanging off the read it implies
+- every read capability is either reachable from a write capability or a
   **deliberate** standalone grant — a new read cap that is neither fails here
   rather than silently locking a surface to owners
+
+Phase 5 moved the cross-module edges from the write capabilities onto the
+*reads* they belong to, because a read-only grant is a real grant now: the
+sidebar links every section on ``<domain>:read``, so an ``orders:read`` staffer
+reaches ``/admin/draft-orders/{id}`` and it prices from the shipping methods.
 """
 
 from __future__ import annotations
@@ -96,8 +102,16 @@ def test_every_exported_capability_constant_is_in_the_closed_set():
 # ---------------------------------------------------------------------------
 
 
-def test_implication_map_keys_are_write_capabilities():
-    assert set(IMPLIED_READS) == WRITE_CAPABILITIES
+def test_every_write_capability_is_a_key_of_the_implication_map():
+    """A write capability missing from the map would stop implying its own
+    domain's read — the no-migration guarantee, silently withdrawn."""
+    assert set(IMPLIED_READS) >= WRITE_CAPABILITIES
+
+
+def test_implication_map_keys_are_capabilities():
+    """Read keys are allowed (they carry the cross-module edges); a key outside
+    the taxonomy is a typo that can never fire."""
+    assert set(IMPLIED_READS) <= CAPABILITIES
 
 
 def test_implication_map_values_are_read_capabilities():
@@ -105,12 +119,26 @@ def test_implication_map_values_are_read_capabilities():
     assert implied <= READ_CAPABILITIES
 
 
-def test_reads_imply_nothing_so_one_expansion_pass_is_a_fixpoint():
-    """``effective_capabilities`` deliberately expands once. That is only correct
-    while no read capability is itself a key of the map."""
-    assert not (set(IMPLIED_READS) & READ_CAPABILITIES)
+def test_a_write_capability_implies_only_its_own_domain_read_directly():
+    """Cross-module reads belong on the *read* key, so they reach a read-only
+    grant too. A write entry naming a second domain means someone added an edge
+    to the write side, where an ``orders:read`` staffer can't see it."""
+    for write_cap in WRITE_CAPABILITIES:
+        domain = write_cap.split(":")[0]
+        assert IMPLIED_READS[write_cap] == frozenset({f"{domain}:read"})
+
+
+def test_expansion_is_the_transitive_closure_of_the_map():
+    """The map holds direct edges only; ``effective_capabilities`` must follow
+    them to exhaustion, or a cross-module read hanging off a read capability
+    would never reach the write capability above it."""
     every_cap = effective_capabilities(CAPABILITIES)
     assert effective_capabilities(every_cap) == every_cap
+    for cap, direct in IMPLIED_READS.items():
+        expanded = effective_capabilities([cap])
+        assert direct <= expanded
+        for implied in direct:
+            assert effective_capabilities([implied]) <= expanded
 
 
 @pytest.mark.parametrize("write_cap", sorted(WRITE_CAPABILITIES))
@@ -171,8 +199,58 @@ def test_cross_module_reads_do_not_leak_the_sensitive_surfaces():
     assert SETTINGS_READ not in granted
 
 
-def test_refund_capability_reads_orders_but_nothing_else():
-    assert effective_capabilities([ORDERS_REFUND]) == {ORDERS_REFUND, ORDERS_READ}
+def test_refund_capability_reaches_the_orders_reads():
+    """``orders:refund`` implies ``orders:read`` and therefore, transitively,
+    everything an order surface reads. Widened in Phase 5 — before the closure
+    a refunds staffer stopped at ``orders:read`` and would have hit the same
+    empty shipping picker on a draft order."""
+    assert effective_capabilities([ORDERS_REFUND]) == {
+        ORDERS_REFUND,
+        ORDERS_READ,
+        COMPANIES_READ,
+        SHIPPING_READ,
+    }
+
+
+# ---------------------------------------------------------------------------
+# The same cross-module reads, reached from a read-only grant (Phase 5)
+# ---------------------------------------------------------------------------
+
+
+def test_read_only_order_staff_can_read_companies_and_shipping():
+    """The gap Phase 5 closes: the sidebar links Orders on ``orders:read``, so a
+    staffer can reach ``/admin/draft-orders/{id}`` — a viewable detail page —
+    with no write capability at all. Its shipping-method query has no error
+    branch, so a 403 there renders an empty picker and says nothing."""
+    granted = effective_capabilities([ORDERS_READ])
+    assert {COMPANIES_READ, SHIPPING_READ} <= granted
+
+
+def test_read_only_catalog_staff_can_read_tax_rates():
+    assert TAX_READ in effective_capabilities([CATALOG_READ])
+
+
+def test_read_only_customer_staff_can_read_companies():
+    assert COMPANIES_READ in effective_capabilities([CUSTOMERS_READ])
+
+
+def test_read_only_settings_staff_can_read_shipping_and_tax():
+    assert {SHIPPING_READ, TAX_READ} <= effective_capabilities([SETTINGS_READ])
+
+
+def test_a_read_only_grant_never_reaches_a_write_capability():
+    """Closure over reads must not walk back up. Every capability reachable from
+    a read grant is itself a read."""
+    for read_cap in READ_CAPABILITIES:
+        assert effective_capabilities([read_cap]) <= READ_CAPABILITIES
+
+
+def test_read_only_grants_do_not_leak_the_sensitive_surfaces():
+    """The read half stays finer than the write half: reading orders does not
+    hand over the customer database or store config."""
+    granted = effective_capabilities([ORDERS_READ])
+    assert CUSTOMERS_READ not in granted
+    assert SETTINGS_READ not in granted
 
 
 def test_staff_write_does_not_imply_reading_anything_else():
