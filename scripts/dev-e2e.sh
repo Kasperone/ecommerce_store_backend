@@ -18,9 +18,8 @@ if command -v ss >/dev/null 2>&1 && ss -ltn "sport = :$PORT" | grep -q LISTEN; t
   exit 1
 fi
 
-# hive is addressed at its WireGuard IP so this works from any network; the
-# LAN IP 192.168.1.14 only resolves at home. See .claude/notes/plans/infra/.
-export DATABASE_URL="${DATABASE_URL:-postgresql://postgres:postgres@10.0.0.1:5433/ecommerce_e2e?connect_timeout=5}"
+# Defaults to the docker-compose Postgres; export DATABASE_URL to use another host.
+export DATABASE_URL="${DATABASE_URL:-postgresql://postgres:postgres@localhost:5433/ecommerce_e2e?connect_timeout=5}"
 export ACCESS_TOKEN_EXPIRE_MINUTES="${ACCESS_TOKEN_EXPIRE_MINUTES:-2}"
 export RESEND_API_KEY=""
 export ENVIRONMENT=development
