@@ -55,13 +55,10 @@ def _preflight_db_reachable(db_url: str) -> None:
             return
     except OSError as exc:
         raise RuntimeError(
-            f"hive unreachable at {host}:{port} ({exc}).\n"
-            "On a different network, or is the tunnel down?\n"
-            "  Check:   ip -br addr | grep wg-hive\n"
-            "  Bring up: nmcli con up wg-hive\n"
-            "hive is addressed at its WireGuard IP (10.0.0.1) from every "
-            "network; the LAN IP 192.168.1.14 only resolves at home and is no "
-            "longer used in config. See .claude/notes/plans/infra/."
+            f"Test database unreachable at {host}:{port} ({exc}).\n"
+            "Is the database host up and reachable from this network (VPN/tunnel)?\n"
+            "Or run it locally: docker-compose up -d postgres, and point "
+            "DATABASE_URL in .env.test at localhost:5433."
         ) from exc
 
 

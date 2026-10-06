@@ -1,8 +1,8 @@
 # DEV ONLY. Production uses managed Postgres + Redis with rotated
 # credentials per `backend-rules/security.md` rotation runbook.
-# Ports bind to all interfaces because the dev workstation reaches this
-# stack at the hive-server IP (10.0.0.1:5433 over WireGuard); switch to 127.0.0.1
-# bindings on a single-machine setup if you want to keep them off the LAN.
+# Ports bind to all interfaces so the stack can also run on a separate dev
+# host; switch to 127.0.0.1 bindings on a single-machine setup if you want to
+# keep them off the LAN.
 version: '3.8'
 
 services:
@@ -43,7 +43,7 @@ services:
   # Meilisearch (storefront search). DEV ONLY — see header note. A master key
   # is required even in dev so the instance isn't open on the LAN; generate one
   # like REDIS_PASSWORD (`python -c 'import secrets; print(secrets.token_urlsafe(24))'`).
-  # MEILI_HTTP_ADDR is set to 0.0.0.0 so the backend reaches it at the hive IP.
+  # MEILI_HTTP_ADDR is set to 0.0.0.0 so the backend can reach it from another host.
   meilisearch:
     image: getmeili/meilisearch:v1.12
     container_name: ecommerce_meilisearch
