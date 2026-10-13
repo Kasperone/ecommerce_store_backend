@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "ecommerce_store_backend"
 version = "0.1.0"
 description = "E-commerce store FastAPI backend"
-license = { file = "LICENSE" }
+license = "MIT"
 requires-python = ">=3.13"
 dependencies = [
   "alembic==1.17.0",
