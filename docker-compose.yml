@@ -1,8 +1,7 @@
 # DEV ONLY. Production uses managed Postgres + Redis with rotated
 # credentials per `backend-rules/security.md` rotation runbook.
-# Ports bind to all interfaces so the stack can also run on a separate dev
-# host; switch to 127.0.0.1 bindings on a single-machine setup if you want to
-# keep them off the LAN.
+# Published ports bind to 127.0.0.1 only, so the dev stack is not reachable
+# from the LAN. Containers still talk to each other over the compose network.
 version: '3.8'
 
 services:
@@ -15,7 +14,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: ecommerce_db
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -31,7 +30,7 @@ services:
     container_name: ecommerce_redis
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}"]
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -52,7 +51,7 @@ services:
       MEILI_ENV: development
       MEILI_HTTP_ADDR: 0.0.0.0:7700
     ports:
-      - "7700:7700"
+      - "127.0.0.1:7700:7700"
     volumes:
       - meili_data:/meili_data
     healthcheck:
